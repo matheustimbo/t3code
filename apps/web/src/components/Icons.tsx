@@ -496,7 +496,7 @@ export const VerbooIcon: Icon = ({ className, ...props }) => (
     {...props}
     preserveAspectRatio="xMidYMid"
     viewBox="0 0 256 256"
-    className={cn("fill-[#7c5cff]", className)}
+    className={cn("fill-[#ad34fe]", className)}
   >
     <path
       fillRule="evenodd"
