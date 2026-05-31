@@ -6,6 +6,37 @@ import * as Path from "effect/Path";
 
 import { expandHomePath } from "../../pathExpansion.ts";
 
+/**
+ * Ensure the Verboo binary's own directory is on PATH.
+ *
+ * The `@verboo/code` CLI is a `#!/usr/bin/env node` script, so spawning it
+ * requires `node` to be resolvable from the child process's PATH. When T3 Code
+ * runs as a GUI app (launched from Finder/Dock), the process inherits only the
+ * minimal launchd PATH (`/usr/bin:/bin:/usr/sbin:/sbin`) — without nvm, Homebrew
+ * or `/usr/local/bin` — so neither `verboo` nor `node` is found.
+ *
+ * For nvm/npm-global installs the `verboo` symlink lives in the same `bin`
+ * directory as `node`. So when the configured binary path is absolute, we
+ * prepend its directory to PATH: this lets the binary resolve and lets its
+ * shebang find the co-located `node`, without the user having to set a PATH
+ * environment variable by hand. A bare command name (e.g. `"verboo"`) is left
+ * untouched — there is no directory to derive.
+ */
+export function withVerbooBinaryDirOnPath(
+  env: NodeJS.ProcessEnv,
+  binaryPath: string,
+): NodeJS.ProcessEnv {
+  const trimmed = binaryPath.trim();
+  if (!trimmed.includes("/")) return env;
+  const expanded = expandHomePath(trimmed);
+  const dir = expanded.slice(0, expanded.lastIndexOf("/")) || "/";
+  const delimiter = process.platform === "win32" ? ";" : ":";
+  const current = env.PATH ?? "";
+  const parts = current.split(delimiter).filter(Boolean);
+  if (parts.includes(dir)) return env;
+  return { ...env, PATH: [dir, ...parts].join(delimiter) };
+}
+
 export const resolveVerbooHomePath = Effect.fn("resolveVerbooHomePath")(function* (
   config: Pick<VerbooSettings, "homePath">,
 ): Effect.fn.Return<string, never, Path.Path> {

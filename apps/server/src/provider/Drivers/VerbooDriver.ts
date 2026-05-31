@@ -53,6 +53,7 @@ import {
   makeVerbooCapabilitiesCacheKey,
   makeVerbooContinuationGroupKey,
   makeVerbooEnvironment,
+  withVerbooBinaryDirOnPath,
 } from "./VerbooHome.ts";
 const decodeVerbooSettings = Schema.decodeSync(VerbooSettings);
 
@@ -103,7 +104,10 @@ export const VerbooDriver: ProviderDriver<VerbooSettings, VerbooDriverEnv> = {
       const path = yield* Path.Path;
       const httpClient = yield* HttpClient.HttpClient;
       const eventLoggers = yield* ProviderEventLoggers;
-      const processEnv = mergeProviderInstanceEnvironment(environment);
+      const processEnv = withVerbooBinaryDirOnPath(
+        mergeProviderInstanceEnvironment(environment),
+        config.binaryPath,
+      );
       const fallbackContinuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
         instanceId,
