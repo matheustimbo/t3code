@@ -9,6 +9,7 @@
  */
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
@@ -59,9 +60,18 @@ const decodeClaudeOutputEnvelope = Schema.decodeEffect(Schema.fromJsonString(Cla
 export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(function* (
   claudeSettings: ClaudeSettings,
   environment: NodeJS.ProcessEnv = process.env,
+  options?: {
+    makeEnvironment?: (
+      config: Pick<ClaudeSettings, "homePath">,
+      baseEnv?: NodeJS.ProcessEnv,
+    ) => Effect.Effect<NodeJS.ProcessEnv, never, Path.Path>;
+  },
 ) {
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
+  const claudeEnvironment = yield* (options?.makeEnvironment ?? makeClaudeEnvironment)(
+    claudeSettings,
+    environment,
+  );
 
   const readStreamAsString = <E>(
     operation: string,
