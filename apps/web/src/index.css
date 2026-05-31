@@ -144,6 +144,151 @@
   }
 }
 
+/* ---------------------------------------------------------------------------
+   Catppuccin palette themes (Latte / Frappé / Macchiato / Mocha).
+   Opted into via document.documentElement[data-theme="catppuccin-<flavor>"]
+   (see useTheme.ts). The :root[data-theme=...] selector has specificity (0,1,1),
+   which outranks the .dark variant (0,1,0), so these palette tokens win while
+   the .dark class (still toggled for dark flavors) keeps .dark-scoped base
+   rules resolving correctly. Colors are the official Catppuccin palette
+   (https://github.com/catppuccin/catppuccin); Latte's status/secondary text
+   tokens are darkened in-hue to meet WCAG AA on the light base.
+   --------------------------------------------------------------------------- */
+:root[data-theme="catppuccin-latte"] {
+  color-scheme: light;
+  --background: #eff1f5; /* base */
+  --app-chrome-background: var(--background);
+  --foreground: #4c4f69; /* text */
+  --card: #e6e9ef; /* mantle */
+  --card-foreground: #4c4f69;
+  --popover: #ccd0da; /* surface0 */
+  --popover-foreground: #4c4f69;
+  --primary: #8839ef; /* mauve */
+  --primary-foreground: #eff1f5; /* base */
+  --secondary: #ccd0da; /* surface0 */
+  --secondary-foreground: #4c4f69;
+  --muted: #ccd0da; /* surface0 */
+  --muted-foreground: #5c5f77; /* subtext1 */
+  --accent: #bcc0cc; /* surface1 */
+  --accent-foreground: #4c4f69;
+  --destructive: #d20f39; /* red */
+  --destructive-foreground: #d20f39;
+  --border: #bcc0cc; /* surface1 */
+  --input: #bcc0cc; /* surface1 */
+  --ring: #8839ef; /* mauve */
+  --info: #1e66f5; /* blue */
+  --info-foreground: #2364e7; /* darkened blue for AA text */
+  --success: #40a02b; /* green */
+  --success-foreground: #46774a; /* darkened green for AA text */
+  --warning: #df8e1d; /* yellow */
+  --warning-foreground: #87684b; /* darkened amber for AA text */
+}
+
+:root[data-theme="catppuccin-frappe"] {
+  color-scheme: dark;
+  --background: #303446; /* base */
+  --app-chrome-background: var(--background);
+  --foreground: #c6d0f5; /* text */
+  --card: #292c3c; /* mantle */
+  --card-foreground: #c6d0f5;
+  --popover: #414559; /* surface0 */
+  --popover-foreground: #c6d0f5;
+  --primary: #ca9ee6; /* mauve */
+  --primary-foreground: #303446; /* base */
+  --secondary: #414559; /* surface0 */
+  --secondary-foreground: #c6d0f5;
+  --muted: #414559; /* surface0 */
+  --muted-foreground: #b5bfe2; /* subtext1 */
+  --accent: #51576d; /* surface1 */
+  --accent-foreground: #c6d0f5;
+  --destructive: #e78284; /* red */
+  --destructive-foreground: #e78284;
+  --border: #51576d; /* surface1 */
+  --input: #51576d; /* surface1 */
+  --ring: #ca9ee6; /* mauve */
+  --info: #8caaee; /* blue */
+  --info-foreground: #8caaee;
+  --success: #a6d189; /* green */
+  --success-foreground: #a6d189;
+  --warning: #e5c890; /* yellow */
+  --warning-foreground: #e5c890;
+}
+
+:root[data-theme="catppuccin-macchiato"] {
+  color-scheme: dark;
+  --background: #24273a; /* base */
+  --app-chrome-background: var(--background);
+  --foreground: #cad3f5; /* text */
+  --card: #1e2030; /* mantle */
+  --card-foreground: #cad3f5;
+  --popover: #363a4f; /* surface0 */
+  --popover-foreground: #cad3f5;
+  --primary: #c6a0f6; /* mauve */
+  --primary-foreground: #24273a; /* base */
+  --secondary: #363a4f; /* surface0 */
+  --secondary-foreground: #cad3f5;
+  --muted: #363a4f; /* surface0 */
+  --muted-foreground: #b8c0e0; /* subtext1 */
+  --accent: #494d64; /* surface1 */
+  --accent-foreground: #cad3f5;
+  --destructive: #ed8796; /* red */
+  --destructive-foreground: #ed8796;
+  --border: #494d64; /* surface1 */
+  --input: #494d64; /* surface1 */
+  --ring: #c6a0f6; /* mauve */
+  --info: #8aadf4; /* blue */
+  --info-foreground: #8aadf4;
+  --success: #a6da95; /* green */
+  --success-foreground: #a6da95;
+  --warning: #eed49f; /* yellow */
+  --warning-foreground: #eed49f;
+}
+
+:root[data-theme="catppuccin-mocha"] {
+  color-scheme: dark;
+  --background: #1e1e2e; /* base */
+  --app-chrome-background: var(--background);
+  --foreground: #cdd6f4; /* text */
+  --card: #181825; /* mantle */
+  --card-foreground: #cdd6f4;
+  --popover: #313244; /* surface0 */
+  --popover-foreground: #cdd6f4;
+  --primary: #cba6f7; /* mauve */
+  --primary-foreground: #1e1e2e; /* base */
+  --secondary: #313244; /* surface0 */
+  --secondary-foreground: #cdd6f4;
+  --muted: #313244; /* surface0 */
+  --muted-foreground: #bac2de; /* subtext1 */
+  --accent: #45475a; /* surface1 */
+  --accent-foreground: #cdd6f4;
+  --destructive: #f38ba8; /* red */
+  --destructive-foreground: #f38ba8;
+  --border: #45475a; /* surface1 */
+  --input: #45475a; /* surface1 */
+  --ring: #cba6f7; /* mauve */
+  --info: #89b4fa; /* blue */
+  --info-foreground: #89b4fa;
+  --success: #a6e3a1; /* green */
+  --success-foreground: #a6e3a1;
+  --warning: #f9e2af; /* yellow */
+  --warning-foreground: #f9e2af;
+}
+
+/* Catppuccin: derive the otherwise-hardcoded scrollbar thumbs from the palette
+   (higher specificity than the base/.dark rgba rules below). */
+:root[data-theme^="catppuccin-"] ::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--foreground) 22%, transparent);
+}
+:root[data-theme^="catppuccin-"] ::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--foreground) 38%, transparent);
+}
+:root[data-theme^="catppuccin-"] .model-picker-list::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--foreground) 16%, transparent);
+}
+:root[data-theme^="catppuccin-"] .model-picker-list::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--foreground) 30%, transparent);
+}
+
 body {
   font-family:
     "DM Sans",
