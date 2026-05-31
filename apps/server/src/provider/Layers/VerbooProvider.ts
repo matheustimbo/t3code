@@ -394,7 +394,8 @@ export const checkVerbooProviderStatus = Effect.fn("checkVerbooProviderStatus")(
         version: parsedVersion,
         status: "warning",
         auth: { status: "unknown" },
-        message: "Could not verify Verboo authentication status from initialization result.",
+        message:
+          "Could not verify Verboo authentication. If you have not signed in, run `verboo /login` in a terminal, then refresh.",
       },
     });
   }

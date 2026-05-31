@@ -1,3 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -124,6 +128,55 @@ const knownWindowsCliDirs = (env: NodeJS.ProcessEnv): ReadonlyArray<string> => [
     }),
   ),
 ];
+
+/**
+ * List `<parent>/<entry><suffix>` directories that exist, newest entry first.
+ *
+ * Used to surface per-version bin dirs of Node version managers (nvm, fnm),
+ * which hold both `node` and npm-global CLIs (e.g. `verboo`) but are not on the
+ * login-shell PATH unless the user has run `nvm use`. Sorted descending so the
+ * most recent version wins. Best-effort: any filesystem error yields nothing.
+ */
+const listVersionBins = (parent: string, suffix: string): ReadonlyArray<string> => {
+  let entries: ReadonlyArray<string>;
+  try {
+    entries = NodeFS.readdirSync(parent);
+  } catch {
+    return [];
+  }
+  return [...entries]
+    .sort()
+    .reverse()
+    .map((entry) => `${parent}/${entry}${suffix}`)
+    .filter((dir) => {
+      try {
+        return NodeFS.statSync(dir).isDirectory();
+      } catch {
+        return false;
+      }
+    });
+};
+
+/**
+ * Common POSIX CLI install dirs that GUI apps (minimal launchd PATH) and even
+ * `$SHELL -ilc` often miss — notably Node version managers, which keep `node`
+ * and npm-global binaries off PATH until `nvm use`. Added as a lower-priority
+ * fallback so node-based provider CLIs (e.g. the `verboo` npm package) resolve
+ * out of the box, the same way Homebrew-installed `claude`/`codex` already do.
+ */
+const knownPosixCliDirs = (env: NodeJS.ProcessEnv): ReadonlyArray<string> => {
+  const home = trimNonEmpty(env.HOME).pipe(Option.getOrElse(() => NodeOS.homedir()));
+  const nvmDir = trimNonEmpty(env.NVM_DIR).pipe(Option.getOrElse(() => `${home}/.nvm`));
+  const fnmDir = trimNonEmpty(env.FNM_DIR).pipe(Option.getOrElse(() => `${home}/.fnm`));
+  const voltaHome = trimNonEmpty(env.VOLTA_HOME).pipe(Option.getOrElse(() => `${home}/.volta`));
+  return [
+    ...listVersionBins(`${nvmDir}/versions/node`, "/bin"),
+    ...listVersionBins(`${fnmDir}/node-versions`, "/installation/bin"),
+    `${voltaHome}/bin`,
+    `${home}/.bun/bin`,
+    `${home}/.local/bin`,
+  ];
+};
 
 const startMarker = (name: string) => `__T3CODE_ENV_${name}_START__`;
 const endMarker = (name: string) => `__T3CODE_ENV_${name}_END__`;
@@ -301,6 +354,7 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
         : Option.none<string>();
     const mergedPath = mergePaths(config.platform, [
       trimNonEmpty(shellEnvironment.PATH).pipe(Option.orElse(() => launchctlPath)),
+      trimNonEmpty(knownPosixCliDirs(config.env).join(":")),
       readEnvPath(config.env),
     ]);
 
