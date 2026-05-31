@@ -496,9 +496,13 @@ export const VerbooIcon: Icon = ({ className, ...props }) => (
     {...props}
     preserveAspectRatio="xMidYMid"
     viewBox="0 0 256 256"
-    className={cn("fill-[#6366f1]", className)}
+    className={cn("fill-[#7c5cff]", className)}
   >
-    <path d="M48 40h36.5L128 168.5 171.5 40H208l-64 176h-32L48 40Z" />
+    <path
+      fillRule="evenodd"
+      clipRule="evenodd"
+      d="M128 36C76 36 56 84 56 116L56 204c6 18 30 18 36 0c6 18 30 18 36 0c6 18 30 18 36 0c6 18 30 18 36 0L200 116C200 84 180 36 128 36ZM118 112a14 14 0 1 0-28 0a14 14 0 1 0 28 0ZM166 112a14 14 0 1 0-28 0a14 14 0 1 0 28 0Z"
+    />
   </svg>
 );
 
