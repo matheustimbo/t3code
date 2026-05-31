@@ -28,7 +28,7 @@ import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import { isElectron } from "../../env";
 import { buildHostedChannelSelectionUrl, type HostedAppChannel } from "../../hostedPairing";
-import { useTheme } from "../../hooks/useTheme";
+import { useTheme, type Theme } from "../../hooks/useTheme";
 import { useSettings, useUpdateSettings } from "../../hooks/useSettings";
 import { useThreadActions } from "../../hooks/useThreadActions";
 import {
@@ -90,6 +90,22 @@ const THEME_OPTIONS = [
   {
     value: "dark",
     label: "Dark",
+  },
+  {
+    value: "catppuccin-latte",
+    label: "Catppuccin Latte",
+  },
+  {
+    value: "catppuccin-frappe",
+    label: "Catppuccin Frappé",
+  },
+  {
+    value: "catppuccin-macchiato",
+    label: "Catppuccin Macchiato",
+  },
+  {
+    value: "catppuccin-mocha",
+    label: "Catppuccin Mocha",
   },
 ] as const;
 
@@ -529,8 +545,8 @@ export function GeneralSettingsPanel() {
             <Select
               value={theme}
               onValueChange={(value) => {
-                if (value === "system" || value === "light" || value === "dark") {
-                  setTheme(value);
+                if (THEME_OPTIONS.some((option) => option.value === value)) {
+                  setTheme(value as Theme);
                 }
               }}
             >

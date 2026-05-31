@@ -3,10 +3,32 @@ export const DIFF_THEME_NAMES = {
   dark: "pierre-dark",
 } as const;
 
-export type DiffThemeName = (typeof DIFF_THEME_NAMES)[keyof typeof DIFF_THEME_NAMES];
+export type DiffThemeName =
+  | "pierre-light"
+  | "pierre-dark"
+  | "catppuccin-latte"
+  | "catppuccin-frappe"
+  | "catppuccin-macchiato"
+  | "catppuccin-mocha";
 
-export function resolveDiffThemeName(theme: "light" | "dark"): DiffThemeName {
-  return theme === "dark" ? DIFF_THEME_NAMES.dark : DIFF_THEME_NAMES.light;
+export const CATPPUCCIN_CODE_THEMES = [
+  "catppuccin-latte",
+  "catppuccin-frappe",
+  "catppuccin-macchiato",
+  "catppuccin-mocha",
+] as const;
+
+export const ALL_CODE_THEME_NAMES: DiffThemeName[] = [
+  DIFF_THEME_NAMES.dark,
+  DIFF_THEME_NAMES.light,
+  ...CATPPUCCIN_CODE_THEMES,
+];
+
+// theme is the app Theme string (e.g. "catppuccin-mocha" | "dark" | "system" already resolved
+// upstream to light/dark via resolvedTheme)
+export function resolveCodeThemeName(theme: string, resolvedTheme: "light" | "dark"): DiffThemeName {
+  if (theme.startsWith("catppuccin-")) return theme as DiffThemeName;
+  return resolvedTheme === "dark" ? DIFF_THEME_NAMES.dark : DIFF_THEME_NAMES.light;
 }
 
 const FNV_OFFSET_BASIS_32 = 0x811c9dc5;

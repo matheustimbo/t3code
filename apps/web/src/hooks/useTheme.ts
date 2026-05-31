@@ -1,10 +1,28 @@
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 
-type Theme = "light" | "dark" | "system";
+export type Theme =
+  | "system"
+  | "light"
+  | "dark"
+  | "catppuccin-latte"
+  | "catppuccin-frappe"
+  | "catppuccin-macchiato"
+  | "catppuccin-mocha";
+type DesktopTheme = "light" | "dark" | "system";
 type ThemeSnapshot = {
   theme: Theme;
   systemDark: boolean;
 };
+
+const THEME_VALUES = [
+  "system",
+  "light",
+  "dark",
+  "catppuccin-latte",
+  "catppuccin-frappe",
+  "catppuccin-macchiato",
+  "catppuccin-mocha",
+] as const;
 
 const STORAGE_KEY = "t3code:theme";
 const MEDIA_QUERY = "(prefers-color-scheme: dark)";
@@ -17,7 +35,7 @@ const DYNAMIC_THEME_COLOR_SELECTOR = `meta[name="${THEME_COLOR_META_NAME}"][data
 
 let listeners: Array<() => void> = [];
 let lastSnapshot: ThemeSnapshot | null = null;
-let lastDesktopTheme: Theme | null = null;
+let lastDesktopTheme: DesktopTheme | null = null;
 
 function emitChange() {
   for (const listener of listeners) listener();
@@ -34,8 +52,22 @@ function getSystemDark() {
 function getStored(): Theme {
   if (!hasThemeStorage()) return DEFAULT_THEME_SNAPSHOT.theme;
   const raw = localStorage.getItem(STORAGE_KEY);
-  if (raw === "light" || raw === "dark" || raw === "system") return raw;
+  if (raw !== null && (THEME_VALUES as readonly string[]).includes(raw)) return raw as Theme;
   return DEFAULT_THEME_SNAPSHOT.theme;
+}
+
+// Catppuccin Latte is the light flavor; Frappé/Macchiato/Mocha are dark.
+function isDarkTheme(theme: Theme, systemDark: boolean): boolean {
+  if (theme === "system") return systemDark;
+  if (theme === "light" || theme === "catppuccin-latte") return false;
+  return true;
+}
+
+// nativeTheme.themeSource (and the DesktopThemeSchema contract) only accept
+// "light" | "dark" | "system", so collapse named flavors before crossing the bridge.
+function toDesktopTheme(theme: Theme): DesktopTheme {
+  if (theme === "light" || theme === "dark" || theme === "system") return theme;
+  return theme === "catppuccin-latte" ? "light" : "dark";
 }
 
 function ensureThemeColorMetaTag(): HTMLMetaElement {
@@ -92,8 +124,16 @@ function applyTheme(theme: Theme, suppressTransitions = false) {
   if (suppressTransitions) {
     document.documentElement.classList.add("no-transitions");
   }
-  const isDark = theme === "dark" || (theme === "system" && getSystemDark());
+  const isDark = isDarkTheme(theme, getSystemDark());
   document.documentElement.classList.toggle("dark", isDark);
+  // Named palette themes (Catppuccin flavors) opt in via a data-theme attribute;
+  // the .dark class is still toggled so .dark-scoped base rules resolve correctly,
+  // while the higher-specificity :root[data-theme=...] rules win for palette tokens.
+  if (theme.startsWith("catppuccin-")) {
+    document.documentElement.setAttribute("data-theme", theme);
+  } else {
+    document.documentElement.removeAttribute("data-theme");
+  }
   syncBrowserChromeTheme();
   syncDesktopTheme(theme);
   if (suppressTransitions) {
@@ -109,13 +149,14 @@ function applyTheme(theme: Theme, suppressTransitions = false) {
 function syncDesktopTheme(theme: Theme) {
   if (typeof window === "undefined") return;
   const bridge = window.desktopBridge;
-  if (!bridge || lastDesktopTheme === theme) {
+  const desktopTheme = toDesktopTheme(theme);
+  if (!bridge || lastDesktopTheme === desktopTheme) {
     return;
   }
 
-  lastDesktopTheme = theme;
-  void bridge.setTheme(theme).catch(() => {
-    if (lastDesktopTheme === theme) {
+  lastDesktopTheme = desktopTheme;
+  void bridge.setTheme(desktopTheme).catch(() => {
+    if (lastDesktopTheme === desktopTheme) {
       lastDesktopTheme = null;
     }
   });
@@ -175,8 +216,7 @@ export function useTheme() {
   const snapshot = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
   const theme = snapshot.theme;
 
-  const resolvedTheme: "light" | "dark" =
-    theme === "system" ? (snapshot.systemDark ? "dark" : "light") : theme;
+  const resolvedTheme: "light" | "dark" = isDarkTheme(theme, snapshot.systemDark) ? "dark" : "light";
 
   const setTheme = useCallback((next: Theme) => {
     if (!hasThemeStorage()) return;
