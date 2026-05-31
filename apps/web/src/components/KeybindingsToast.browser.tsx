@@ -122,6 +122,13 @@ function createBaseServerConfig(): ServerConfig {
           customModels: [],
           launchArgs: "",
         },
+        verboo: {
+          enabled: true,
+          binaryPath: "",
+          homePath: "",
+          customModels: [],
+          launchArgs: "",
+        },
         cursor: { enabled: true, binaryPath: "", apiEndpoint: "", customModels: [] },
         opencode: {
           enabled: true,

@@ -361,7 +361,7 @@ type ClaudeCapabilitiesProbe = {
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
 };
 
-function parseClaudeInitializationCommands(
+export function parseClaudeInitializationCommands(
   commands: ReadonlyArray<ClaudeSlashCommand> | undefined,
 ): ReadonlyArray<ServerProviderSlashCommand> {
   return dedupeSlashCommands(
@@ -385,7 +385,7 @@ function parseClaudeInitializationCommands(
   );
 }
 
-function dedupeSlashCommands(
+export function dedupeSlashCommands(
   commands: ReadonlyArray<ServerProviderSlashCommand>,
 ): ReadonlyArray<ServerProviderSlashCommand> {
   const commandsByName = new Map<string, ServerProviderSlashCommand>();
@@ -424,7 +424,7 @@ function dedupeSlashCommands(
   return [...commandsByName.values()];
 }
 
-function waitForAbortSignal(signal: AbortSignal): Promise<void> {
+export function waitForAbortSignal(signal: AbortSignal): Promise<void> {
   if (signal.aborted) {
     return Promise.resolve();
   }

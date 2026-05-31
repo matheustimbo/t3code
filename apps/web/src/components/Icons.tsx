@@ -491,6 +491,17 @@ export const ClaudeAI: Icon = ({ className, ...props }) => (
   </svg>
 );
 
+export const VerbooIcon: Icon = ({ className, ...props }) => (
+  <svg
+    {...props}
+    preserveAspectRatio="xMidYMid"
+    viewBox="0 0 256 256"
+    className={cn("fill-[#6366f1]", className)}
+  >
+    <path d="M48 40h36.5L128 168.5 171.5 40H208l-64 176h-32L48 40Z" />
+  </svg>
+);
+
 export const Gemini: Icon = (props) => (
   <svg {...props} viewBox="0 0 296 298" fill="none">
     <mask
