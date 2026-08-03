@@ -55,15 +55,17 @@ function downloadDesktopUpdate(): void {
  * guidance text is shown — there is no server-install path for this case.
  *
  * After `checkForUpdate`, desktop state is applied asynchronously via updater
- * events. We wait for that settled state (not the immediate return value)
- * before downloading or reporting "up to date".
+ * events. We ignore the pre-check snapshot and only continue once `checkedAt`
+ * advances (or status becomes `checking`) and then settles to a terminal status.
  */
 export function ClientUpdateAction({ label = "Update client" }: { readonly label?: string }) {
   const updateState = useDesktopUpdateState();
-  const [awaitingCheckResult, setAwaitingCheckResult] = useState(false);
+  const [pendingCheck, setPendingCheck] = useState<{
+    readonly baselineCheckedAt: string | null;
+  } | null>(null);
 
   const action = updateState ? resolveDesktopUpdateButtonAction(updateState) : "none";
-  const checking = updateState?.status === "checking" || awaitingCheckResult;
+  const checking = updateState?.status === "checking" || pendingCheck !== null;
   const downloading = updateState?.status === "downloading";
   const updatesDisabled =
     updateState !== null && (!updateState.enabled || updateState.status === "disabled");
@@ -88,16 +90,22 @@ export function ClientUpdateAction({ label = "Update client" }: { readonly label
             : label;
 
   useEffect(() => {
-    if (!awaitingCheckResult || !updateState) {
+    if (!pendingCheck || !updateState) {
       return;
     }
-    // Desktop applies update-available / up-to-date asynchronously after
-    // checkForUpdate resolves; stay pending until status leaves "checking".
+
+    const checkAdvanced =
+      updateState.status === "checking" || updateState.checkedAt !== pendingCheck.baselineCheckedAt;
+    if (!checkAdvanced) {
+      // Still looking at the pre-click snapshot; wait for desktop to publish
+      // check-start / check-result state.
+      return;
+    }
     if (updateState.status === "checking") {
       return;
     }
 
-    setAwaitingCheckResult(false);
+    setPendingCheck(null);
 
     const nextAction = resolveDesktopUpdateButtonAction(updateState);
     if (nextAction === "download") {
@@ -125,7 +133,7 @@ export function ClientUpdateAction({ label = "Update client" }: { readonly label
         }),
       );
     }
-  }, [awaitingCheckResult, updateState]);
+  }, [pendingCheck, updateState]);
 
   const handleClick = useCallback(() => {
     const bridge = window.desktopBridge;
@@ -171,12 +179,12 @@ export function ClientUpdateAction({ label = "Update client" }: { readonly label
     }
 
     if (typeof bridge.checkForUpdate !== "function") return;
-    setAwaitingCheckResult(true);
+    setPendingCheck({ baselineCheckedAt: updateState?.checkedAt ?? null });
     void bridge
       .checkForUpdate()
       .then((result) => {
         if (!result.checked) {
-          setAwaitingCheckResult(false);
+          setPendingCheck(null);
           toastManager.add(
             stackedThreadToast({
               type: "error",
@@ -190,7 +198,7 @@ export function ClientUpdateAction({ label = "Update client" }: { readonly label
         // in flight. The effect above continues once desktop update state settles.
       })
       .catch((error: unknown) => {
-        setAwaitingCheckResult(false);
+        setPendingCheck(null);
         toastManager.add(
           stackedThreadToast({
             type: "error",
