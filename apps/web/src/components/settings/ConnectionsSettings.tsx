@@ -109,6 +109,7 @@ import {
 import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
 import { useUiStateStore } from "~/uiStateStore";
 import {
+  clientUpdateGuidance,
   resolveServerConfigVersionMismatch,
   resolveServerSelfUpdateCapability,
 } from "~/versionSkew";
@@ -135,6 +136,7 @@ import {
 import { useAtomCommand } from "../../state/use-atom-command";
 import { serverEnvironment } from "~/state/server";
 import { ConnectionStatusDot } from "../ConnectionStatusDot";
+import { ClientUpdateAction } from "../ClientUpdateAction";
 import { ServerUpdateAction, ServerUpdateProgress } from "../ServerUpdateAction";
 import { CloudEnvironmentConnectRows } from "../cloud/CloudEnvironmentConnectList";
 import { ITEM_ROW_CLASSNAME, ITEM_ROW_INNER_CLASSNAME } from "./itemRows";
@@ -1431,7 +1433,7 @@ function SavedBackendListRow({
           {metadataBits.length > 0 ? (
             <p className="text-xs text-muted-foreground">{metadataBits.join(" · ")}</p>
           ) : null}
-          {serverUpdateState.status !== "idle" ? (
+          {versionMismatch?.outdatedSide !== "client" && serverUpdateState.status !== "idle" ? (
             <div className="max-w-md">
               <ServerUpdateProgress
                 fromVersion={serverUpdateState.fromVersion}
@@ -1443,6 +1445,7 @@ function SavedBackendListRow({
               <TriangleAlertIcon className="size-3.5 shrink-0" />
               Version drift: client {versionMismatch.clientVersion}, server{" "}
               {versionMismatch.serverVersion}.
+              {versionMismatch.outdatedSide === "client" ? ` ${clientUpdateGuidance()}` : null}
             </p>
           ) : null}
           {environment.connection.error && !resumingServerUpdate ? (
@@ -1461,8 +1464,10 @@ function SavedBackendListRow({
           ) : null}
         </div>
         <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
-          {versionMismatch &&
-          (serverUpdateState.status === "idle" || serverUpdateState.status === "failed") ? (
+          {versionMismatch?.outdatedSide === "client" ? (
+            <ClientUpdateAction />
+          ) : versionMismatch &&
+            (serverUpdateState.status === "idle" || serverUpdateState.status === "failed") ? (
             <ServerUpdateAction
               environmentId={environmentId}
               serverLabel={`${environment.label} server`}
@@ -3001,13 +3006,16 @@ export function ConnectionsSettings() {
             {primaryVersionMismatch || primaryServerUpdateState.status !== "idle" ? (
               <SettingsRow
                 title={
+                  primaryVersionMismatch?.outdatedSide !== "client" &&
                   primaryServerUpdateState.status === "failed"
                     ? "Update failed"
-                    : primaryServerUpdateState.status === "running"
+                    : primaryVersionMismatch?.outdatedSide !== "client" &&
+                        primaryServerUpdateState.status === "running"
                       ? "Updating server"
                       : "Version drift"
                 }
                 description={
+                  primaryVersionMismatch?.outdatedSide !== "client" &&
                   primaryServerUpdateState.status !== "idle" ? (
                     <ServerUpdateProgress
                       fromVersion={primaryServerUpdateState.fromVersion}
@@ -3017,15 +3025,19 @@ export function ConnectionsSettings() {
                     <span className="flex items-center gap-1 text-warning">
                       <TriangleAlertIcon className="size-3.5 shrink-0" />
                       Client {primaryVersionMismatch.clientVersion}, server{" "}
-                      {primaryVersionMismatch.serverVersion}. Sync them if RPC calls or reconnects
-                      fail.
+                      {primaryVersionMismatch.serverVersion}.{" "}
+                      {primaryVersionMismatch.outdatedSide === "client"
+                        ? clientUpdateGuidance()
+                        : "Sync them if RPC calls or reconnects fail."}
                     </span>
                   ) : null
                 }
                 control={
-                  primaryVersionMismatch &&
-                  primaryEnvironmentId !== null &&
-                  primaryServerUpdateState.status !== "running" ? (
+                  primaryVersionMismatch?.outdatedSide === "client" ? (
+                    <ClientUpdateAction />
+                  ) : primaryVersionMismatch &&
+                    primaryEnvironmentId !== null &&
+                    primaryServerUpdateState.status !== "running" ? (
                     <ServerUpdateAction
                       environmentId={primaryEnvironmentId}
                       serverLabel={primaryEnvironment?.label ?? "this server"}
