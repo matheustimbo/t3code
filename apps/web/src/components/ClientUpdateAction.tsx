@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { DesktopUpdateState } from "@t3tools/contracts";
 
 import { isElectron } from "../env";
@@ -25,6 +25,12 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+async function waitForClientUpdateCheckIdle(): Promise<void> {
+  while (clientUpdateCheckInFlight) {
+    await sleep(CHECK_SETTLE_POLL_MS);
+  }
 }
 
 function downloadDesktopUpdate(): void {
@@ -95,11 +101,16 @@ function handleSettledCheckState(state: DesktopUpdateState): void {
  * Runs check → wait for settled desktop update state → download. Lives outside
  * React so unmounting ClientUpdateAction (dismiss banner / leave Connections)
  * cannot cancel the continuation.
+ *
+ * Returns whether this call owned the in-flight work. Callers must not clear
+ * pending UI on `"skipped"` until `waitForClientUpdateCheckIdle()` resolves.
  */
-async function checkThenDownloadDesktopUpdate(baselineCheckedAt: string | null): Promise<void> {
+async function checkThenDownloadDesktopUpdate(
+  baselineCheckedAt: string | null,
+): Promise<"owned" | "skipped"> {
   const bridge = window.desktopBridge;
-  if (!bridge || typeof bridge.checkForUpdate !== "function") return;
-  if (clientUpdateCheckInFlight) return;
+  if (!bridge || typeof bridge.checkForUpdate !== "function") return "skipped";
+  if (clientUpdateCheckInFlight) return "skipped";
 
   clientUpdateCheckInFlight = true;
   try {
@@ -112,7 +123,7 @@ async function checkThenDownloadDesktopUpdate(baselineCheckedAt: string | null):
           description: result.state.message ?? "Automatic updates are not available in this build.",
         }),
       );
-      return;
+      return "owned";
     }
 
     const deadline = Date.now() + CHECK_SETTLE_TIMEOUT_MS;
@@ -124,7 +135,7 @@ async function checkThenDownloadDesktopUpdate(baselineCheckedAt: string | null):
         continue;
       }
       handleSettledCheckState(state);
-      return;
+      return "owned";
     }
 
     toastManager.add(
@@ -134,6 +145,7 @@ async function checkThenDownloadDesktopUpdate(baselineCheckedAt: string | null):
         description: "Timed out waiting for the desktop updater to finish checking.",
       }),
     );
+    return "owned";
   } catch (error: unknown) {
     toastManager.add(
       stackedThreadToast({
@@ -142,6 +154,7 @@ async function checkThenDownloadDesktopUpdate(baselineCheckedAt: string | null):
         description: error instanceof Error ? error.message : "Update check failed.",
       }),
     );
+    return "owned";
   } finally {
     clientUpdateCheckInFlight = false;
   }
@@ -154,7 +167,17 @@ async function checkThenDownloadDesktopUpdate(baselineCheckedAt: string | null):
  */
 export function ClientUpdateAction({ label = "Update client" }: { readonly label?: string }) {
   const updateState = useDesktopUpdateState();
-  const [localCheckPending, setLocalCheckPending] = useState(false);
+  const [localCheckPending, setLocalCheckPending] = useState(clientUpdateCheckInFlight);
+
+  useEffect(() => {
+    if (!clientUpdateCheckInFlight) {
+      return;
+    }
+    setLocalCheckPending(true);
+    void waitForClientUpdateCheckIdle().then(() => {
+      setLocalCheckPending(false);
+    });
+  }, []);
 
   const action = updateState ? resolveDesktopUpdateButtonAction(updateState) : "none";
   const checking = updateState?.status === "checking" || localCheckPending;
@@ -225,7 +248,10 @@ export function ClientUpdateAction({ label = "Update client" }: { readonly label
     }
 
     setLocalCheckPending(true);
-    void checkThenDownloadDesktopUpdate(updateState?.checkedAt ?? null).finally(() => {
+    void checkThenDownloadDesktopUpdate(updateState?.checkedAt ?? null).then(async (outcome) => {
+      if (outcome === "skipped") {
+        await waitForClientUpdateCheckIdle();
+      }
       setLocalCheckPending(false);
     });
   }, [action, updateState]);
