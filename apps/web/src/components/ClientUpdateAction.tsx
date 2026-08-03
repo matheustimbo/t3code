@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
+import type { DesktopUpdateState } from "@t3tools/contracts";
 
 import { isElectron } from "../env";
 import { useDesktopUpdateState } from "../state/desktopUpdate";
@@ -13,6 +14,18 @@ import {
 import { Button } from "./ui/button";
 import { Spinner } from "./ui/spinner";
 import { stackedThreadToast, toastManager } from "./ui/toast";
+
+const CHECK_SETTLE_TIMEOUT_MS = 60_000;
+const CHECK_SETTLE_POLL_MS = 200;
+
+/** Module-scoped so banner dismiss / route changes cannot drop an in-flight check. */
+let clientUpdateCheckInFlight = false;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
 
 function downloadDesktopUpdate(): void {
   const bridge = window.desktopBridge;
@@ -49,23 +62,102 @@ function downloadDesktopUpdate(): void {
     });
 }
 
+function handleSettledCheckState(state: DesktopUpdateState): void {
+  const nextAction = resolveDesktopUpdateButtonAction(state);
+  if (nextAction === "download") {
+    downloadDesktopUpdate();
+    return;
+  }
+  if (nextAction === "install") {
+    return;
+  }
+  if (state.status === "up-to-date") {
+    toastManager.add({
+      type: "info",
+      title: "No newer desktop update found",
+      description:
+        "This build may not have a published update yet. Install a newer T3 Code desktop build to match the server.",
+    });
+    return;
+  }
+  if (state.status === "error") {
+    toastManager.add(
+      stackedThreadToast({
+        type: "error",
+        title: "Could not check for updates",
+        description: state.message ?? "Update check failed.",
+      }),
+    );
+  }
+}
+
+/**
+ * Runs check → wait for settled desktop update state → download. Lives outside
+ * React so unmounting ClientUpdateAction (dismiss banner / leave Connections)
+ * cannot cancel the continuation.
+ */
+async function checkThenDownloadDesktopUpdate(baselineCheckedAt: string | null): Promise<void> {
+  const bridge = window.desktopBridge;
+  if (!bridge || typeof bridge.checkForUpdate !== "function") return;
+  if (clientUpdateCheckInFlight) return;
+
+  clientUpdateCheckInFlight = true;
+  try {
+    const result = await bridge.checkForUpdate();
+    if (!result.checked) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Could not check for updates",
+          description: result.state.message ?? "Automatic updates are not available in this build.",
+        }),
+      );
+      return;
+    }
+
+    const deadline = Date.now() + CHECK_SETTLE_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      const state = await bridge.getUpdateState();
+      const checkAdvanced = state.status === "checking" || state.checkedAt !== baselineCheckedAt;
+      if (!checkAdvanced || state.status === "checking") {
+        await sleep(CHECK_SETTLE_POLL_MS);
+        continue;
+      }
+      handleSettledCheckState(state);
+      return;
+    }
+
+    toastManager.add(
+      stackedThreadToast({
+        type: "error",
+        title: "Could not check for updates",
+        description: "Timed out waiting for the desktop updater to finish checking.",
+      }),
+    );
+  } catch (error: unknown) {
+    toastManager.add(
+      stackedThreadToast({
+        type: "error",
+        title: "Could not check for updates",
+        description: error instanceof Error ? error.message : "Update check failed.",
+      }),
+    );
+  } finally {
+    clientUpdateCheckInFlight = false;
+  }
+}
+
 /**
  * Call-to-action when this client is behind the connected server. On desktop,
  * drives the Electron updater (check → download → install). Elsewhere, only
  * guidance text is shown — there is no server-install path for this case.
- *
- * After `checkForUpdate`, desktop state is applied asynchronously via updater
- * events. We ignore the pre-check snapshot and only continue once `checkedAt`
- * advances (or status becomes `checking`) and then settles to a terminal status.
  */
 export function ClientUpdateAction({ label = "Update client" }: { readonly label?: string }) {
   const updateState = useDesktopUpdateState();
-  const [pendingCheck, setPendingCheck] = useState<{
-    readonly baselineCheckedAt: string | null;
-  } | null>(null);
+  const [localCheckPending, setLocalCheckPending] = useState(false);
 
   const action = updateState ? resolveDesktopUpdateButtonAction(updateState) : "none";
-  const checking = updateState?.status === "checking" || pendingCheck !== null;
+  const checking = updateState?.status === "checking" || localCheckPending;
   const downloading = updateState?.status === "downloading";
   const updatesDisabled =
     updateState !== null && (!updateState.enabled || updateState.status === "disabled");
@@ -88,52 +180,6 @@ export function ClientUpdateAction({ label = "Update client" }: { readonly label
           : checking
             ? "Checking…"
             : label;
-
-  useEffect(() => {
-    if (!pendingCheck || !updateState) {
-      return;
-    }
-
-    const checkAdvanced =
-      updateState.status === "checking" || updateState.checkedAt !== pendingCheck.baselineCheckedAt;
-    if (!checkAdvanced) {
-      // Still looking at the pre-click snapshot; wait for desktop to publish
-      // check-start / check-result state.
-      return;
-    }
-    if (updateState.status === "checking") {
-      return;
-    }
-
-    setPendingCheck(null);
-
-    const nextAction = resolveDesktopUpdateButtonAction(updateState);
-    if (nextAction === "download") {
-      downloadDesktopUpdate();
-      return;
-    }
-    if (nextAction === "install") {
-      return;
-    }
-    if (updateState.status === "up-to-date") {
-      toastManager.add({
-        type: "info",
-        title: "No newer desktop update found",
-        description:
-          "This build may not have a published update yet. Install a newer T3 Code desktop build to match the server.",
-      });
-      return;
-    }
-    if (updateState.status === "error") {
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Could not check for updates",
-          description: updateState.message ?? "Update check failed.",
-        }),
-      );
-    }
-  }, [pendingCheck, updateState]);
 
   const handleClick = useCallback(() => {
     const bridge = window.desktopBridge;
@@ -178,35 +224,10 @@ export function ClientUpdateAction({ label = "Update client" }: { readonly label
       return;
     }
 
-    if (typeof bridge.checkForUpdate !== "function") return;
-    setPendingCheck({ baselineCheckedAt: updateState?.checkedAt ?? null });
-    void bridge
-      .checkForUpdate()
-      .then((result) => {
-        if (!result.checked) {
-          setPendingCheck(null);
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Could not check for updates",
-              description:
-                result.state.message ?? "Automatic updates are not available in this build.",
-            }),
-          );
-        }
-        // Do not download from result.state here — updater events may still be
-        // in flight. The effect above continues once desktop update state settles.
-      })
-      .catch((error: unknown) => {
-        setPendingCheck(null);
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Could not check for updates",
-            description: error instanceof Error ? error.message : "Update check failed.",
-          }),
-        );
-      });
+    setLocalCheckPending(true);
+    void checkThenDownloadDesktopUpdate(updateState?.checkedAt ?? null).finally(() => {
+      setLocalCheckPending(false);
+    });
   }, [action, updateState]);
 
   if (!isElectron) {
