@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useSyncExternalStore } from "react";
 import type { DesktopUpdateState } from "@t3tools/contracts";
 
 import { isElectron } from "../env";
@@ -20,17 +20,39 @@ const CHECK_SETTLE_POLL_MS = 200;
 
 /** Module-scoped so banner dismiss / route changes cannot drop an in-flight check. */
 let clientUpdateCheckInFlight = false;
+const clientUpdateCheckListeners = new Set<() => void>();
+
+function setClientUpdateCheckInFlight(next: boolean): void {
+  if (clientUpdateCheckInFlight === next) return;
+  clientUpdateCheckInFlight = next;
+  for (const listener of clientUpdateCheckListeners) {
+    listener();
+  }
+}
+
+function subscribeClientUpdateCheckInFlight(listener: () => void): () => void {
+  clientUpdateCheckListeners.add(listener);
+  return () => {
+    clientUpdateCheckListeners.delete(listener);
+  };
+}
+
+function getClientUpdateCheckInFlightSnapshot(): boolean {
+  return clientUpdateCheckInFlight;
+}
+
+function useClientUpdateCheckInFlight(): boolean {
+  return useSyncExternalStore(
+    subscribeClientUpdateCheckInFlight,
+    getClientUpdateCheckInFlightSnapshot,
+    () => false,
+  );
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
-}
-
-async function waitForClientUpdateCheckIdle(): Promise<void> {
-  while (clientUpdateCheckInFlight) {
-    await sleep(CHECK_SETTLE_POLL_MS);
-  }
 }
 
 function downloadDesktopUpdate(): void {
@@ -102,8 +124,7 @@ function handleSettledCheckState(state: DesktopUpdateState): void {
  * React so unmounting ClientUpdateAction (dismiss banner / leave Connections)
  * cannot cancel the continuation.
  *
- * Returns whether this call owned the in-flight work. Callers must not clear
- * pending UI on `"skipped"` until `waitForClientUpdateCheckIdle()` resolves.
+ * Returns whether this call owned the in-flight work.
  */
 async function checkThenDownloadDesktopUpdate(
   baselineCheckedAt: string | null,
@@ -112,7 +133,7 @@ async function checkThenDownloadDesktopUpdate(
   if (!bridge || typeof bridge.checkForUpdate !== "function") return "skipped";
   if (clientUpdateCheckInFlight) return "skipped";
 
-  clientUpdateCheckInFlight = true;
+  setClientUpdateCheckInFlight(true);
   try {
     const result = await bridge.checkForUpdate();
     if (!result.checked) {
@@ -156,7 +177,7 @@ async function checkThenDownloadDesktopUpdate(
     );
     return "owned";
   } finally {
-    clientUpdateCheckInFlight = false;
+    setClientUpdateCheckInFlight(false);
   }
 }
 
@@ -167,20 +188,10 @@ async function checkThenDownloadDesktopUpdate(
  */
 export function ClientUpdateAction({ label = "Update client" }: { readonly label?: string }) {
   const updateState = useDesktopUpdateState();
-  const [localCheckPending, setLocalCheckPending] = useState(clientUpdateCheckInFlight);
-
-  useEffect(() => {
-    if (!clientUpdateCheckInFlight) {
-      return;
-    }
-    setLocalCheckPending(true);
-    void waitForClientUpdateCheckIdle().then(() => {
-      setLocalCheckPending(false);
-    });
-  }, []);
+  const checkInFlight = useClientUpdateCheckInFlight();
 
   const action = updateState ? resolveDesktopUpdateButtonAction(updateState) : "none";
-  const checking = updateState?.status === "checking" || localCheckPending;
+  const checking = updateState?.status === "checking" || checkInFlight;
   const downloading = updateState?.status === "downloading";
   const updatesDisabled =
     updateState !== null && (!updateState.enabled || updateState.status === "disabled");
@@ -247,13 +258,7 @@ export function ClientUpdateAction({ label = "Update client" }: { readonly label
       return;
     }
 
-    setLocalCheckPending(true);
-    void checkThenDownloadDesktopUpdate(updateState?.checkedAt ?? null).then(async (outcome) => {
-      if (outcome === "skipped") {
-        await waitForClientUpdateCheckIdle();
-      }
-      setLocalCheckPending(false);
-    });
+    void checkThenDownloadDesktopUpdate(updateState?.checkedAt ?? null);
   }, [action, updateState]);
 
   if (!isElectron) {
