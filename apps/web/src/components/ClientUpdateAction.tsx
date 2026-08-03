@@ -137,14 +137,31 @@ async function checkThenDownloadDesktopUpdate(
   try {
     const result = await bridge.checkForUpdate();
     if (!result.checked) {
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Could not check for updates",
-          description: result.state.message ?? "Automatic updates are not available in this build.",
-        }),
-      );
-      return "owned";
+      // `checked: false` is not always a hard failure — desktop skips starting a
+      // second check while one is already in flight (or while download/install is
+      // active). Join the in-flight check via polling; otherwise act on current state.
+      if (result.state.status === "checking") {
+        // fall through to the settle poll below
+      } else {
+        handleSettledCheckState(result.state);
+        const nextAction = resolveDesktopUpdateButtonAction(result.state);
+        if (
+          nextAction === "none" &&
+          result.state.status !== "downloading" &&
+          result.state.status !== "up-to-date" &&
+          result.state.status !== "error"
+        ) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Could not check for updates",
+              description:
+                result.state.message ?? "Automatic updates are not available in this build.",
+            }),
+          );
+        }
+        return "owned";
+      }
     }
 
     const deadline = Date.now() + CHECK_SETTLE_TIMEOUT_MS;
