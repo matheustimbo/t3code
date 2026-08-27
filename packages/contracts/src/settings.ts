@@ -2,7 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
-import { TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
+import { NonNegativeInt, TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
 import { ThreadEnvMode } from "./environment.ts";
 import {
   DEFAULT_TEXT_GENERATION_MODEL,
@@ -690,6 +690,9 @@ export const ServerSettings = Schema.Struct({
     TicketProviderInstanceId,
     TicketProviderInstanceConfig,
   ).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  ticketProviderInstancesRevision: NonNegativeInt.pipe(
+    Schema.withDecodingDefault(Effect.succeed(0)),
+  ),
 
   // Legacy single-instance-per-driver settings. Continues to be the source
   // of truth until `providerInstances` (below) lands per-driver migration
@@ -764,6 +767,7 @@ export const resolveProviderInstanceEnabled = (
 
 export const ServerSettingsOperation = Schema.Literals([
   "normalize",
+  "compare-and-set",
   "check-exists",
   "read-file",
   "read-provider-history",

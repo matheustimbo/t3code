@@ -421,6 +421,7 @@ describe("ServerSettings ticket title configuration", () => {
       customTemplate: "{identifier} — {title}",
     });
     expect(settings.ticketProviderInstances).toEqual({});
+    expect(settings.ticketProviderInstancesRevision).toBe(0);
   });
 
   it("preserves open ticket driver slugs and whole-map instance patches", () => {

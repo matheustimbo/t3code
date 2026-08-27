@@ -181,6 +181,29 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
   return { ...settings, providerInstances, ticketProviderInstances };
 }
 
+export interface ServerSettingsUpdateOptions {
+  readonly expectedTicketProviderInstancesRevision?: number;
+}
+
+const checkTicketProviderInstancesRevision = (
+  current: ServerSettings,
+  patch: ServerSettingsPatch,
+  options: ServerSettingsUpdateOptions | undefined,
+  settingsPath: string,
+): Effect.Effect<void, ServerSettingsError> => {
+  if (patch.ticketProviderInstances === undefined || options === undefined) return Effect.void;
+  const expected = options?.expectedTicketProviderInstancesRevision;
+  if (expected === current.ticketProviderInstancesRevision) return Effect.void;
+  return new ServerSettingsError({
+    settingsPath,
+    operation: "compare-and-set",
+    cause: {
+      expectedTicketProviderInstancesRevision: expected,
+      actualTicketProviderInstancesRevision: current.ticketProviderInstancesRevision,
+    },
+  });
+};
+
 export class ServerSettingsService extends Context.Service<
   ServerSettingsService,
   {
@@ -196,6 +219,7 @@ export class ServerSettingsService extends Context.Service<
     /** Patch settings and persist. Returns the new full settings object. */
     readonly updateSettings: (
       patch: ServerSettingsPatch,
+      options?: ServerSettingsUpdateOptions,
     ) => Effect.Effect<ServerSettings, ServerSettingsError>;
 
     /** Stream of settings change events. */
@@ -233,8 +257,11 @@ const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
       start: Effect.void,
       ready: Effect.void,
       getSettings: Ref.get(currentSettingsRef).pipe(Effect.map(resolveTextGenerationProvider)),
-      updateSettings: (patch) =>
+      updateSettings: (patch, options) =>
         Ref.get(currentSettingsRef).pipe(
+          Effect.tap((currentSettings) =>
+            checkTicketProviderInstancesRevision(currentSettings, patch, options, "<memory>"),
+          ),
           Effect.map((currentSettings) => applyServerSettingsPatch(currentSettings, patch)),
           Effect.flatMap(normalizeServerSettings),
           Effect.tap((nextSettings) => Ref.set(currentSettingsRef, nextSettings)),
@@ -904,10 +931,11 @@ const make = Effect.gen(function* () {
       Effect.flatMap(materializeProviderEnvironmentSecrets),
       Effect.map(resolveTextGenerationProvider),
     ),
-    updateSettings: (patch) =>
+    updateSettings: (patch, options) =>
       writeSemaphore.withPermits(1)(
         Effect.gen(function* () {
           const current = yield* getSettingsFromCache;
+          yield* checkTicketProviderInstancesRevision(current, patch, options, settingsPath);
           const nextPersisted = yield* persistProviderEnvironmentSecrets(
             current,
             applyServerSettingsPatch(current, patch),

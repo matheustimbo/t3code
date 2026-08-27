@@ -459,13 +459,15 @@ export function TicketProviderSettings() {
     [settings.ticketProviderInstances],
   );
   const instancesRef = useRef(settings.ticketProviderInstances);
+  const instancesRevisionRef = useRef(settings.ticketProviderInstancesRevision);
   const instancesMutationQueueRef = useRef<Promise<void>>(Promise.resolve());
   const pendingInstanceMutationsRef = useRef(0);
   useEffect(() => {
     if (pendingInstanceMutationsRef.current === 0) {
       instancesRef.current = settings.ticketProviderInstances;
+      instancesRevisionRef.current = settings.ticketProviderInstancesRevision;
     }
-  }, [settings.ticketProviderInstances]);
+  }, [settings.ticketProviderInstances, settings.ticketProviderInstancesRevision]);
 
   const updateInstances = (
     update: (
@@ -477,13 +479,24 @@ export function TicketProviderSettings() {
     const operation = instancesMutationQueueRef.current.then(async () => {
       const previous = instancesRef.current;
       const next = update(previous);
+      const expectedTicketProviderInstancesRevision = instancesRevisionRef.current;
       instancesRef.current = next;
       const result = await persistProviderSettings({
         environmentId,
-        input: { patch: { ticketProviderInstances: next } },
+        input: {
+          patch: { ticketProviderInstances: next },
+          expectedTicketProviderInstancesRevision,
+        },
       });
       if (result._tag === "Failure") {
         instancesRef.current = previous;
+        toastManager.add({
+          type: "error",
+          title: "Ticket provider change not saved",
+          description: "Review the latest provider accounts and try again.",
+        });
+      } else {
+        instancesRevisionRef.current = result.value.ticketProviderInstancesRevision;
       }
     });
     instancesMutationQueueRef.current = operation.then(

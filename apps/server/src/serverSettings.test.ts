@@ -1101,6 +1101,49 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
+  it.effect("rejects a stale ticket provider instance revision", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const initial = yield* serverSettings.getSettings;
+      const githubId = TicketProviderInstanceId.make("github_work");
+      const jiraId = TicketProviderInstanceId.make("jira_work");
+
+      const updated = yield* serverSettings.updateSettings(
+        {
+          ticketProviderInstances: {
+            [githubId]: {
+              driver: TicketProviderDriverKind.make("github"),
+              baseUrl: "https://github.com",
+            },
+          },
+        },
+        { expectedTicketProviderInstancesRevision: initial.ticketProviderInstancesRevision },
+      );
+      const conflict = yield* Effect.flip(
+        serverSettings.updateSettings(
+          {
+            ticketProviderInstances: {
+              [jiraId]: {
+                driver: TicketProviderDriverKind.make("jira"),
+                baseUrl: "https://work.atlassian.net",
+              },
+            },
+          },
+          { expectedTicketProviderInstancesRevision: initial.ticketProviderInstancesRevision },
+        ),
+      );
+
+      assert.equal(
+        updated.ticketProviderInstancesRevision,
+        initial.ticketProviderInstancesRevision + 1,
+      );
+      assert.equal(conflict.operation, "compare-and-set");
+      assert.deepEqual((yield* serverSettings.getSettings).ticketProviderInstances, {
+        [githubId]: updated.ticketProviderInstances[githubId],
+      });
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("rolls back ordinary provider secrets when a ticket secret write fails", () => {
     const secrets = new Map<string, Uint8Array>();
     const failingStore = ServerSecretStore.ServerSecretStore.of({

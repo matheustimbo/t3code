@@ -135,6 +135,10 @@ function EnvironmentTicketProviders({
   const instancesRef = useRef<TicketProviderInstanceConfigMap>(
     settings?.ticketProviderInstances ?? DEFAULT_SERVER_SETTINGS.ticketProviderInstances,
   );
+  const instancesRevisionRef = useRef(
+    settings?.ticketProviderInstancesRevision ??
+      DEFAULT_SERVER_SETTINGS.ticketProviderInstancesRevision,
+  );
   const instancesMutationQueueRef = useRef<Promise<void>>(Promise.resolve());
   const pendingInstanceMutationsRef = useRef(0);
   const policyRef = useRef<TicketTitlePolicy>(
@@ -145,8 +149,9 @@ function EnvironmentTicketProviders({
   useEffect(() => {
     if (settings && pendingInstanceMutationsRef.current === 0) {
       instancesRef.current = settings.ticketProviderInstances;
+      instancesRevisionRef.current = settings.ticketProviderInstancesRevision;
     }
-  }, [settings?.ticketProviderInstances]);
+  }, [settings?.ticketProviderInstances, settings?.ticketProviderInstancesRevision]);
   useEffect(() => {
     if (settings && pendingPolicyMutationsRef.current === 0) {
       policyRef.current = settings.ticketTitlePolicy;
@@ -166,11 +171,17 @@ function EnvironmentTicketProviders({
     );
   }
 
-  const savePatch = (patch: ServerSettingsPatch) =>
+  const savePatch = (
+    patch: ServerSettingsPatch,
+    expectedTicketProviderInstancesRevision?: number,
+  ) =>
     runAtomCommand(
       registry,
       serverEnvironment.updateSettings,
-      { environmentId, input: { patch } },
+      {
+        environmentId,
+        input: { patch, expectedTicketProviderInstancesRevision },
+      },
       { label: "mobile ticket provider settings" },
     );
   const updatePolicy = (update: (current: TicketTitlePolicy) => TicketTitlePolicy) => {
@@ -217,12 +228,19 @@ function EnvironmentTicketProviders({
     const operation = instancesMutationQueueRef.current.then(async () => {
       const previous = instancesRef.current;
       const next = update(previous);
+      const expectedTicketProviderInstancesRevision = instancesRevisionRef.current;
       instancesRef.current = next;
-      const result = await savePatch({ ticketProviderInstances: next });
+      const result = await savePatch(
+        { ticketProviderInstances: next },
+        expectedTicketProviderInstancesRevision,
+      );
       if (result._tag !== "Success") {
         instancesRef.current = previous;
-        setError("The provider change could not be saved. Check the connection and try again.");
+        setError(
+          "The provider change could not be saved. Review the latest accounts and try again.",
+        );
       } else {
+        instancesRevisionRef.current = result.value.ticketProviderInstancesRevision;
         setError(null);
       }
       return result;

@@ -1672,11 +1672,16 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "server",
             },
           ),
-        [WS_METHODS.serverUpdateSettings]: ({ patch }) =>
+        [WS_METHODS.serverUpdateSettings]: ({ patch, expectedTicketProviderInstancesRevision }) =>
           observeRpcEffect(
             WS_METHODS.serverUpdateSettings,
             serverSettings
-              .updateSettings(patch)
+              .updateSettings(
+                patch,
+                expectedTicketProviderInstancesRevision === undefined
+                  ? {}
+                  : { expectedTicketProviderInstancesRevision },
+              )
               .pipe(Effect.map(ServerSettings.redactServerSettingsForClient)),
             {
               "rpc.aggregate": "server",
