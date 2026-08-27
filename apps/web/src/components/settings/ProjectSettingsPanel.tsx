@@ -605,11 +605,23 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
     projectId: selectedCheckout.id,
     bindings: selectedTicketProviderBindings,
   });
+  const confirmedTicketProviderBindingsRef = useRef(
+    new Map([[selectedCheckout.id, selectedTicketProviderBindings] as const]),
+  );
+  const ticketProviderBindingMutationQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const pendingTicketProviderBindingMutationsRef = useRef(0);
   useEffect(() => {
-    ticketProviderBindingsRef.current = {
-      projectId: selectedCheckout.id,
-      bindings: selectedTicketProviderBindings,
-    };
+    if (pendingTicketProviderBindingMutationsRef.current === 0) {
+      const snapshot = {
+        projectId: selectedCheckout.id,
+        bindings: selectedTicketProviderBindings,
+      };
+      ticketProviderBindingsRef.current = snapshot;
+      confirmedTicketProviderBindingsRef.current.set(
+        selectedCheckout.id,
+        selectedTicketProviderBindings,
+      );
+    }
   }, [selectedCheckout.id, selectedTicketProviderBindings]);
   const setTicketProviderBinding = useCallback(
     (driver: string, host: string, basePath: string, instanceId: string | null) => {
@@ -636,22 +648,39 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
             },
           ]
         : withoutBinding;
-      const previous = { projectId: selectedCheckout.id, bindings: current };
       ticketProviderBindingsRef.current = { projectId: selectedCheckout.id, bindings: next };
-      void updateProject({
-        environmentId: selectedCheckout.environmentId,
-        input: { projectId: selectedCheckout.id, ticketProviderBindings: next },
-      }).then((result) => {
-        const mapped = mapAtomCommandResult(result, () => undefined);
-        if (
-          mapped._tag === "Failure" &&
+      pendingTicketProviderBindingMutationsRef.current += 1;
+      const operation = ticketProviderBindingMutationQueueRef.current.then(async () => {
+        const mapped = mapAtomCommandResult(
+          await updateProject({
+            environmentId: selectedCheckout.environmentId,
+            input: { projectId: selectedCheckout.id, ticketProviderBindings: next },
+          }),
+          () => undefined,
+        );
+        if (mapped._tag === "Success") {
+          confirmedTicketProviderBindingsRef.current.set(selectedCheckout.id, next);
+        } else if (
           ticketProviderBindingsRef.current.projectId === selectedCheckout.id &&
           ticketProviderBindingsRef.current.bindings === next
         ) {
-          ticketProviderBindingsRef.current = previous;
+          ticketProviderBindingsRef.current = {
+            projectId: selectedCheckout.id,
+            bindings:
+              confirmedTicketProviderBindingsRef.current.get(selectedCheckout.id) ??
+              selectedTicketProviderBindings,
+          };
         }
         reportFailure("Failed to update ticket provider binding", mapped);
       });
+      ticketProviderBindingMutationQueueRef.current = operation.then(
+        () => {
+          pendingTicketProviderBindingMutationsRef.current -= 1;
+        },
+        () => {
+          pendingTicketProviderBindingMutationsRef.current -= 1;
+        },
+      );
     },
     [
       reportFailure,

@@ -630,8 +630,14 @@ function ProjectTicketTitles({ project }: { readonly project: EnvironmentProject
   }
 
   const bindingsRef = useRef(bindings);
+  const confirmedBindingsRef = useRef(bindings);
+  const bindingMutationQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const pendingBindingMutationsRef = useRef(0);
   useEffect(() => {
-    bindingsRef.current = bindings;
+    if (pendingBindingMutationsRef.current === 0) {
+      bindingsRef.current = bindings;
+      confirmedBindingsRef.current = bindings;
+    }
   }, [bindings]);
 
   const updateProject = (input: {
@@ -651,8 +657,7 @@ function ProjectTicketTitles({ project }: { readonly project: EnvironmentProject
     basePath: string,
     instanceId: string | null,
   ) => {
-    const previous = bindingsRef.current;
-    const remaining = previous.filter(
+    const remaining = bindingsRef.current.filter(
       (binding) =>
         !(
           binding.driver === driver &&
@@ -672,11 +677,23 @@ function ProjectTicketTitles({ project }: { readonly project: EnvironmentProject
         ]
       : remaining;
     bindingsRef.current = next;
-    void updateProject({ ticketProviderBindings: next }).then((result) => {
-      if (result._tag !== "Success" && bindingsRef.current === next) {
-        bindingsRef.current = previous;
+    pendingBindingMutationsRef.current += 1;
+    const operation = bindingMutationQueueRef.current.then(async () => {
+      const result = await updateProject({ ticketProviderBindings: next });
+      if (result._tag === "Success") {
+        confirmedBindingsRef.current = next;
+      } else if (bindingsRef.current === next) {
+        bindingsRef.current = confirmedBindingsRef.current;
       }
     });
+    bindingMutationQueueRef.current = operation.then(
+      () => {
+        pendingBindingMutationsRef.current -= 1;
+      },
+      () => {
+        pendingBindingMutationsRef.current -= 1;
+      },
+    );
   };
 
   const saveProjectTemplate = (customTemplate: string) => {
