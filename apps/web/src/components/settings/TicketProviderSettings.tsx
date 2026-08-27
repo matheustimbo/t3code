@@ -403,6 +403,7 @@ function AddTicketProviderDialog({
             </span>
             <Switch
               checked={isDefault}
+              aria-label="Default for this provider and host"
               onCheckedChange={(checked) => setIsDefault(Boolean(checked))}
             />
           </label>
@@ -492,7 +493,17 @@ export function TicketProviderSettings() {
             className="border-t"
             title={instance.displayName ?? option?.label ?? instance.driver}
             description={`${instance.baseUrl} · ${instanceId}`}
-            status={probe && probe !== "testing" ? probe.detail : undefined}
+            status={
+              probe && probe !== "testing" && probe.detail ? (
+                <span
+                  className={
+                    probe.availability === "available" ? undefined : "block text-destructive"
+                  }
+                >
+                  {probe.detail}
+                </span>
+              ) : undefined
+            }
             control={
               <>
                 <Button
