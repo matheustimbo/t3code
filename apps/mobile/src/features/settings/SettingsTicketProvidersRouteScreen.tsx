@@ -14,6 +14,7 @@ import {
   type TicketProviderBindings,
   type TicketTitleMode,
 } from "@t3tools/contracts";
+import { renderTicketThreadTitle } from "@t3tools/shared/ticketTitles";
 import { Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useContext, useEffect, useRef, useState } from "react";
@@ -38,6 +39,17 @@ const MODE_OPTIONS: ReadonlyArray<{
   { mode: "custom", label: "Custom template" },
   { mode: "disabled", label: "Off" },
 ];
+
+const TEMPLATE_PREVIEW_METADATA = {
+  title: "Fix reconnect failures",
+  identifier: "acme/widgets#12",
+  provider: "GitHub",
+  project: "acme/widgets",
+};
+
+function ticketProviderBasePath(value: string): string {
+  return new URL(value).pathname.replace(/\/+$/u, "");
+}
 
 interface DriverOption {
   readonly driver: string;
@@ -109,6 +121,11 @@ function EnvironmentTicketProviders({
   const [identity, setIdentity] = useState("");
   const [secret, setSecret] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [templateDraft, setTemplateDraft] = useState(
+    settings?.ticketTitlePolicy.customTemplate ??
+      DEFAULT_SERVER_SETTINGS.ticketTitlePolicy.customTemplate,
+  );
+  const [templateError, setTemplateError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [probeByInstanceId, setProbeByInstanceId] = useState<
     Readonly<Record<string, TicketProviderProbeResult | "testing">>
@@ -119,6 +136,12 @@ function EnvironmentTicketProviders({
   const instancesMutationQueueRef = useRef<Promise<void>>(Promise.resolve());
   useEffect(() => {
     if (settings) instancesRef.current = settings.ticketProviderInstances;
+  }, [settings]);
+  useEffect(() => {
+    if (settings) {
+      setTemplateDraft(settings.ticketTitlePolicy.customTemplate);
+      setTemplateError(null);
+    }
   }, [settings]);
 
   if (!settings) {
@@ -138,6 +161,17 @@ function EnvironmentTicketProviders({
       { environmentId, input: { patch } },
       { label: "mobile ticket provider settings" },
     );
+  const saveTemplate = (customTemplate: string) => {
+    setTemplateDraft(customTemplate);
+    if (customTemplate === settings.ticketTitlePolicy.customTemplate) return;
+    const ticketTitlePolicy = { ...settings.ticketTitlePolicy, customTemplate };
+    if (!renderTicketThreadTitle(ticketTitlePolicy, TEMPLATE_PREVIEW_METADATA)) {
+      setTemplateError("The template contains an unsupported variable.");
+      return;
+    }
+    setTemplateError(null);
+    void savePatch({ ticketTitlePolicy });
+  };
   const updateInstances = (
     update: (current: TicketProviderInstanceConfigMap) => TicketProviderInstanceConfigMap,
   ) => {
@@ -322,18 +356,15 @@ function EnvironmentTicketProviders({
             <TextInput
               autoCapitalize="none"
               autoCorrect={false}
-              defaultValue={settings.ticketTitlePolicy.customTemplate}
+              value={templateDraft}
+              onChangeText={setTemplateDraft}
               placeholder="{identifier} — {title}"
               className={inputClassName()}
-              onSubmitEditing={(event) =>
-                void savePatch({
-                  ticketTitlePolicy: {
-                    ...settings.ticketTitlePolicy,
-                    customTemplate: event.nativeEvent.text,
-                  },
-                })
-              }
+              onBlur={() => saveTemplate(templateDraft)}
             />
+            {templateError ? (
+              <Text className="text-sm text-destructive">{templateError}</Text>
+            ) : null}
           </View>
         ) : null}
       </SettingsSection>
@@ -386,6 +417,29 @@ function EnvironmentTicketProviders({
                     ? probe.detail
                     : "Uses this environment's local tools."}
                 </Text>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`${instance.enabled === false ? "Enable" : "Disable"} ${instance.displayName ?? instanceId}`}
+                  onPress={() => {
+                    void updateInstances((current) => {
+                      const brandedInstanceId = TicketProviderInstanceId.make(instanceId);
+                      const candidate = current[brandedInstanceId];
+                      if (!candidate) return current;
+                      return {
+                        ...current,
+                        [brandedInstanceId]: {
+                          ...candidate,
+                          enabled: candidate.enabled === false,
+                        },
+                      };
+                    });
+                  }}
+                  className="rounded-full border border-border px-3 py-2"
+                >
+                  <Text className="text-sm font-medium text-foreground">
+                    {instance.enabled === false ? "Enable" : "Disable"}
+                  </Text>
+                </Pressable>
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel={`Test ${instance.displayName ?? instanceId}`}
@@ -533,12 +587,19 @@ function ProjectTicketTitles({ project }: { readonly project: EnvironmentProject
   const effectivePolicy =
     storedPolicy ?? settings?.ticketTitlePolicy ?? DEFAULT_SERVER_SETTINGS.ticketTitlePolicy;
   const selectedMode = storedPolicy?.mode ?? "inherit";
+  const [templateDraft, setTemplateDraft] = useState(effectivePolicy.customTemplate);
+  const [templateError, setTemplateError] = useState<string | null>(null);
+  useEffect(
+    () => setTemplateDraft(effectivePolicy.customTemplate),
+    [effectivePolicy.customTemplate],
+  );
   const bindings = project.ticketProviderBindings ?? [];
   const providerGroups = new Map<
     string,
     {
       readonly driver: string;
       readonly host: string;
+      readonly basePath: string;
       readonly instances: ReadonlyArray<readonly [string, TicketProviderInstanceConfig]>;
     }
   >();
@@ -546,11 +607,13 @@ function ProjectTicketTitles({ project }: { readonly project: EnvironmentProject
     if (instance.enabled === false) continue;
     try {
       const host = new URL(instance.baseUrl).host.toLowerCase();
-      const key = `${instance.driver}:${host}`;
+      const basePath = ticketProviderBasePath(instance.baseUrl);
+      const key = `${instance.driver}:${host}:${basePath}`;
       const current = providerGroups.get(key);
       providerGroups.set(key, {
         driver: instance.driver,
         host,
+        basePath,
         instances: [...(current?.instances ?? []), [instanceId, instance]],
       });
     } catch {
@@ -559,9 +622,10 @@ function ProjectTicketTitles({ project }: { readonly project: EnvironmentProject
   }
   for (const binding of bindings) {
     const host = binding.host.toLowerCase();
-    const key = `${binding.driver}:${host}`;
+    const basePath = binding.basePath ?? "";
+    const key = `${binding.driver}:${host}:${basePath}`;
     if (!providerGroups.has(key)) {
-      providerGroups.set(key, { driver: binding.driver, host, instances: [] });
+      providerGroups.set(key, { driver: binding.driver, host, basePath, instances: [] });
     }
   }
 
@@ -574,16 +638,27 @@ function ProjectTicketTitles({ project }: { readonly project: EnvironmentProject
     readonly ticketTitlePolicy?: EnvironmentProject["ticketTitlePolicy"];
     readonly ticketProviderBindings?: TicketProviderBindings;
   }) => {
-    void runAtomCommand(
+    return runAtomCommand(
       registry,
       projectEnvironment.update,
       { environmentId: project.environmentId, input: { projectId: project.id, ...input } },
       { label: "mobile project ticket title settings" },
     );
   };
-  const updateBinding = (driver: string, host: string, instanceId: string | null) => {
-    const remaining = bindingsRef.current.filter(
-      (binding) => !(binding.driver === driver && binding.host.toLowerCase() === host),
+  const updateBinding = (
+    driver: string,
+    host: string,
+    basePath: string,
+    instanceId: string | null,
+  ) => {
+    const previous = bindingsRef.current;
+    const remaining = previous.filter(
+      (binding) =>
+        !(
+          binding.driver === driver &&
+          binding.host.toLowerCase() === host &&
+          (binding.basePath ?? "") === basePath
+        ),
     );
     const next: TicketProviderBindings = instanceId
       ? [
@@ -591,12 +666,29 @@ function ProjectTicketTitles({ project }: { readonly project: EnvironmentProject
           {
             driver: TicketProviderDriverKind.make(driver),
             host,
+            ...(basePath ? { basePath } : {}),
             instanceId: TicketProviderInstanceId.make(instanceId),
           },
         ]
       : remaining;
     bindingsRef.current = next;
-    updateProject({ ticketProviderBindings: next });
+    void updateProject({ ticketProviderBindings: next }).then((result) => {
+      if (result._tag !== "Success" && bindingsRef.current === next) {
+        bindingsRef.current = previous;
+      }
+    });
+  };
+
+  const saveProjectTemplate = (customTemplate: string) => {
+    setTemplateDraft(customTemplate);
+    if (customTemplate === effectivePolicy.customTemplate) return;
+    const ticketTitlePolicy = { ...effectivePolicy, mode: "custom" as const, customTemplate };
+    if (!renderTicketThreadTitle(ticketTitlePolicy, TEMPLATE_PREVIEW_METADATA)) {
+      setTemplateError("The template contains an unsupported variable.");
+      return;
+    }
+    setTemplateError(null);
+    void updateProject({ ticketTitlePolicy });
   };
 
   return (
@@ -618,7 +710,7 @@ function ProjectTicketTitles({ project }: { readonly project: EnvironmentProject
               : "flex-row items-center gap-4 border-t border-border-subtle p-4"
           }
           onPress={() =>
-            updateProject({
+            void updateProject({
               ticketTitlePolicy:
                 option.mode === "inherit"
                   ? null
@@ -644,39 +736,42 @@ function ProjectTicketTitles({ project }: { readonly project: EnvironmentProject
           <TextInput
             autoCapitalize="none"
             autoCorrect={false}
-            defaultValue={storedPolicy.customTemplate}
+            value={templateDraft}
+            onChangeText={setTemplateDraft}
             className={inputClassName()}
-            onSubmitEditing={(event) =>
-              updateProject({
-                ticketTitlePolicy: {
-                  ...storedPolicy,
-                  customTemplate: event.nativeEvent.text,
-                },
-              })
-            }
+            onBlur={() => saveProjectTemplate(templateDraft)}
           />
+          {templateError ? <Text className="text-sm text-destructive">{templateError}</Text> : null}
         </View>
       ) : null}
       {[...providerGroups.values()].map((group) => {
         const binding = bindings.find(
           (candidate) =>
-            candidate.driver === group.driver && candidate.host.toLowerCase() === group.host,
+            candidate.driver === group.driver &&
+            candidate.host.toLowerCase() === group.host &&
+            (candidate.basePath ?? "") === group.basePath,
         );
+        const providerLocation = `${group.host}${group.basePath}`;
         const choices = [
-          { id: "automatic", label: `${group.host}: environment default` },
+          { id: "automatic", label: `${providerLocation}: environment default` },
           ...group.instances.map(([instanceId, instance]) => ({
             id: instanceId,
-            label: `${group.host}: ${instance.displayName ?? instanceId}`,
+            label: `${providerLocation}: ${instance.displayName ?? instanceId}`,
           })),
         ];
         return choices.map((choice) => (
           <Pressable
-            key={`${group.driver}:${group.host}:${choice.id}`}
+            key={`${group.driver}:${providerLocation}:${choice.id}`}
             accessibilityRole="radio"
             accessibilityState={{ checked: (binding?.instanceId ?? "automatic") === choice.id }}
             className="flex-row items-center gap-4 border-t border-border-subtle p-4"
             onPress={() =>
-              updateBinding(group.driver, group.host, choice.id === "automatic" ? null : choice.id)
+              updateBinding(
+                group.driver,
+                group.host,
+                group.basePath,
+                choice.id === "automatic" ? null : choice.id,
+              )
             }
           >
             <Text className="min-w-0 flex-1 text-base text-foreground">{choice.label}</Text>

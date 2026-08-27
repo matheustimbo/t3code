@@ -121,6 +121,10 @@ import {
 import { projectGroupTitleNeedsUpdate } from "./ProjectSettingsPanel.logic";
 import { TicketTitlePolicySettings } from "./TicketProviderSettings";
 
+function ticketProviderBasePath(value: string): string {
+  return new URL(value).pathname.replace(/\/+$/u, "");
+}
+
 export const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> = {
   repository: "Group by repository",
   repository_path: "Group by repository path",
@@ -531,6 +535,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
       {
         readonly driver: string;
         readonly host: string;
+        readonly basePath: string;
         readonly instances: ReadonlyArray<readonly [string, TicketProviderInstanceConfig]>;
       }
     >();
@@ -539,24 +544,29 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
     )) {
       if (instance.enabled === false) continue;
       let host: string;
+      let basePath: string;
       try {
-        host = new URL(instance.baseUrl).host.toLowerCase();
+        const url = new URL(instance.baseUrl);
+        host = url.host.toLowerCase();
+        basePath = ticketProviderBasePath(instance.baseUrl);
       } catch {
         continue;
       }
-      const key = `${instance.driver}:${host}`;
+      const key = `${instance.driver}:${host}:${basePath}`;
       const existing = groups.get(key);
       groups.set(key, {
         driver: instance.driver,
         host,
+        basePath,
         instances: [...(existing?.instances ?? []), [instanceId, instance]],
       });
     }
     for (const binding of selectedCheckout.ticketProviderBindings ?? []) {
       const host = binding.host.toLowerCase();
-      const key = `${binding.driver}:${host}`;
+      const basePath = binding.basePath ?? "";
+      const key = `${binding.driver}:${host}:${basePath}`;
       if (!groups.has(key)) {
-        groups.set(key, { driver: binding.driver, host, instances: [] });
+        groups.set(key, { driver: binding.driver, host, basePath, instances: [] });
       }
     }
     return [...groups.values()];
@@ -573,13 +583,18 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
     };
   }, [selectedCheckout.id, selectedTicketProviderBindings]);
   const setTicketProviderBinding = useCallback(
-    (driver: string, host: string, instanceId: string | null) => {
+    (driver: string, host: string, basePath: string, instanceId: string | null) => {
       const current =
         ticketProviderBindingsRef.current.projectId === selectedCheckout.id
           ? ticketProviderBindingsRef.current.bindings
           : selectedTicketProviderBindings;
       const withoutBinding = current.filter(
-        (binding) => !(binding.driver === driver && binding.host.toLowerCase() === host),
+        (binding) =>
+          !(
+            binding.driver === driver &&
+            binding.host.toLowerCase() === host &&
+            (binding.basePath ?? "") === basePath
+          ),
       );
       const next: TicketProviderBindings = instanceId
         ? [
@@ -587,20 +602,27 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
             {
               driver: TicketProviderDriverKind.make(driver),
               host,
+              ...(basePath ? { basePath } : {}),
               instanceId: TicketProviderInstanceId.make(instanceId),
             },
           ]
         : withoutBinding;
+      const previous = { projectId: selectedCheckout.id, bindings: current };
       ticketProviderBindingsRef.current = { projectId: selectedCheckout.id, bindings: next };
       void updateProject({
         environmentId: selectedCheckout.environmentId,
         input: { projectId: selectedCheckout.id, ticketProviderBindings: next },
-      }).then((result) =>
-        reportFailure(
-          "Failed to update ticket provider binding",
-          mapAtomCommandResult(result, () => undefined),
-        ),
-      );
+      }).then((result) => {
+        const mapped = mapAtomCommandResult(result, () => undefined);
+        if (
+          mapped._tag === "Failure" &&
+          ticketProviderBindingsRef.current.projectId === selectedCheckout.id &&
+          ticketProviderBindingsRef.current.bindings === next
+        ) {
+          ticketProviderBindingsRef.current = previous;
+        }
+        reportFailure("Failed to update ticket provider binding", mapped);
+      });
     },
     [
       reportFailure,
@@ -1170,19 +1192,26 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
             const binding = selectedTicketProviderBindings.find(
               (candidate) =>
                 candidate.driver === providerGroup.driver &&
-                candidate.host.toLowerCase() === providerGroup.host,
+                candidate.host.toLowerCase() === providerGroup.host &&
+                (candidate.basePath ?? "") === providerGroup.basePath,
             );
+            const providerLocation = `${providerGroup.host}${providerGroup.basePath}`;
             return (
               <SettingsRow
-                key={`${providerGroup.driver}:${providerGroup.host}`}
-                title={`${providerGroup.host} ticket account`}
+                key={`${providerGroup.driver}:${providerLocation}`}
+                title={`${providerLocation} ticket account`}
                 description="Choose the exact account this checkout uses for ticket links, or use the environment default."
                 resetAction={
                   binding ? (
                     <SettingResetButton
-                      label={`${providerGroup.host} ticket account`}
+                      label={`${providerLocation} ticket account`}
                       onClick={() =>
-                        setTicketProviderBinding(providerGroup.driver, providerGroup.host, null)
+                        setTicketProviderBinding(
+                          providerGroup.driver,
+                          providerGroup.host,
+                          providerGroup.basePath,
+                          null,
+                        )
                       }
                     />
                   ) : null
@@ -1194,13 +1223,14 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
                       setTicketProviderBinding(
                         providerGroup.driver,
                         providerGroup.host,
+                        providerGroup.basePath,
                         value === "automatic" ? null : String(value),
                       )
                     }
                   >
                     <SelectTrigger
                       className="w-full sm:w-56"
-                      aria-label={`${providerGroup.host} ticket account`}
+                      aria-label={`${providerLocation} ticket account`}
                     >
                       <SelectValue>
                         {binding

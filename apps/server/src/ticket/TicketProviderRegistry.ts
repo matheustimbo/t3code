@@ -146,6 +146,12 @@ function instanceMatchesReference(
   );
 }
 
+function bindingBasePathMatchesReference(basePath: string | undefined, reference: URL): boolean {
+  if (!basePath) return true;
+  const normalized = `/${basePath}`.replace(/\/{2,}/gu, "/").replace(/\/$/u, "");
+  return reference.pathname === normalized || reference.pathname.startsWith(`${normalized}/`);
+}
+
 function implicitInstance(
   reference: TicketReference,
 ): readonly [string, TicketProviderInstanceConfig] {
@@ -176,11 +182,15 @@ function selectInstance(input: TicketProviderResolveInput):
   const matching = Object.entries(input.instances).filter(([, instance]) =>
     instanceMatchesReference(instance, input.reference),
   );
-  const binding = input.bindings.find(
-    (entry) =>
-      entry.driver === input.reference.driver &&
-      entry.host.toLowerCase() === input.reference.host.toLowerCase(),
-  );
+  const referenceUrl = new URL(input.reference.url);
+  const binding = input.bindings
+    .filter(
+      (entry) =>
+        entry.driver === input.reference.driver &&
+        entry.host.toLowerCase() === input.reference.host.toLowerCase() &&
+        bindingBasePathMatchesReference(entry.basePath, referenceUrl),
+    )
+    .toSorted((left, right) => (right.basePath?.length ?? 0) - (left.basePath?.length ?? 0))[0];
   if (binding) {
     const instance = input.instances[binding.instanceId];
     return instance && instanceMatchesReference(instance, input.reference)

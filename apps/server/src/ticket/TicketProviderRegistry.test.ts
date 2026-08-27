@@ -125,6 +125,63 @@ describe("TicketProviderRegistry", () => {
       }),
   );
 
+  effectIt.effect("selects same-host bindings by their configured base path", () =>
+    Effect.gen(function* () {
+      const run = vi.fn<VcsProcess.VcsProcess["Service"]["run"]>((input) =>
+        Effect.succeed(
+          commandOutput(
+            JSON.stringify({
+              title:
+                input.env?.GITLAB_TOKEN === "tenant-b-token" ? "Tenant B issue" : "Wrong tenant",
+            }),
+          ),
+        ),
+      );
+      const registry = yield* makeRegistry(run);
+      const reference = {
+        driver: TicketProviderDriverKind.make("gitlab"),
+        host: "git.example.com",
+        url: "https://git.example.com/tenant-b/acme/widgets/-/issues/12",
+        identifier: "acme/widgets#12",
+        project: "acme/widgets",
+        resourceId: "12",
+      } as const;
+
+      const result = yield* registry.resolve({
+        cwd: "/tmp/project",
+        reference,
+        instances: {
+          [TicketProviderInstanceId.make("gitlab_a")]: {
+            driver: TicketProviderDriverKind.make("gitlab"),
+            baseUrl: "https://git.example.com/tenant-a",
+            environment: [{ name: "GITLAB_TOKEN", value: "tenant-a-token", sensitive: true }],
+          },
+          [TicketProviderInstanceId.make("gitlab_b")]: {
+            driver: TicketProviderDriverKind.make("gitlab"),
+            baseUrl: "https://git.example.com/tenant-b",
+            environment: [{ name: "GITLAB_TOKEN", value: "tenant-b-token", sensitive: true }],
+          },
+        },
+        bindings: [
+          {
+            driver: TicketProviderDriverKind.make("gitlab"),
+            host: "git.example.com",
+            basePath: "/tenant-a",
+            instanceId: TicketProviderInstanceId.make("gitlab_a"),
+          },
+          {
+            driver: TicketProviderDriverKind.make("gitlab"),
+            host: "git.example.com",
+            basePath: "/tenant-b",
+            instanceId: TicketProviderInstanceId.make("gitlab_b"),
+          },
+        ],
+      });
+
+      expect(result.title).toBe("Tenant B issue");
+    }),
+  );
+
   effectIt.effect("uses the single compatible local CLI when no instance is configured", () =>
     Effect.gen(function* () {
       const run = vi.fn<VcsProcess.VcsProcess["Service"]["run"]>(() =>

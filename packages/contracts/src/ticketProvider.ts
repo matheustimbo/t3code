@@ -78,6 +78,7 @@ export type TicketProviderInstanceConfigMap = typeof TicketProviderInstanceConfi
 export const TicketProviderBinding = Schema.Struct({
   driver: TicketProviderDriverKind,
   host: TrimmedNonEmptyString,
+  basePath: Schema.optional(TrimmedNonEmptyString),
   instanceId: TicketProviderInstanceId,
 });
 export type TicketProviderBinding = typeof TicketProviderBinding.Type;
