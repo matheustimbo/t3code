@@ -459,9 +459,27 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
     [updateAllMembers],
   );
   const storedTicketTitlePolicy = representative.ticketTitlePolicy ?? null;
+  const ticketTitlePolicyMutationQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const pendingTicketTitlePolicyMutationsRef = useRef(0);
+  const ticketTitlePolicyByProjectRef = useRef(
+    new Map(
+      group.memberProjects.map((member) => [member.id, member.ticketTitlePolicy ?? null] as const),
+    ),
+  );
+  useEffect(() => {
+    if (pendingTicketTitlePolicyMutationsRef.current === 0) {
+      ticketTitlePolicyByProjectRef.current = new Map(
+        group.memberProjects.map(
+          (member) => [member.id, member.ticketTitlePolicy ?? null] as const,
+        ),
+      );
+    }
+  }, [group.memberProjects]);
   const setTicketTitlePolicy = useCallback(
     (ticketTitlePolicy: TicketTitlePolicy | null) => {
-      void (async () => {
+      pendingTicketTitlePolicyMutationsRef.current += 1;
+      const operation = ticketTitlePolicyMutationQueueRef.current.then(async () => {
+        const previousPolicies = new Map(ticketTitlePolicyByProjectRef.current);
         const updatedMembers: Array<(typeof group.memberProjects)[number]> = [];
         for (const member of group.memberProjects) {
           const result = mapAtomCommandResult(
@@ -482,7 +500,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
                 environmentId: updatedMember.environmentId,
                 input: {
                   projectId: updatedMember.id,
-                  ticketTitlePolicy: updatedMember.ticketTitlePolicy ?? null,
+                  ticketTitlePolicy: previousPolicies.get(updatedMember.id) ?? null,
                 },
               }),
               () => undefined,
@@ -499,7 +517,18 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
           );
           return;
         }
-      })();
+        ticketTitlePolicyByProjectRef.current = new Map(
+          group.memberProjects.map((member) => [member.id, ticketTitlePolicy] as const),
+        );
+      });
+      ticketTitlePolicyMutationQueueRef.current = operation.then(
+        () => {
+          pendingTicketTitlePolicyMutationsRef.current -= 1;
+        },
+        () => {
+          pendingTicketTitlePolicyMutationsRef.current -= 1;
+        },
+      );
     },
     [group.memberProjects, reportFailure, updateProject],
   );

@@ -218,11 +218,20 @@ export function TicketTitlePolicySettings({
         <SettingsRow
           title="Title template"
           description="Variables: {title}, {identifier}, {provider}, and {project}. Use {{ and }} for literal braces."
-          status={preview ? `Preview: ${preview}` : "The template contains an unknown variable."}
+          status={
+            preview ? (
+              `Preview: ${preview}`
+            ) : (
+              <span className="block text-destructive">
+                The template contains an unknown variable, so it was not saved.
+              </span>
+            )
+          }
           control={
             <Input
               className="w-full sm:w-80"
               aria-label="Ticket title template"
+              aria-invalid={preview ? undefined : true}
               value={templateDraft}
               onChange={(event) => setTemplateDraft(event.currentTarget.value)}
               onBlur={() => {
@@ -258,6 +267,14 @@ function AddTicketProviderDialog({
   const [secret, setSecret] = useState("");
   const [isDefault, setIsDefault] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (!nextOpen) {
+      setSecret("");
+      setError(null);
+    }
+    onOpenChange(nextOpen);
+  };
 
   const selectDriver = (value: string | null) => {
     const next = TICKET_DRIVER_OPTIONS.find((candidate) => candidate.driver === value);
@@ -327,11 +344,11 @@ function AddTicketProviderDialog({
     };
     onAdd(instance);
     toastManager.add({ type: "success", title: "Ticket provider added", description: displayName });
-    onOpenChange(false);
+    handleOpenChange(false);
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogPopup className="max-w-lg">
         <DialogHeader>
           <DialogTitle>Add ticket provider</DialogTitle>
@@ -410,7 +427,7 @@ function AddTicketProviderDialog({
           {error ? <p className="text-sm text-destructive-foreground">{error}</p> : null}
         </DialogPanel>
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button variant="outline" onClick={() => handleOpenChange(false)}>
             Cancel
           </Button>
           <Button disabled={!canSave} onClick={save}>
@@ -426,6 +443,10 @@ export function TicketProviderSettings() {
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
   const environmentId = usePrimaryEnvironmentId();
+  const persistProviderSettings = useAtomCommand(
+    serverEnvironment.updateSettings,
+    "ticket provider settings update",
+  );
   const probeProvider = useAtomCommand(serverEnvironment.probeTicketProvider, {
     reportFailure: false,
   });
@@ -438,8 +459,12 @@ export function TicketProviderSettings() {
     [settings.ticketProviderInstances],
   );
   const instancesRef = useRef(settings.ticketProviderInstances);
+  const instancesMutationQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const pendingInstanceMutationsRef = useRef(0);
   useEffect(() => {
-    instancesRef.current = settings.ticketProviderInstances;
+    if (pendingInstanceMutationsRef.current === 0) {
+      instancesRef.current = settings.ticketProviderInstances;
+    }
   }, [settings.ticketProviderInstances]);
 
   const updateInstances = (
@@ -447,9 +472,28 @@ export function TicketProviderSettings() {
       current: typeof settings.ticketProviderInstances,
     ) => typeof settings.ticketProviderInstances,
   ) => {
-    const next = update(instancesRef.current);
-    instancesRef.current = next;
-    updateSettings({ ticketProviderInstances: next });
+    if (!environmentId) return;
+    pendingInstanceMutationsRef.current += 1;
+    const operation = instancesMutationQueueRef.current.then(async () => {
+      const previous = instancesRef.current;
+      const next = update(previous);
+      instancesRef.current = next;
+      const result = await persistProviderSettings({
+        environmentId,
+        input: { patch: { ticketProviderInstances: next } },
+      });
+      if (result._tag === "Failure") {
+        instancesRef.current = previous;
+      }
+    });
+    instancesMutationQueueRef.current = operation.then(
+      () => {
+        pendingInstanceMutationsRef.current -= 1;
+      },
+      () => {
+        pendingInstanceMutationsRef.current -= 1;
+      },
+    );
   };
 
   const replaceInstance = (instanceId: string, instance: TicketProviderInstanceConfig) => {
