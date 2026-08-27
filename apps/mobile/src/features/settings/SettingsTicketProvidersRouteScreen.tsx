@@ -314,16 +314,19 @@ function EnvironmentTicketProviders({
             : driver.driver === "clickup"
               ? { workspaceId: identity.trim() }
               : undefined;
+    const normalizedBaseUrl = parsed.toString().replace(/\/$/u, "");
+    const normalizedBasePath = ticketProviderBasePath(normalizedBaseUrl);
     const instance: TicketProviderInstanceConfig = {
       driver: TicketProviderDriverKind.make(driver.driver),
       displayName: name,
-      baseUrl: parsed.toString().replace(/\/$/u, ""),
+      baseUrl: normalizedBaseUrl,
       enabled: true,
       isDefault: !Object.values(instancesRef.current).some(
         (candidate) =>
           candidate.enabled !== false &&
           candidate.driver === driver.driver &&
           new URL(candidate.baseUrl).host.toLowerCase() === parsed.host.toLowerCase() &&
+          ticketProviderBasePath(candidate.baseUrl) === normalizedBasePath &&
           candidate.isDefault === true,
       ),
       ...(identityConfig ? { config: identityConfig } : {}),
@@ -341,7 +344,8 @@ function EnvironmentTicketProviders({
         for (const [candidateId, candidate] of Object.entries(next)) {
           if (
             candidate.driver === instance.driver &&
-            new URL(candidate.baseUrl).host.toLowerCase() === parsed.host.toLowerCase()
+            new URL(candidate.baseUrl).host.toLowerCase() === parsed.host.toLowerCase() &&
+            ticketProviderBasePath(candidate.baseUrl) === normalizedBasePath
           ) {
             next[TicketProviderInstanceId.make(candidateId)] = {
               ...candidate,
@@ -499,12 +503,14 @@ function EnvironmentTicketProviders({
                   disabled={instance.isDefault === true || instance.enabled === false}
                   onPress={() => {
                     const host = new URL(instance.baseUrl).host.toLowerCase();
+                    const basePath = ticketProviderBasePath(instance.baseUrl);
                     void updateInstances((current) =>
                       Object.fromEntries(
                         Object.entries(current).map(([id, candidate]) => [
                           id,
                           candidate.driver === instance.driver &&
-                          new URL(candidate.baseUrl).host.toLowerCase() === host
+                          new URL(candidate.baseUrl).host.toLowerCase() === host &&
+                          ticketProviderBasePath(candidate.baseUrl) === basePath
                             ? { ...candidate, isDefault: id === instanceId }
                             : candidate,
                         ]),
