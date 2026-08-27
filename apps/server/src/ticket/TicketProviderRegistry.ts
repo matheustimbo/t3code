@@ -573,26 +573,29 @@ export const make = Effect.gen(function* () {
             env,
           });
           break;
-        case "azure-devops":
+        case "azure-devops": {
+          const configuredUrl = new URL(baseUrl);
+          const detectOrganization =
+            configuredUrl.hostname === "dev.azure.com" && configuredUrl.pathname === "/";
           yield* runText({
             command: "az",
             args: [
               "devops",
               "project",
               "list",
-              "--organization",
-              baseUrl,
+              ...(detectOrganization ? [] : ["--organization", baseUrl]),
               "--top",
               "1",
               "--output",
               "none",
               "--detect",
-              "false",
+              detectOrganization ? "true" : "false",
             ],
             cwd: input.cwd,
             env,
           });
           break;
+        }
         case "bitbucket": {
           let request = HttpClientRequest.get("https://api.bitbucket.org/2.0/user");
           const accessToken = environmentValue(input.instance, "T3CODE_BITBUCKET_ACCESS_TOKEN");

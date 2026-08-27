@@ -271,6 +271,33 @@ describe("TicketProviderRegistry", () => {
     }),
   );
 
+  effectIt.effect("lets the Azure CLI detect the organization for the root cloud URL", () =>
+    Effect.gen(function* () {
+      const run = vi.fn<VcsProcess.VcsProcess["Service"]["run"]>(() =>
+        Effect.succeed(commandOutput("")),
+      );
+      const registry = yield* makeRegistry(run);
+
+      const result = yield* registry.probe({
+        cwd: "/tmp/project",
+        instanceId: TicketProviderInstanceId.make("azure_detected"),
+        instance: {
+          driver: TicketProviderDriverKind.make("azure-devops"),
+          baseUrl: "https://dev.azure.com",
+          environment: [{ name: "AZURE_DEVOPS_EXT_PAT", value: "pat", sensitive: true }],
+        },
+      });
+
+      expect(result.availability).toBe("available");
+      expect(run).toHaveBeenCalledWith(
+        expect.objectContaining({
+          command: "az",
+          args: ["devops", "project", "list", "--top", "1", "--output", "none", "--detect", "true"],
+        }),
+      );
+    }),
+  );
+
   effectIt.effect("rejects oversized HTTP ticket responses before JSON decoding", () =>
     Effect.gen(function* () {
       const run = vi.fn<VcsProcess.VcsProcess["Service"]["run"]>(() =>
