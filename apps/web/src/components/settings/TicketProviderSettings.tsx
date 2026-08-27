@@ -545,7 +545,7 @@ export function TicketProviderSettings() {
           return (
             <SettingsRow
               key={instanceId}
-              className="border-t"
+              className="border-t border-border/60"
               title={instance.displayName ?? option?.label ?? instance.driver}
               description={`${instance.baseUrl} · ${instanceId}`}
               status={
