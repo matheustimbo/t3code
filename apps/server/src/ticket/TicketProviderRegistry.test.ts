@@ -337,4 +337,35 @@ describe("TicketProviderRegistry", () => {
       expect(run).toHaveBeenCalledTimes(1);
     }),
   );
+
+  effectIt.effect("keeps a shared lookup alive when its first caller is interrupted", () =>
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const run = vi.fn<VcsProcess.VcsProcess["Service"]["run"]>(() =>
+        Deferred.succeed(started, undefined).pipe(
+          Effect.andThen(Deferred.await(release)),
+          Effect.as(commandOutput('{"title":"Shared after interruption"}')),
+        ),
+      );
+      const registry = yield* makeRegistry(run);
+      const input = {
+        cwd: "/tmp/project",
+        reference: githubReference,
+        instances: {},
+        bindings: [],
+      } as const;
+
+      const owner = yield* registry.resolve(input).pipe(Effect.forkChild);
+      yield* Deferred.await(started);
+      const waiter = yield* registry.resolve(input).pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      const interruptingOwner = yield* Fiber.interrupt(owner).pipe(Effect.forkChild);
+      yield* Deferred.succeed(release, undefined);
+
+      expect((yield* Fiber.join(waiter)).title).toBe("Shared after interruption");
+      yield* Fiber.await(interruptingOwner);
+      expect(run).toHaveBeenCalledTimes(1);
+    }),
+  );
 });

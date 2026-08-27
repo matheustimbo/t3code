@@ -32,26 +32,43 @@ const BUILT_IN_HOST_DRIVERS = new Map<string, string>([
 const URL_PATTERN = /https?:\/\/[^\s<>"']+/giu;
 const TRAILING_URL_PUNCTUATION = /[),.;!?\]}]+$/u;
 
-function stripInlineCode(line: string): string {
+function backtickRunLength(value: string, start: number): number {
+  let end = start;
+  while (value[end] === "`") end += 1;
+  return end - start;
+}
+
+function findClosingBacktickRun(value: string, start: number, markerLength: number): number {
+  let cursor = start;
+  while (cursor < value.length) {
+    const candidate = value.indexOf("`", cursor);
+    if (candidate === -1) return -1;
+    const candidateLength = backtickRunLength(value, candidate);
+    if (candidateLength === markerLength) return candidate;
+    cursor = candidate + candidateLength;
+  }
+  return -1;
+}
+
+function stripInlineCode(value: string): string {
   let result = "";
   let cursor = 0;
-  while (cursor < line.length) {
-    if (line[cursor] !== "`") {
-      result += line[cursor];
+  while (cursor < value.length) {
+    if (value[cursor] !== "`") {
+      result += value[cursor];
       cursor += 1;
       continue;
     }
-    let markerEnd = cursor + 1;
-    while (line[markerEnd] === "`") markerEnd += 1;
-    const marker = line.slice(cursor, markerEnd);
-    const closing = line.indexOf(marker, markerEnd);
+    const markerLength = backtickRunLength(value, cursor);
+    const markerEnd = cursor + markerLength;
+    const closing = findClosingBacktickRun(value, markerEnd, markerLength);
     if (closing === -1) {
-      result += marker;
+      result += value.slice(cursor, markerEnd);
       cursor = markerEnd;
       continue;
     }
     result += " ";
-    cursor = closing + marker.length;
+    cursor = closing + markerLength;
   }
   return result;
 }
@@ -59,17 +76,21 @@ function stripInlineCode(line: string): string {
 function stripIgnoredMarkdown(message: string): string {
   const visible: string[] = [];
   let fence: { readonly marker: "`" | "~"; readonly length: number } | undefined;
+  let inIndentedCode = false;
+  let previousLineWasBlank = true;
   for (const line of message.split(/\r?\n/u)) {
     const fenceMatch = /^ {0,3}(`{3,}|~{3,})/u.exec(line);
     if (fence) {
       if (
         fenceMatch &&
         fenceMatch[1]![0] === fence.marker &&
-        fenceMatch[1]!.length >= fence.length
+        fenceMatch[1]!.length >= fence.length &&
+        /^[ \t]*$/u.test(line.slice(fenceMatch[0].length))
       ) {
         fence = undefined;
       }
       visible.push(" ");
+      previousLineWasBlank = false;
       continue;
     }
     if (fenceMatch) {
@@ -78,15 +99,31 @@ function stripIgnoredMarkdown(message: string): string {
         length: fenceMatch[1]!.length,
       };
       visible.push(" ");
+      inIndentedCode = false;
+      previousLineWasBlank = false;
       continue;
     }
-    if (/^(?: {4}|\t)/u.test(line) || /^\s{0,3}>/u.test(line)) {
+    if (line.trim().length === 0) {
       visible.push(" ");
+      previousLineWasBlank = true;
       continue;
     }
-    visible.push(stripInlineCode(line));
+    const isIndented = /^(?: {4}|\t)/u.test(line);
+    if (isIndented && (inIndentedCode || previousLineWasBlank)) {
+      visible.push(" ");
+      inIndentedCode = true;
+      previousLineWasBlank = false;
+      continue;
+    }
+    inIndentedCode = false;
+    if (/^\s{0,3}>/u.test(line)) {
+      visible.push(" ");
+    } else {
+      visible.push(line);
+    }
+    previousLineWasBlank = false;
   }
-  return visible.join("\n");
+  return stripInlineCode(visible.join("\n"));
 }
 
 function normalizedUrl(raw: string): URL | undefined {

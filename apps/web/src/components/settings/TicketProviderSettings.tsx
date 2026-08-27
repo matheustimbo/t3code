@@ -145,11 +145,13 @@ function nextInstanceId(
 export function TicketTitlePolicySettings({
   policy,
   inheritedPolicy,
+  inheritedLabel,
   onChange,
   allowInherit = false,
 }: {
   readonly policy: TicketTitlePolicy | null;
   readonly inheritedPolicy?: TicketTitlePolicy;
+  readonly inheritedLabel?: string;
   readonly onChange: (policy: TicketTitlePolicy | null) => void;
   readonly allowInherit?: boolean;
 }) {
@@ -195,12 +197,15 @@ export function TicketTitlePolicySettings({
             <SelectTrigger className="w-full sm:w-48" aria-label="Ticket thread title format">
               <SelectValue>
                 {selectValue === "inherit"
-                  ? `Default (${POLICY_MODE_LABELS[effective.mode].toLowerCase()})`
+                  ? (inheritedLabel ??
+                    `Default (${POLICY_MODE_LABELS[effective.mode].toLowerCase()})`)
                   : POLICY_MODE_LABELS[effective.mode]}
               </SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
-              {allowInherit ? <SelectItem value="inherit">Default</SelectItem> : null}
+              {allowInherit ? (
+                <SelectItem value="inherit">{inheritedLabel ?? "Default"}</SelectItem>
+              ) : null}
               <SelectItem value="identifier_title">Identifier and title</SelectItem>
               <SelectItem value="title">Ticket title</SelectItem>
               <SelectItem value="custom">Custom template</SelectItem>
@@ -238,10 +243,12 @@ function AddTicketProviderDialog({
   open,
   onOpenChange,
   onAdd,
+  canSave,
 }: {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
   readonly onAdd: (instance: TicketProviderInstanceConfig) => void;
+  readonly canSave: boolean;
 }) {
   const [driver, setDriver] = useState(DEFAULT_DRIVER.driver);
   const option = DRIVER_BY_KIND.get(driver) ?? DEFAULT_DRIVER;
@@ -263,6 +270,10 @@ function AddTicketProviderDialog({
   };
 
   const save = () => {
+    if (!canSave) {
+      setError("Connect a primary environment before adding a ticket provider.");
+      return;
+    }
     let parsed: URL;
     try {
       parsed = new URL(baseUrl.trim());
@@ -276,6 +287,10 @@ function AddTicketProviderDialog({
     }
     if (parsed.username || parsed.password) {
       setError("The base URL must not contain credentials.");
+      return;
+    }
+    if (baseUrl.includes("?") || baseUrl.includes("#")) {
+      setError("The base URL must not contain a query or fragment.");
       return;
     }
     if (
@@ -397,7 +412,9 @@ function AddTicketProviderDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={save}>Add provider</Button>
+          <Button disabled={!canSave} onClick={save}>
+            Add provider
+          </Button>
         </DialogFooter>
       </DialogPopup>
     </Dialog>
@@ -548,6 +565,7 @@ export function TicketProviderSettings() {
       <AddTicketProviderDialog
         open={dialogOpen}
         onOpenChange={setDialogOpen}
+        canSave={environmentId !== null}
         onAdd={(instance) => {
           updateInstances((current) => {
             const host = hostOf(instance.baseUrl);

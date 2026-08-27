@@ -59,6 +59,45 @@ describe("extractUniqueTicketReference", () => {
     ).toBe("acme/widgets#4");
   });
 
+  it("keeps an indented paragraph continuation visible", () => {
+    expect(
+      extractUniqueTicketReference("See the ticket:\n    https://github.com/acme/widgets/issues/5")
+        ?.identifier,
+    ).toBe("acme/widgets#5");
+  });
+
+  it("ignores multiline code spans and requires exact closing backtick runs", () => {
+    expect(
+      extractUniqueTicketReference(
+        [
+          "`ticket:",
+          "https://github.com/acme/widgets/issues/6",
+          "`",
+          "``not code https://github.com/acme/widgets/issues/7 ```",
+          "https://github.com/acme/widgets/issues/8",
+        ].join("\n"),
+      )?.identifier,
+    ).toBeUndefined();
+    expect(
+      extractUniqueTicketReference("``not code https://github.com/acme/widgets/issues/9 ```")
+        ?.identifier,
+    ).toBe("acme/widgets#9");
+  });
+
+  it("does not close a fenced block with a marker that has trailing content", () => {
+    expect(
+      extractUniqueTicketReference(
+        [
+          "````",
+          "````js",
+          "https://github.com/acme/widgets/issues/10",
+          "````",
+          "https://github.com/acme/widgets/issues/11",
+        ].join("\n"),
+      )?.identifier,
+    ).toBe("acme/widgets#11");
+  });
+
   it("uses configured hosts for self-hosted providers", () => {
     expect(
       extractUniqueTicketReference("http://git.internal/acme/widgets/-/issues/9", [

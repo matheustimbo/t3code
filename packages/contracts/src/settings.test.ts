@@ -458,4 +458,21 @@ describe("ServerSettings ticket title configuration", () => {
       }),
     ).toThrow();
   });
+
+  it("rejects query strings and fragments in ticket provider base URLs", () => {
+    for (const baseUrl of [
+      "https://jira.example.com/?tenant=acme",
+      "https://jira.example.com/#tickets",
+      "https://jira.example.com/?",
+      "https://jira.example.com/#",
+    ]) {
+      expect(() =>
+        decodeServerSettingsPatch({
+          ticketProviderInstances: {
+            jira_work: { driver: "jira", baseUrl },
+          },
+        }),
+      ).toThrow();
+    }
+  });
 });

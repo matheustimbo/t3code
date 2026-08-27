@@ -456,9 +456,48 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
   );
   const storedTicketTitlePolicy = representative.ticketTitlePolicy ?? null;
   const setTicketTitlePolicy = useCallback(
-    (ticketTitlePolicy: TicketTitlePolicy | null) =>
-      void updateAllMembers({ ticketTitlePolicy }, "Failed to update ticket title settings"),
-    [updateAllMembers],
+    (ticketTitlePolicy: TicketTitlePolicy | null) => {
+      void (async () => {
+        const updatedMembers: Array<(typeof group.memberProjects)[number]> = [];
+        for (const member of group.memberProjects) {
+          const result = mapAtomCommandResult(
+            await updateProject({
+              environmentId: member.environmentId,
+              input: { projectId: member.id, ticketTitlePolicy },
+            }),
+            () => undefined,
+          );
+          if (result._tag === "Success") {
+            updatedMembers.push(member);
+            continue;
+          }
+
+          for (const updatedMember of updatedMembers.toReversed()) {
+            const rollback = mapAtomCommandResult(
+              await updateProject({
+                environmentId: updatedMember.environmentId,
+                input: {
+                  projectId: updatedMember.id,
+                  ticketTitlePolicy: updatedMember.ticketTitlePolicy ?? null,
+                },
+              }),
+              () => undefined,
+            );
+            if (rollback._tag === "Failure") {
+              reportFailure("Failed to roll back ticket title settings", rollback);
+            }
+          }
+          reportFailure(
+            group.memberProjects.length > 1
+              ? `Failed to update ticket title settings on ${member.environmentLabel ?? "the current environment"}`
+              : "Failed to update ticket title settings",
+            result,
+          );
+          return;
+        }
+      })();
+    },
+    [group.memberProjects, reportFailure, updateProject],
   );
 
   // ----- favicon -----
@@ -1025,7 +1064,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
             policy={storedTicketTitlePolicy}
             {...(group.memberProjects.length === 1
               ? { inheritedPolicy: selectedCheckoutSettings.ticketTitlePolicy }
-              : {})}
+              : { inheritedLabel: "Default (per checkout)" })}
             allowInherit
             onChange={setTicketTitlePolicy}
           />

@@ -116,6 +116,7 @@ function EnvironmentTicketProviders({
   const instancesRef = useRef<TicketProviderInstanceConfigMap>(
     settings?.ticketProviderInstances ?? DEFAULT_SERVER_SETTINGS.ticketProviderInstances,
   );
+  const instancesMutationQueueRef = useRef<Promise<void>>(Promise.resolve());
   useEffect(() => {
     if (settings) instancesRef.current = settings.ticketProviderInstances;
   }, [settings]);
@@ -140,9 +141,21 @@ function EnvironmentTicketProviders({
   const updateInstances = (
     update: (current: TicketProviderInstanceConfigMap) => TicketProviderInstanceConfigMap,
   ) => {
-    const next = update(instancesRef.current);
-    instancesRef.current = next;
-    return savePatch({ ticketProviderInstances: next });
+    const operation = instancesMutationQueueRef.current.then(async () => {
+      const previous = instancesRef.current;
+      const next = update(previous);
+      instancesRef.current = next;
+      const result = await savePatch({ ticketProviderInstances: next });
+      if (result._tag !== "Success") {
+        instancesRef.current = previous;
+        setError("The provider change could not be saved. Check the connection and try again.");
+      } else {
+        setError(null);
+      }
+      return result;
+    });
+    instancesMutationQueueRef.current = operation.then(() => undefined);
+    return operation;
   };
   const instances = Object.entries(settings.ticketProviderInstances);
   const probeProvider = (instanceId: string) => {
@@ -193,6 +206,10 @@ function EnvironmentTicketProviders({
     }
     if (parsed.username || parsed.password) {
       setError("The base URL must not contain credentials.");
+      return;
+    }
+    if (baseUrl.includes("?") || baseUrl.includes("#")) {
+      setError("The base URL must not contain a query or fragment.");
       return;
     }
     if (driver.driver === "jira" && parsed.hostname === "example.atlassian.net") {
@@ -258,11 +275,6 @@ function EnvironmentTicketProviders({
     });
     setIsSaving(false);
     if (result._tag !== "Success") {
-      if (instancesRef.current[addedInstanceId] === instance) {
-        const next = { ...instancesRef.current };
-        delete next[addedInstanceId];
-        instancesRef.current = next;
-      }
       setError("The provider could not be saved. Check the connection and try again.");
       return;
     }
@@ -388,7 +400,7 @@ function EnvironmentTicketProviders({
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel={`Make ${instance.displayName ?? instanceId} the default`}
-                  disabled={instance.isDefault === true}
+                  disabled={instance.isDefault === true || instance.enabled === false}
                   onPress={() => {
                     const host = new URL(instance.baseUrl).host.toLowerCase();
                     void updateInstances((current) =>
@@ -491,7 +503,6 @@ function EnvironmentTicketProviders({
                 className={inputClassName()}
               />
             ) : null}
-            {error ? <Text className="text-sm text-destructive">{error}</Text> : null}
             <Pressable
               accessibilityRole="button"
               disabled={isSaving}
@@ -503,6 +514,11 @@ function EnvironmentTicketProviders({
               </Text>
             </Pressable>
           </View>
+        ) : null}
+        {error ? (
+          <Text className="border-t border-border-subtle p-4 text-sm text-destructive">
+            {error}
+          </Text>
         ) : null}
       </SettingsSection>
     </View>

@@ -45,8 +45,12 @@ const TicketProviderBaseUrl = TrimmedNonEmptyString.check(
       return (
         ((url.protocol === "https:" || url.protocol === "http:") &&
           url.username.length === 0 &&
-          url.password.length === 0) ||
-        "Ticket provider base URL must use HTTP or HTTPS and must not contain credentials."
+          url.password.length === 0 &&
+          url.search.length === 0 &&
+          url.hash.length === 0 &&
+          !value.includes("?") &&
+          !value.includes("#")) ||
+        "Ticket provider base URL must use HTTP or HTTPS and must not contain credentials, a query, or a fragment."
       );
     } catch {
       return "Ticket provider base URL must be a valid URL.";
