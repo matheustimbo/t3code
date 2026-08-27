@@ -5,7 +5,12 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
 
-import { ModelSelection, ProjectScript } from "@t3tools/contracts";
+import {
+  ModelSelection,
+  ProjectScript,
+  TicketProviderBindings,
+  TicketTitlePolicy,
+} from "@t3tools/contracts";
 import { toPersistenceSqlError } from "../Errors.ts";
 import {
   DeleteProjectionProjectInput,
@@ -18,6 +23,8 @@ import {
 const ProjectionProjectDbRow = ProjectionProject.mapFields(
   Struct.assign({
     defaultModelSelection: Schema.NullOr(Schema.fromJsonString(ModelSelection)),
+    ticketTitlePolicy: Schema.NullOr(Schema.fromJsonString(TicketTitlePolicy)),
+    ticketProviderBindings: Schema.fromJsonString(TicketProviderBindings),
     scripts: Schema.fromJsonString(Schema.Array(ProjectScript)),
   }),
 );
@@ -36,6 +43,8 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           workspace_root,
           default_model_selection_json,
           default_thread_env_mode,
+          ticket_title_policy_json,
+          ticket_provider_bindings_json,
           favicon_path,
           scripts_json,
           created_at,
@@ -48,6 +57,8 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           ${row.workspaceRoot},
           ${row.defaultModelSelection !== null ? JSON.stringify(row.defaultModelSelection) : null},
           ${row.defaultThreadEnvMode},
+          ${row.ticketTitlePolicy !== null ? JSON.stringify(row.ticketTitlePolicy) : null},
+          ${JSON.stringify(row.ticketProviderBindings)},
           ${row.faviconPath ?? null},
           ${JSON.stringify(row.scripts)},
           ${row.createdAt},
@@ -60,6 +71,8 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           workspace_root = excluded.workspace_root,
           default_model_selection_json = excluded.default_model_selection_json,
           default_thread_env_mode = excluded.default_thread_env_mode,
+          ticket_title_policy_json = excluded.ticket_title_policy_json,
+          ticket_provider_bindings_json = excluded.ticket_provider_bindings_json,
           favicon_path = excluded.favicon_path,
           scripts_json = excluded.scripts_json,
           created_at = excluded.created_at,
@@ -79,6 +92,8 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           workspace_root AS "workspaceRoot",
           default_model_selection_json AS "defaultModelSelection",
           default_thread_env_mode AS "defaultThreadEnvMode",
+          ticket_title_policy_json AS "ticketTitlePolicy",
+          ticket_provider_bindings_json AS "ticketProviderBindings",
           favicon_path AS "faviconPath",
           scripts_json AS "scripts",
           created_at AS "createdAt",
@@ -100,6 +115,8 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           workspace_root AS "workspaceRoot",
           default_model_selection_json AS "defaultModelSelection",
           default_thread_env_mode AS "defaultThreadEnvMode",
+          ticket_title_policy_json AS "ticketTitlePolicy",
+          ticket_provider_bindings_json AS "ticketProviderBindings",
           favicon_path AS "faviconPath",
           scripts_json AS "scripts",
           created_at AS "createdAt",

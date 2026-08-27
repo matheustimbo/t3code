@@ -118,6 +118,7 @@ import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as UsageService from "./usage/UsageService.ts";
+import * as TicketProviderRegistry from "./ticket/TicketProviderRegistry.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
@@ -424,6 +425,7 @@ const makeWsRpcLayer = (
   currentSession: EnvironmentAuth.AuthenticatedSession,
   clientOrigin: OrchestrationClientOrigin,
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
+  ticketProviderRegistry: TicketProviderRegistry.TicketProviderRegistry["Service"],
 ) =>
   WsRpcGroup.toLayer(
     Effect.gen(function* () {
@@ -1680,6 +1682,27 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "server",
             },
           ),
+        [WS_METHODS.serverProbeTicketProvider]: ({ instanceId }) =>
+          observeRpcEffect(
+            WS_METHODS.serverProbeTicketProvider,
+            Effect.gen(function* () {
+              const settings = yield* serverSettings.getSettings;
+              const instance = settings.ticketProviderInstances[instanceId];
+              if (!instance) {
+                return {
+                  instanceId,
+                  availability: "unavailable" as const,
+                  detail: "This ticket provider instance no longer exists.",
+                };
+              }
+              return yield* ticketProviderRegistry.probe({
+                cwd: config.cwd,
+                instanceId,
+                instance,
+              });
+            }),
+            { "rpc.aggregate": "server" },
+          ),
         [WS_METHODS.serverDiscoverSourceControl]: (_input) =>
           observeRpcEffect(
             WS_METHODS.serverDiscoverSourceControl,
@@ -2462,6 +2485,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
     const previewAutomationBroker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
     const pullRequests = yield* PullRequestService.PullRequestService;
+    const ticketProviderRegistry = yield* TicketProviderRegistry.TicketProviderRegistry;
     return HttpRouter.add(
       "GET",
       "/ws",
@@ -2488,7 +2512,12 @@ export const websocketRpcRouteLayer = Layer.unwrap(
           disableTracing: true,
         }).pipe(
           Effect.provide(
-            makeWsRpcLayer(session, clientOrigin, previewAutomationBroker).pipe(
+            makeWsRpcLayer(
+              session,
+              clientOrigin,
+              previewAutomationBroker,
+              ticketProviderRegistry,
+            ).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               Layer.provide(ProviderMaintenanceRunner.layer),
               Layer.provide(Layer.succeed(ServerSelfUpdate.ServerSelfUpdate, serverSelfUpdate)),

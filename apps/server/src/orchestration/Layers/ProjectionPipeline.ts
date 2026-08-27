@@ -519,6 +519,8 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             workspaceRoot: event.payload.workspaceRoot,
             defaultModelSelection: event.payload.defaultModelSelection,
             defaultThreadEnvMode: null,
+            ticketTitlePolicy: null,
+            ticketProviderBindings: [],
             faviconPath: event.payload.faviconPath ?? null,
             scripts: event.payload.scripts,
             createdAt: event.payload.createdAt,
@@ -545,6 +547,12 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               : {}),
             ...(event.payload.defaultThreadEnvMode !== undefined
               ? { defaultThreadEnvMode: event.payload.defaultThreadEnvMode }
+              : {}),
+            ...(event.payload.ticketTitlePolicy !== undefined
+              ? { ticketTitlePolicy: event.payload.ticketTitlePolicy }
+              : {}),
+            ...(event.payload.ticketProviderBindings !== undefined
+              ? { ticketProviderBindings: event.payload.ticketProviderBindings }
               : {}),
             ...(event.payload.faviconPath !== undefined
               ? { faviconPath: event.payload.faviconPath }

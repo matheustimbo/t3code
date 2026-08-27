@@ -23,6 +23,12 @@ import {
   ProviderInstanceId,
   type ProviderDriverKind,
 } from "./providerInstance.ts";
+import {
+  TicketProviderInstanceConfig,
+  TicketProviderInstanceId,
+  TicketTitleMode,
+  TicketTitlePolicy,
+} from "./ticketProvider.ts";
 
 // ── Client Settings (local-only) ───────────────────────────────
 
@@ -679,6 +685,11 @@ export const ServerSettings = Schema.Struct({
   sourceControlWriterModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  ticketTitlePolicy: TicketTitlePolicy.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  ticketProviderInstances: Schema.Record(
+    TicketProviderInstanceId,
+    TicketProviderInstanceConfig,
+  ).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 
   // Legacy single-instance-per-driver settings. Continues to be the source
   // of truth until `providerInstances` (below) lands per-driver migration
@@ -873,6 +884,15 @@ export const ServerSettingsPatch = Schema.Struct({
     }),
   ),
   sourceControlWriterModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  ticketTitlePolicy: Schema.optionalKey(
+    Schema.Struct({
+      mode: Schema.optionalKey(TicketTitleMode),
+      customTemplate: Schema.optionalKey(TrimmedString),
+    }),
+  ),
+  ticketProviderInstances: Schema.optionalKey(
+    Schema.Record(TicketProviderInstanceId, TicketProviderInstanceConfig),
+  ),
   observability: Schema.optionalKey(
     Schema.Struct({
       otlpTracesUrl: Schema.optionalKey(TrimmedString),

@@ -6,6 +6,8 @@ import {
   resolveProviderInstanceEnabled,
   ServerSettings,
   ServerSettingsPatch,
+  TicketProviderDriverKind,
+  TicketProviderInstanceId,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { assert, it } from "@effect/vitest";
@@ -1045,6 +1047,56 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       assert.equal(
         roundTripped.providerInstances[instanceId]?.environment?.[0]?.value,
         "sk-or-secret",
+      );
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("stores ticket provider credentials outside settings.json", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const instanceId = TicketProviderInstanceId.make("jira_work");
+
+      const next = yield* serverSettings.updateSettings({
+        ticketProviderInstances: {
+          [instanceId]: {
+            driver: TicketProviderDriverKind.make("jira"),
+            displayName: "Work Jira",
+            baseUrl: "https://work.atlassian.net",
+            environment: [{ name: "JIRA_API_TOKEN", value: "jira-secret", sensitive: true }],
+            config: { email: "dev@example.com" },
+          },
+        },
+      });
+
+      assert.deepEqual(next.ticketProviderInstances[instanceId]?.environment, [
+        {
+          name: "JIRA_API_TOKEN",
+          value: "jira-secret",
+          sensitive: true,
+          valueRedacted: true,
+        },
+      ]);
+      const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      assert.notInclude(raw, "jira-secret");
+
+      const roundTripped = yield* serverSettings.updateSettings({
+        ticketProviderInstances: {
+          [instanceId]: {
+            driver: TicketProviderDriverKind.make("jira"),
+            displayName: "Work Jira",
+            baseUrl: "https://work.atlassian.net",
+            environment: [
+              { name: "JIRA_API_TOKEN", value: "", sensitive: true, valueRedacted: true },
+            ],
+            config: { email: "dev@example.com" },
+          },
+        },
+      });
+      assert.equal(
+        roundTripped.ticketProviderInstances[instanceId]?.environment?.[0]?.value,
+        "jira-secret",
       );
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );

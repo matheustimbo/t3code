@@ -770,6 +770,14 @@ export function createServerEnvironmentAtoms<R, E>(
       scheduler: configScheduler,
       concurrency: configConcurrency,
     }),
+    probeTicketProvider: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:probe-ticket-provider",
+      tag: WS_METHODS.serverProbeTicketProvider,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.instanceId]),
+      },
+    }),
     signalProcess: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:signal-process",
       tag: WS_METHODS.serverSignalProcess,

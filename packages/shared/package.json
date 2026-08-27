@@ -103,6 +103,10 @@
       "types": "./src/threadEnvMode.ts",
       "import": "./src/threadEnvMode.ts"
     },
+    "./ticketTitles": {
+      "types": "./src/ticketTitles.ts",
+      "import": "./src/ticketTitles.ts"
+    },
     "./t3ProjectFile": {
       "types": "./src/t3ProjectFile.ts",
       "import": "./src/t3ProjectFile.ts"

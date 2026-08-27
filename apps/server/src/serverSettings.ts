@@ -23,6 +23,7 @@ import {
   ServerSettings,
   ServerSettingsError,
   type ServerSettingsPatch,
+  type TicketProviderInstanceConfig,
 } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
@@ -133,6 +134,13 @@ function providerEnvironmentSecretName(input: {
   return `provider-env-${Buffer.from(input.instanceId, "utf8").toString("base64url")}-${Buffer.from(input.name, "utf8").toString("base64url")}`;
 }
 
+function ticketProviderEnvironmentSecretName(input: {
+  readonly instanceId: string;
+  readonly name: string;
+}): string {
+  return `ticket-provider-env-${Buffer.from(input.instanceId, "utf8").toString("base64url")}-${Buffer.from(input.name, "utf8").toString("base64url")}`;
+}
+
 function redactProviderEnvironmentVariable(
   variable: ProviderInstanceEnvironmentVariable,
 ): ProviderInstanceEnvironmentVariable {
@@ -159,7 +167,18 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
         : instance,
     ]),
   );
-  return { ...settings, providerInstances };
+  const ticketProviderInstances = Object.fromEntries(
+    Object.entries(settings.ticketProviderInstances).map(([instanceId, instance]) => [
+      instanceId,
+      instance.environment
+        ? {
+            ...instance,
+            environment: instance.environment.map(redactProviderEnvironmentVariable),
+          }
+        : instance,
+    ]),
+  );
+  return { ...settings, providerInstances, ticketProviderInstances };
 }
 
 export class ServerSettingsService extends Context.Service<
@@ -473,14 +492,17 @@ const make = Effect.gen(function* () {
 
   const getSettingsFromCache = Cache.get(settingsCache, cacheKey);
 
-  const materializeProviderEnvironmentSecrets = (
-    settings: ServerSettings,
-  ): Effect.Effect<ServerSettings, ServerSettingsError> =>
+  const materializeInstanceEnvironmentSecrets = <
+    Instance extends {
+      readonly environment?: ReadonlyArray<ProviderInstanceEnvironmentVariable>;
+    },
+  >(
+    instances: Readonly<Record<string, Instance>>,
+    secretNameFor: (input: { readonly instanceId: string; readonly name: string }) => string,
+  ): Effect.Effect<Record<string, Instance>, ServerSettingsError> =>
     Effect.gen(function* () {
-      const providerInstances: Record<string, ProviderInstanceConfig> = {
-        ...settings.providerInstances,
-      };
-      for (const [instanceId, instance] of Object.entries(settings.providerInstances)) {
+      const materialized: Record<string, Instance> = { ...instances };
+      for (const [instanceId, instance] of Object.entries(instances)) {
         if (!instance.environment) continue;
         const environment: ProviderInstanceEnvironmentVariable[] = [];
         for (const variable of instance.environment) {
@@ -489,7 +511,7 @@ const make = Effect.gen(function* () {
             continue;
           }
           const secret = yield* secretStore
-            .get(providerEnvironmentSecretName({ instanceId, name: variable.name }))
+            .get(secretNameFor({ instanceId, name: variable.name }))
             .pipe(
               Effect.mapError(
                 (cause) =>
@@ -507,14 +529,32 @@ const make = Effect.gen(function* () {
             value: Option.isSome(secret) ? textDecoder.decode(secret.value) : "",
           });
         }
-        providerInstances[instanceId] = {
-          ...instance,
-          environment,
-        } satisfies ProviderInstanceConfig;
+        materialized[instanceId] = { ...instance, environment } as Instance;
       }
+      return materialized;
+    });
+
+  const materializeProviderEnvironmentSecrets = (
+    settings: ServerSettings,
+  ): Effect.Effect<ServerSettings, ServerSettingsError> =>
+    Effect.gen(function* () {
+      const providerInstances =
+        yield* materializeInstanceEnvironmentSecrets<ProviderInstanceConfig>(
+          settings.providerInstances as unknown as Readonly<Record<string, ProviderInstanceConfig>>,
+          providerEnvironmentSecretName,
+        );
+      const ticketProviderInstances =
+        yield* materializeInstanceEnvironmentSecrets<TicketProviderInstanceConfig>(
+          settings.ticketProviderInstances as unknown as Readonly<
+            Record<string, TicketProviderInstanceConfig>
+          >,
+          ticketProviderEnvironmentSecretName,
+        );
       return {
         ...settings,
-        providerInstances: providerInstances as ServerSettings["providerInstances"],
+        providerInstances: providerInstances as unknown as ServerSettings["providerInstances"],
+        ticketProviderInstances:
+          ticketProviderInstances as unknown as ServerSettings["ticketProviderInstances"],
       };
     });
 
@@ -535,21 +575,21 @@ const make = Effect.gen(function* () {
       Stream.map(resolveTextGenerationProvider),
     );
 
-  const persistProviderEnvironmentSecrets = (
-    current: ServerSettings,
-    next: ServerSettings,
-  ): Effect.Effect<ServerSettings, ServerSettingsError> =>
+  const persistInstanceEnvironmentSecrets = <
+    Instance extends { readonly environment?: ReadonlyArray<ProviderInstanceEnvironmentVariable> },
+  >(
+    current: Readonly<Record<string, Instance>>,
+    next: Readonly<Record<string, Instance>>,
+    secretNameFor: (input: { readonly instanceId: string; readonly name: string }) => string,
+  ): Effect.Effect<Record<string, Instance>, ServerSettingsError> =>
     Effect.gen(function* () {
-      const providerInstances: Record<string, ProviderInstanceConfig> = {
-        ...next.providerInstances,
-      };
-
+      const persisted: Record<string, Instance> = { ...next };
       const nextSecretKeys = new Set<string>();
-      for (const [instanceId, instance] of Object.entries(next.providerInstances)) {
+      for (const [instanceId, instance] of Object.entries(next)) {
         if (!instance.environment) continue;
         const environment: ProviderInstanceEnvironmentVariable[] = [];
         for (const variable of instance.environment) {
-          const secretName = providerEnvironmentSecretName({ instanceId, name: variable.name });
+          const secretName = secretNameFor({ instanceId, name: variable.name });
           if (!variable.sensitive) {
             yield* secretStore.remove(secretName).pipe(
               Effect.mapError(
@@ -604,16 +644,13 @@ const make = Effect.gen(function* () {
 
           environment.push(redactProviderEnvironmentVariable(variable));
         }
-        providerInstances[instanceId] = {
-          ...instance,
-          environment,
-        } satisfies ProviderInstanceConfig;
+        persisted[instanceId] = { ...instance, environment } as Instance;
       }
 
-      for (const [instanceId, instance] of Object.entries(current.providerInstances)) {
+      for (const [instanceId, instance] of Object.entries(current)) {
         for (const variable of instance.environment ?? []) {
           if (!variable.sensitive) continue;
-          const secretName = providerEnvironmentSecretName({ instanceId, name: variable.name });
+          const secretName = secretNameFor({ instanceId, name: variable.name });
           if (nextSecretKeys.has(secretName)) continue;
           yield* secretStore.remove(secretName).pipe(
             Effect.mapError(
@@ -629,10 +666,34 @@ const make = Effect.gen(function* () {
           );
         }
       }
+      return persisted;
+    });
 
+  const persistProviderEnvironmentSecrets = (
+    current: ServerSettings,
+    next: ServerSettings,
+  ): Effect.Effect<ServerSettings, ServerSettingsError> =>
+    Effect.gen(function* () {
+      const providerInstances = yield* persistInstanceEnvironmentSecrets<ProviderInstanceConfig>(
+        current.providerInstances as unknown as Readonly<Record<string, ProviderInstanceConfig>>,
+        next.providerInstances as unknown as Readonly<Record<string, ProviderInstanceConfig>>,
+        providerEnvironmentSecretName,
+      );
+      const ticketProviderInstances =
+        yield* persistInstanceEnvironmentSecrets<TicketProviderInstanceConfig>(
+          current.ticketProviderInstances as unknown as Readonly<
+            Record<string, TicketProviderInstanceConfig>
+          >,
+          next.ticketProviderInstances as unknown as Readonly<
+            Record<string, TicketProviderInstanceConfig>
+          >,
+          ticketProviderEnvironmentSecretName,
+        );
       return {
         ...next,
-        providerInstances: providerInstances as ServerSettings["providerInstances"],
+        providerInstances: providerInstances as unknown as ServerSettings["providerInstances"],
+        ticketProviderInstances:
+          ticketProviderInstances as unknown as ServerSettings["ticketProviderInstances"],
       };
     });
 

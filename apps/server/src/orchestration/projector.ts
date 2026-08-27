@@ -215,6 +215,8 @@ export function projectEvent(
             workspaceRoot: payload.workspaceRoot,
             defaultModelSelection: payload.defaultModelSelection,
             defaultThreadEnvMode: null,
+            ticketTitlePolicy: null,
+            ticketProviderBindings: [],
             faviconPath: payload.faviconPath ?? null,
             scripts: payload.scripts,
             createdAt: payload.createdAt,
@@ -250,6 +252,12 @@ export function projectEvent(
                     : {}),
                   ...(payload.defaultThreadEnvMode !== undefined
                     ? { defaultThreadEnvMode: payload.defaultThreadEnvMode }
+                    : {}),
+                  ...(payload.ticketTitlePolicy !== undefined
+                    ? { ticketTitlePolicy: payload.ticketTitlePolicy }
+                    : {}),
+                  ...(payload.ticketProviderBindings !== undefined
+                    ? { ticketProviderBindings: payload.ticketProviderBindings }
                     : {}),
                   ...(payload.faviconPath !== undefined
                     ? { faviconPath: payload.faviconPath }

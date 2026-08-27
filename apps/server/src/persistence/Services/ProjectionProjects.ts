@@ -11,6 +11,8 @@ import {
   ModelSelection,
   ProjectId,
   ProjectScript,
+  TicketProviderBindings,
+  TicketTitlePolicy,
   ThreadEnvMode,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
@@ -26,6 +28,8 @@ export const ProjectionProject = Schema.Struct({
   workspaceRoot: Schema.String,
   defaultModelSelection: Schema.NullOr(ModelSelection),
   defaultThreadEnvMode: Schema.NullOr(ThreadEnvMode),
+  ticketTitlePolicy: Schema.NullOr(TicketTitlePolicy),
+  ticketProviderBindings: TicketProviderBindings,
   faviconPath: Schema.optional(Schema.NullOr(Schema.String)),
   scripts: Schema.Array(ProjectScript),
   createdAt: IsoDateTime,
