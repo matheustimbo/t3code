@@ -7,6 +7,7 @@ import { extractUniqueTicketReference } from "@t3tools/shared/ticketTitles";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { it as effectIt } from "@effect/vitest";
 import { describe, expect, vi } from "vite-plus/test";
@@ -498,6 +499,35 @@ describe("TicketProviderRegistry", () => {
       expect((yield* Fiber.join(waiter)).title).toBe("Shared after interruption");
       yield* Fiber.await(interruptingOwner);
       expect(run).toHaveBeenCalledTimes(1);
+    }),
+  );
+
+  effectIt.effect("allows a stalled HTTP lookup to time out", () =>
+    Effect.gen(function* () {
+      const run = vi.fn<VcsProcess.VcsProcess["Service"]["run"]>(() =>
+        Effect.die("CLI should not run"),
+      );
+      const httpClient = HttpClient.make(() => Effect.never);
+      const registry = yield* makeRegistry(run, httpClient);
+      const reference = extractUniqueTicketReference("https://acme.atlassian.net/browse/WEB-12")!;
+      const resolving = yield* registry
+        .resolve({
+          cwd: "/tmp/project",
+          reference,
+          instances: {
+            [TicketProviderInstanceId.make("jira_work")]: {
+              driver: TicketProviderDriverKind.make("jira"),
+              baseUrl: "https://acme.atlassian.net",
+            },
+          },
+          bindings: [],
+        })
+        .pipe(Effect.flip, Effect.forkChild);
+
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust("11 seconds");
+
+      expect((yield* Fiber.join(resolving)).reason).toBe("request-failed");
     }),
   );
 });

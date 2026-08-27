@@ -572,10 +572,13 @@ export const make = Effect.gen(function* () {
         }
         const deferred = Deferred.makeUnsafe<TicketTitleMetadata, TicketProviderResolveError>();
         inFlight.set(key, deferred);
-        const exit = yield* Effect.exit(resolveSelected(input, selected));
-        yield* Deferred.done(deferred, exit);
-        inFlight.delete(key);
-        return yield* Deferred.await(deferred);
+        yield* resolveSelected(input, selected).pipe(
+          Effect.exit,
+          Effect.flatMap((exit) => Deferred.done(deferred, exit)),
+          Effect.ensuring(Effect.sync(() => inFlight.delete(key))),
+          Effect.forkDetach({ startImmediately: true, uninterruptible: false }),
+        );
+        return yield* restore(Deferred.await(deferred));
       }),
     );
   });
