@@ -592,6 +592,16 @@ export const make = Effect.gen(function* () {
       };
     }
 
+    const clickUpToken =
+      driver === "clickup" ? environmentValue(input.instance, "CLICKUP_API_TOKEN") : undefined;
+    if (driver === "clickup" && !clickUpToken) {
+      return {
+        instanceId: input.instanceId,
+        availability: "unauthenticated",
+        detail: "Add a ClickUp API token for this provider.",
+      };
+    }
+
     const probeEffect = Effect.gen(function* () {
       const env = environmentForInstance(input.instance);
       const baseUrl = input.instance.baseUrl.replace(/\/$/u, "");
@@ -669,17 +679,9 @@ export const make = Effect.gen(function* () {
           break;
         }
         case "clickup": {
-          const token = environmentValue(input.instance, "CLICKUP_API_TOKEN");
-          if (!token) {
-            return yield* new TicketProviderResolveError({
-              driver,
-              instanceId: input.instanceId,
-              reason: "unauthenticated",
-            });
-          }
           yield* executeText(
             HttpClientRequest.get("https://api.clickup.com/api/v2/user").pipe(
-              HttpClientRequest.setHeader("Authorization", token),
+              HttpClientRequest.setHeader("Authorization", clickUpToken!),
             ),
           );
           break;

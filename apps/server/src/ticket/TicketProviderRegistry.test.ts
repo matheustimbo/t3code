@@ -281,6 +281,32 @@ describe("TicketProviderRegistry", () => {
     }),
   );
 
+  effectIt.effect("reports a missing ClickUp token as unauthenticated", () =>
+    Effect.gen(function* () {
+      const run = vi.fn<VcsProcess.VcsProcess["Service"]["run"]>(() =>
+        Effect.die("CLI should not run"),
+      );
+      const registry = yield* makeRegistry(run);
+      const instanceId = TicketProviderInstanceId.make("clickup_work");
+
+      const result = yield* registry.probe({
+        cwd: "/tmp/project",
+        instanceId,
+        instance: {
+          driver: TicketProviderDriverKind.make("clickup"),
+          baseUrl: "https://app.clickup.com",
+        },
+      });
+
+      expect(result).toEqual({
+        instanceId,
+        availability: "unauthenticated",
+        detail: "Add a ClickUp API token for this provider.",
+      });
+      expect(run).not.toHaveBeenCalled();
+    }),
+  );
+
   effectIt.effect("passes a configured Azure DevOps Server collection to the CLI", () =>
     Effect.gen(function* () {
       const run = vi.fn<VcsProcess.VcsProcess["Service"]["run"]>(() =>

@@ -126,6 +126,7 @@ function EnvironmentTicketProviders({
       DEFAULT_SERVER_SETTINGS.ticketTitlePolicy.customTemplate,
   );
   const [templateError, setTemplateError] = useState<string | null>(null);
+  const templateSaveGenerationRef = useRef(0);
   const [isSaving, setIsSaving] = useState(false);
   const [probeByInstanceId, setProbeByInstanceId] = useState<
     Readonly<Record<string, TicketProviderProbeResult | "testing">>
@@ -139,6 +140,7 @@ function EnvironmentTicketProviders({
   }, [settings]);
   useEffect(() => {
     if (settings) {
+      templateSaveGenerationRef.current += 1;
       setTemplateDraft(settings.ticketTitlePolicy.customTemplate);
       setTemplateError(null);
     }
@@ -162,6 +164,7 @@ function EnvironmentTicketProviders({
       { label: "mobile ticket provider settings" },
     );
   const saveTemplate = (customTemplate: string) => {
+    const generation = ++templateSaveGenerationRef.current;
     setTemplateDraft(customTemplate);
     if (customTemplate === settings.ticketTitlePolicy.customTemplate) return;
     const ticketTitlePolicy = { ...settings.ticketTitlePolicy, customTemplate };
@@ -170,7 +173,12 @@ function EnvironmentTicketProviders({
       return;
     }
     setTemplateError(null);
-    void savePatch({ ticketTitlePolicy });
+    void savePatch({ ticketTitlePolicy }).then((result) => {
+      if (generation !== templateSaveGenerationRef.current) return;
+      if (result._tag !== "Success") {
+        setTemplateError("The template could not be saved. The previous template is still active.");
+      }
+    });
   };
   const updateInstances = (
     update: (current: TicketProviderInstanceConfigMap) => TicketProviderInstanceConfigMap,
@@ -589,10 +597,12 @@ function ProjectTicketTitles({ project }: { readonly project: EnvironmentProject
   const selectedMode = storedPolicy?.mode ?? "inherit";
   const [templateDraft, setTemplateDraft] = useState(effectivePolicy.customTemplate);
   const [templateError, setTemplateError] = useState<string | null>(null);
-  useEffect(
-    () => setTemplateDraft(effectivePolicy.customTemplate),
-    [effectivePolicy.customTemplate],
-  );
+  const templateSaveGenerationRef = useRef(0);
+  useEffect(() => {
+    templateSaveGenerationRef.current += 1;
+    setTemplateDraft(effectivePolicy.customTemplate);
+    setTemplateError(null);
+  }, [effectivePolicy.customTemplate]);
   const bindings = project.ticketProviderBindings ?? [];
   const providerGroups = new Map<
     string,
@@ -697,6 +707,7 @@ function ProjectTicketTitles({ project }: { readonly project: EnvironmentProject
   };
 
   const saveProjectTemplate = (customTemplate: string) => {
+    const generation = ++templateSaveGenerationRef.current;
     setTemplateDraft(customTemplate);
     if (customTemplate === effectivePolicy.customTemplate) return;
     const ticketTitlePolicy = { ...effectivePolicy, mode: "custom" as const, customTemplate };
@@ -705,7 +716,14 @@ function ProjectTicketTitles({ project }: { readonly project: EnvironmentProject
       return;
     }
     setTemplateError(null);
-    void updateProject({ ticketTitlePolicy });
+    void updateProject({ ticketTitlePolicy }).then((result) => {
+      if (generation !== templateSaveGenerationRef.current) return;
+      if (result._tag !== "Success") {
+        setTemplateError(
+          "The project template could not be saved. The previous template is still active.",
+        );
+      }
+    });
   };
 
   return (
