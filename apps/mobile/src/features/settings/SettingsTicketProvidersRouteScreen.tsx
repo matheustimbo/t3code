@@ -139,6 +139,17 @@ function EnvironmentTicketProviders({
     settings?.ticketProviderInstancesRevision ??
       DEFAULT_SERVER_SETTINGS.ticketProviderInstancesRevision,
   );
+  const projectedInstancesRef = useRef(
+    settings?.ticketProviderInstances ?? DEFAULT_SERVER_SETTINGS.ticketProviderInstances,
+  );
+  const projectedInstancesRevisionRef = useRef(
+    settings?.ticketProviderInstancesRevision ??
+      DEFAULT_SERVER_SETTINGS.ticketProviderInstancesRevision,
+  );
+  if (settings) {
+    projectedInstancesRef.current = settings.ticketProviderInstances;
+    projectedInstancesRevisionRef.current = settings.ticketProviderInstancesRevision;
+  }
   const instancesMutationQueueRef = useRef<Promise<void>>(Promise.resolve());
   const pendingInstanceMutationsRef = useRef(0);
   const policyRef = useRef<TicketTitlePolicy>(
@@ -146,11 +157,13 @@ function EnvironmentTicketProviders({
   );
   const policyMutationQueueRef = useRef<Promise<void>>(Promise.resolve());
   const pendingPolicyMutationsRef = useRef(0);
+  const syncProjectedInstances = () => {
+    if (projectedInstancesRevisionRef.current < instancesRevisionRef.current) return;
+    instancesRef.current = projectedInstancesRef.current;
+    instancesRevisionRef.current = projectedInstancesRevisionRef.current;
+  };
   useEffect(() => {
-    if (settings && pendingInstanceMutationsRef.current === 0) {
-      instancesRef.current = settings.ticketProviderInstances;
-      instancesRevisionRef.current = settings.ticketProviderInstancesRevision;
-    }
+    if (settings && pendingInstanceMutationsRef.current === 0) syncProjectedInstances();
   }, [settings?.ticketProviderInstances, settings?.ticketProviderInstancesRevision]);
   useEffect(() => {
     if (settings && pendingPolicyMutationsRef.current === 0) {
@@ -245,14 +258,11 @@ function EnvironmentTicketProviders({
       }
       return result;
     });
-    instancesMutationQueueRef.current = operation.then(
-      () => {
-        pendingInstanceMutationsRef.current -= 1;
-      },
-      () => {
-        pendingInstanceMutationsRef.current -= 1;
-      },
-    );
+    const finish = () => {
+      pendingInstanceMutationsRef.current -= 1;
+      if (pendingInstanceMutationsRef.current === 0) syncProjectedInstances();
+    };
+    instancesMutationQueueRef.current = operation.then(finish, finish);
     return operation;
   };
   const instances = Object.entries(settings.ticketProviderInstances);

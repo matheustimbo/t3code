@@ -1144,6 +1144,15 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
+  it.effect("allows an unguarded ticket provider update when the revision is omitted", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const next = yield* serverSettings.updateSettings({ ticketProviderInstances: {} }, {});
+
+      assert.equal(next.ticketProviderInstancesRevision, 1);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("rolls back ordinary provider secrets when a ticket secret write fails", () => {
     const secrets = new Map<string, Uint8Array>();
     const failingStore = ServerSecretStore.ServerSecretStore.of({

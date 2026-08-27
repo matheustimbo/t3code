@@ -183,6 +183,51 @@ describe("TicketProviderRegistry", () => {
     }),
   );
 
+  effectIt.effect("selects the most specific default for overlapping base paths", () =>
+    Effect.gen(function* () {
+      const run = vi.fn<VcsProcess.VcsProcess["Service"]["run"]>((input) =>
+        Effect.succeed(
+          commandOutput(
+            JSON.stringify({
+              title: input.env?.GITLAB_TOKEN === "tenant-token" ? "Tenant issue" : "Root issue",
+            }),
+          ),
+        ),
+      );
+      const registry = yield* makeRegistry(run);
+      const reference = {
+        driver: TicketProviderDriverKind.make("gitlab"),
+        host: "git.example.com",
+        url: "https://git.example.com/tenant/acme/widgets/-/issues/12",
+        identifier: "acme/widgets#12",
+        project: "acme/widgets",
+        resourceId: "12",
+      } as const;
+
+      const result = yield* registry.resolve({
+        cwd: "/tmp/project",
+        reference,
+        instances: {
+          [TicketProviderInstanceId.make("gitlab_root")]: {
+            driver: TicketProviderDriverKind.make("gitlab"),
+            baseUrl: "https://git.example.com",
+            isDefault: true,
+            environment: [{ name: "GITLAB_TOKEN", value: "root-token", sensitive: true }],
+          },
+          [TicketProviderInstanceId.make("gitlab_tenant")]: {
+            driver: TicketProviderDriverKind.make("gitlab"),
+            baseUrl: "https://git.example.com/tenant",
+            isDefault: true,
+            environment: [{ name: "GITLAB_TOKEN", value: "tenant-token", sensitive: true }],
+          },
+        },
+        bindings: [],
+      });
+
+      expect(result.title).toBe("Tenant issue");
+    }),
+  );
+
   effectIt.effect("uses the single compatible local CLI when no instance is configured", () =>
     Effect.gen(function* () {
       const run = vi.fn<VcsProcess.VcsProcess["Service"]["run"]>(() =>

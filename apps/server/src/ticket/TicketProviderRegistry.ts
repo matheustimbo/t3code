@@ -202,8 +202,15 @@ function selectInstance(input: TicketProviderResolveInput):
     const [instanceId, instance] = implicitInstance(input.reference);
     return { _tag: "Selected", instanceId, instance };
   }
-  const defaults = matching.filter(([, instance]) => instance.isDefault === true);
-  const candidates = defaults.length > 0 ? defaults : matching;
+  const maxBasePathLength = Math.max(
+    ...matching.map(([, instance]) => normalizedBaseUrl(instance.baseUrl)?.pathname.length ?? 0),
+  );
+  const mostSpecific = matching.filter(
+    ([, instance]) =>
+      (normalizedBaseUrl(instance.baseUrl)?.pathname.length ?? 0) === maxBasePathLength,
+  );
+  const defaults = mostSpecific.filter(([, instance]) => instance.isDefault === true);
+  const candidates = defaults.length > 0 ? defaults : mostSpecific;
   if (candidates.length !== 1) return { _tag: "Ambiguous" };
   const [instanceId, instance] = candidates[0]!;
   return { _tag: "Selected", instanceId, instance };

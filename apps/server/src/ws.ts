@@ -1679,7 +1679,7 @@ const makeWsRpcLayer = (
               .updateSettings(
                 patch,
                 expectedTicketProviderInstancesRevision === undefined
-                  ? {}
+                  ? undefined
                   : { expectedTicketProviderInstancesRevision },
               )
               .pipe(Effect.map(ServerSettings.redactServerSettingsForClient)),

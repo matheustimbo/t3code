@@ -193,6 +193,7 @@ const checkTicketProviderInstancesRevision = (
 ): Effect.Effect<void, ServerSettingsError> => {
   if (patch.ticketProviderInstances === undefined || options === undefined) return Effect.void;
   const expected = options?.expectedTicketProviderInstancesRevision;
+  if (expected === undefined) return Effect.void;
   if (expected === current.ticketProviderInstancesRevision) return Effect.void;
   return new ServerSettingsError({
     settingsPath,

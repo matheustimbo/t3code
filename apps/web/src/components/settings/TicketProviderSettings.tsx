@@ -460,13 +460,19 @@ export function TicketProviderSettings() {
   );
   const instancesRef = useRef(settings.ticketProviderInstances);
   const instancesRevisionRef = useRef(settings.ticketProviderInstancesRevision);
+  const projectedInstancesRef = useRef(settings.ticketProviderInstances);
+  const projectedInstancesRevisionRef = useRef(settings.ticketProviderInstancesRevision);
+  projectedInstancesRef.current = settings.ticketProviderInstances;
+  projectedInstancesRevisionRef.current = settings.ticketProviderInstancesRevision;
   const instancesMutationQueueRef = useRef<Promise<void>>(Promise.resolve());
   const pendingInstanceMutationsRef = useRef(0);
+  const syncProjectedInstances = () => {
+    if (projectedInstancesRevisionRef.current < instancesRevisionRef.current) return;
+    instancesRef.current = projectedInstancesRef.current;
+    instancesRevisionRef.current = projectedInstancesRevisionRef.current;
+  };
   useEffect(() => {
-    if (pendingInstanceMutationsRef.current === 0) {
-      instancesRef.current = settings.ticketProviderInstances;
-      instancesRevisionRef.current = settings.ticketProviderInstancesRevision;
-    }
+    if (pendingInstanceMutationsRef.current === 0) syncProjectedInstances();
   }, [settings.ticketProviderInstances, settings.ticketProviderInstancesRevision]);
 
   const updateInstances = (
@@ -499,14 +505,11 @@ export function TicketProviderSettings() {
         instancesRevisionRef.current = result.value.ticketProviderInstancesRevision;
       }
     });
-    instancesMutationQueueRef.current = operation.then(
-      () => {
-        pendingInstanceMutationsRef.current -= 1;
-      },
-      () => {
-        pendingInstanceMutationsRef.current -= 1;
-      },
-    );
+    const finish = () => {
+      pendingInstanceMutationsRef.current -= 1;
+      if (pendingInstanceMutationsRef.current === 0) syncProjectedInstances();
+    };
+    instancesMutationQueueRef.current = operation.then(finish, finish);
   };
 
   const replaceInstance = (instanceId: string, instance: TicketProviderInstanceConfig) => {
