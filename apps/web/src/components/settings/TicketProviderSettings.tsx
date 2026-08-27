@@ -30,7 +30,7 @@ import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { toastManager } from "../ui/toast";
-import { SettingResetButton, SettingsRow } from "./settingsLayout";
+import { SettingResetButton, SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 
 interface TicketDriverOption {
@@ -505,118 +505,122 @@ export function TicketProviderSettings() {
 
   return (
     <>
-      <TicketTitlePolicySettings
-        policy={settings.ticketTitlePolicy}
-        onChange={(ticketTitlePolicy) => {
-          if (ticketTitlePolicy) updateSettings({ ticketTitlePolicy });
-        }}
-      />
-      <SettingsRow
-        title={searchableSetting("ticket-providers").title}
-        description="Accounts T3 can use to read linked tickets. With no configured account, T3 still tries the local CLI for supported providers."
-        resetAction={
-          entries.length > 0 ? (
-            <SettingResetButton
-              label="ticket providers"
-              onClick={() => updateInstances(() => ({}))}
-            />
-          ) : null
-        }
-        control={
-          <Button size="xs" variant="outline" onClick={() => setDialogOpen(true)}>
+      <SettingsSection
+        {...searchableSetting("ticket-providers")}
+        headerAction={
+          <Button size="xs" variant="ghost" onClick={() => setDialogOpen(true)}>
             <PlusIcon /> Add provider
           </Button>
         }
-      />
-      {entries.map(([instanceId, instance]) => {
-        const option = DRIVER_BY_KIND.get(instance.driver);
-        const probe = probeByInstanceId[instanceId];
-        return (
-          <SettingsRow
-            key={instanceId}
-            className="border-t"
-            title={instance.displayName ?? option?.label ?? instance.driver}
-            description={`${instance.baseUrl} · ${instanceId}`}
-            status={
-              probe && probe !== "testing" && probe.detail ? (
-                <span
-                  className={
-                    probe.availability === "available" ? undefined : "block text-destructive"
-                  }
-                >
-                  {probe.detail}
-                </span>
-              ) : undefined
-            }
-            control={
-              <>
-                <Button
-                  size="xs"
-                  variant="outline"
-                  disabled={!environmentId || probe === "testing" || instance.enabled === false}
-                  onClick={() => {
-                    if (!environmentId) return;
-                    const brandedInstanceId = TicketProviderInstanceId.make(instanceId);
-                    const instanceSignature = JSON.stringify(
-                      instancesRef.current[brandedInstanceId],
-                    );
-                    setProbeByInstanceId((current) => ({ ...current, [instanceId]: "testing" }));
-                    void probeProvider({
-                      environmentId,
-                      input: { instanceId: TicketProviderInstanceId.make(instanceId) },
-                    }).then((result) => {
-                      if (
-                        JSON.stringify(instancesRef.current[brandedInstanceId]) !==
-                        instanceSignature
-                      )
-                        return;
-                      setProbeByInstanceId((current) => ({
-                        ...current,
-                        [instanceId]:
-                          result._tag === "Success"
-                            ? result.value
-                            : {
-                                instanceId: TicketProviderInstanceId.make(instanceId),
-                                availability: "unavailable",
-                                detail: "Connection test could not reach this environment.",
-                              },
-                      }));
-                    });
-                  }}
-                >
-                  {probe === "testing" ? "Testing…" : "Test"}
-                </Button>
-                <Switch
-                  checked={instance.enabled !== false}
-                  aria-label={`Enable ${instance.displayName ?? instanceId}`}
-                  onCheckedChange={(checked) =>
-                    replaceInstance(instanceId, { ...instance, enabled: Boolean(checked) })
-                  }
-                />
-                <Button
-                  size="icon-sm"
-                  variant="ghost-muted"
-                  aria-label={`Remove ${instance.displayName ?? instanceId}`}
-                  onClick={() => {
-                    setProbeByInstanceId((current) => {
-                      const next = { ...current };
-                      delete next[instanceId];
-                      return next;
-                    });
-                    updateInstances((current) => {
-                      const next = { ...current };
-                      delete next[TicketProviderInstanceId.make(instanceId)];
-                      return next;
-                    });
-                  }}
-                >
-                  <Trash2Icon />
-                </Button>
-              </>
-            }
-          />
-        );
-      })}
+      >
+        <TicketTitlePolicySettings
+          policy={settings.ticketTitlePolicy}
+          onChange={(ticketTitlePolicy) => {
+            if (ticketTitlePolicy) updateSettings({ ticketTitlePolicy });
+          }}
+        />
+        <SettingsRow
+          title="Accounts"
+          description="Accounts T3 can use to read linked tickets. With no configured account, T3 still tries the local CLI for supported providers."
+          resetAction={
+            entries.length > 0 ? (
+              <SettingResetButton
+                label="ticket providers"
+                onClick={() => updateInstances(() => ({}))}
+              />
+            ) : null
+          }
+        />
+        {entries.map(([instanceId, instance]) => {
+          const option = DRIVER_BY_KIND.get(instance.driver);
+          const probe = probeByInstanceId[instanceId];
+          return (
+            <SettingsRow
+              key={instanceId}
+              className="border-t"
+              title={instance.displayName ?? option?.label ?? instance.driver}
+              description={`${instance.baseUrl} · ${instanceId}`}
+              status={
+                probe && probe !== "testing" && probe.detail ? (
+                  <span
+                    className={
+                      probe.availability === "available" ? undefined : "block text-destructive"
+                    }
+                  >
+                    {probe.detail}
+                  </span>
+                ) : undefined
+              }
+              control={
+                <>
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    disabled={!environmentId || probe === "testing" || instance.enabled === false}
+                    onClick={() => {
+                      if (!environmentId) return;
+                      const brandedInstanceId = TicketProviderInstanceId.make(instanceId);
+                      const instanceSignature = JSON.stringify(
+                        instancesRef.current[brandedInstanceId],
+                      );
+                      setProbeByInstanceId((current) => ({ ...current, [instanceId]: "testing" }));
+                      void probeProvider({
+                        environmentId,
+                        input: { instanceId: TicketProviderInstanceId.make(instanceId) },
+                      }).then((result) => {
+                        if (
+                          JSON.stringify(instancesRef.current[brandedInstanceId]) !==
+                          instanceSignature
+                        )
+                          return;
+                        setProbeByInstanceId((current) => ({
+                          ...current,
+                          [instanceId]:
+                            result._tag === "Success"
+                              ? result.value
+                              : {
+                                  instanceId: TicketProviderInstanceId.make(instanceId),
+                                  availability: "unavailable",
+                                  detail: "Connection test could not reach this environment.",
+                                },
+                        }));
+                      });
+                    }}
+                  >
+                    {probe === "testing" ? "Testing…" : "Test"}
+                  </Button>
+                  <Switch
+                    checked={instance.enabled !== false}
+                    aria-label={`Enable ${instance.displayName ?? instanceId}`}
+                    onCheckedChange={(checked) =>
+                      replaceInstance(instanceId, { ...instance, enabled: Boolean(checked) })
+                    }
+                  />
+                  <Button
+                    size="icon-sm"
+                    variant="ghost-muted"
+                    aria-label={`Remove ${instance.displayName ?? instanceId}`}
+                    onClick={() => {
+                      setProbeByInstanceId((current) => {
+                        const next = { ...current };
+                        delete next[instanceId];
+                        return next;
+                      });
+                      updateInstances((current) => {
+                        const next = { ...current };
+                        delete next[TicketProviderInstanceId.make(instanceId)];
+                        return next;
+                      });
+                    }}
+                  >
+                    <Trash2Icon />
+                  </Button>
+                </>
+              }
+            />
+          );
+        })}
+      </SettingsSection>
       <AddTicketProviderDialog
         open={dialogOpen}
         onOpenChange={setDialogOpen}

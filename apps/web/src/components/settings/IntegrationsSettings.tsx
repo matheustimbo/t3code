@@ -478,9 +478,7 @@ export function IntegrationsSettingsPanel() {
           previewDefaults
         )}
       </SettingsSection>
-      <SettingsSection id="ticket-providers" title="Ticket providers">
-        <TicketProviderSettings />
-      </SettingsSection>
+      <TicketProviderSettings />
     </SettingsPageContainer>
   );
 }
