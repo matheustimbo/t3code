@@ -49,12 +49,30 @@ export class TicketProviderResolveError extends Schema.TaggedErrorClass<TicketPr
     ]),
     cause: Schema.optional(Schema.Defect()),
   },
-) {}
+) {
+  override get message(): string {
+    const instance = this.instanceId === undefined ? "" : ` (instance '${this.instanceId}')`;
+    return `Ticket lookup for driver '${this.driver}'${instance} failed: ${this.reason}.`;
+  }
+}
 
 class TicketProviderResponseTooLargeError extends Schema.TaggedErrorClass<TicketProviderResponseTooLargeError>()(
   "TicketProviderResponseTooLargeError",
   {},
-) {}
+) {
+  override get message(): string {
+    return `Ticket provider response exceeded ${MAX_RESPONSE_BYTES} bytes.`;
+  }
+}
+
+class TicketProviderInvalidResponseError extends Schema.TaggedErrorClass<TicketProviderInvalidResponseError>()(
+  "TicketProviderInvalidResponseError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Ticket provider returned an invalid response.";
+  }
+}
 
 export interface TicketProviderResolveInput {
   readonly cwd: string;
@@ -214,6 +232,19 @@ const decodeClickUpTaskJson = Schema.decodeUnknownEffect(
   Schema.fromJsonString(ClickUpTaskResponse),
 );
 const isTicketProviderResolveError = Schema.is(TicketProviderResolveError);
+const isTicketProviderInvalidResponseError = Schema.is(TicketProviderInvalidResponseError);
+
+const decodeTicketResponse = <A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+): Effect.Effect<A, TicketProviderInvalidResponseError, R> =>
+  effect.pipe(
+    Effect.mapError(
+      (cause) =>
+        new TicketProviderInvalidResponseError({
+          cause,
+        }),
+    ),
+  );
 
 export const make = Effect.gen(function* () {
   const vcsProcess = yield* VcsProcess.VcsProcess;
@@ -296,7 +327,7 @@ export const make = Effect.gen(function* () {
       cwd: input.cwd,
       env,
     });
-    const issue = yield* decodeGitHubIssueJson(stdout);
+    const issue = yield* decodeTicketResponse(decodeGitHubIssueJson(stdout));
     return { title: issue.title };
   });
 
@@ -316,7 +347,7 @@ export const make = Effect.gen(function* () {
       cwd: input.cwd,
       env: environmentForInstance(input.instance),
     });
-    const issue = yield* decodeGitLabIssueJson(stdout);
+    const issue = yield* decodeTicketResponse(decodeGitLabIssueJson(stdout));
     return { title: issue.title };
   });
 
@@ -382,7 +413,9 @@ export const make = Effect.gen(function* () {
     if (accessToken) request = request.pipe(HttpClientRequest.bearerToken(accessToken));
     else if (email && apiToken)
       request = request.pipe(HttpClientRequest.basicAuth(email, apiToken));
-    const issue = yield* decodeBitbucketIssueJson(yield* executeText(request));
+    const issue = yield* decodeTicketResponse(
+      decodeBitbucketIssueJson(yield* executeText(request)),
+    );
     return { title: issue.title };
   });
 
@@ -404,7 +437,7 @@ export const make = Effect.gen(function* () {
     } else if (pat ?? token) {
       request = request.pipe(HttpClientRequest.bearerToken((pat ?? token)!));
     }
-    const issue = yield* decodeJiraIssueJson(yield* executeText(request));
+    const issue = yield* decodeTicketResponse(decodeJiraIssueJson(yield* executeText(request)));
     return { title: issue.fields.summary };
   });
 
@@ -424,11 +457,13 @@ export const make = Effect.gen(function* () {
     const query = custom
       ? `?custom_task_ids=true&team_id=${encodeURIComponent(config.workspaceId!.trim())}`
       : "";
-    const task = yield* decodeClickUpTaskJson(
-      yield* executeText(
-        HttpClientRequest.get(
-          `https://api.clickup.com/api/v2/task/${encodeURIComponent(input.reference.resourceId)}${query}`,
-        ).pipe(HttpClientRequest.setHeader("Authorization", token)),
+    const task = yield* decodeTicketResponse(
+      decodeClickUpTaskJson(
+        yield* executeText(
+          HttpClientRequest.get(
+            `https://api.clickup.com/api/v2/task/${encodeURIComponent(input.reference.resourceId)}${query}`,
+          ).pipe(HttpClientRequest.setHeader("Authorization", token)),
+        ),
       ),
     );
     return {
@@ -457,8 +492,10 @@ export const make = Effect.gen(function* () {
             : new TicketProviderResolveError({
                 driver: selected.instance.driver,
                 instanceId: selected.instanceId,
-                reason: "request-failed",
-                cause,
+                reason: isTicketProviderInvalidResponseError(cause)
+                  ? "invalid-response"
+                  : "request-failed",
+                cause: isTicketProviderInvalidResponseError(cause) ? cause.cause : cause,
               }),
         ),
       );

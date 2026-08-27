@@ -144,6 +144,28 @@ describe("TicketProviderRegistry", () => {
     }),
   );
 
+  effectIt.effect("classifies malformed provider payloads as invalid responses", () =>
+    Effect.gen(function* () {
+      const run = vi.fn<VcsProcess.VcsProcess["Service"]["run"]>(() =>
+        Effect.succeed(commandOutput('{"unexpected":"shape"}')),
+      );
+      const registry = yield* makeRegistry(run);
+
+      const failure = yield* Effect.flip(
+        registry.resolve({
+          cwd: "/tmp/project",
+          reference: githubReference,
+          instances: {},
+          bindings: [],
+        }),
+      );
+
+      expect(failure.reason).toBe("invalid-response");
+      expect(failure.message).toContain("Ticket lookup for driver 'github'");
+      expect(failure.message).not.toContain("unexpected");
+    }),
+  );
+
   effectIt.effect("tests the configured GitHub account without changing active gh auth", () =>
     Effect.gen(function* () {
       const run = vi.fn<VcsProcess.VcsProcess["Service"]["run"]>(() =>
