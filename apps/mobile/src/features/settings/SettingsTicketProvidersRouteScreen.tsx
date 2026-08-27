@@ -13,6 +13,7 @@ import {
   type TicketProviderProbeResult,
   type TicketProviderBindings,
   type TicketTitleMode,
+  type TicketTitlePolicy,
 } from "@t3tools/contracts";
 import { renderTicketThreadTitle } from "@t3tools/shared/ticketTitles";
 import { Platform, Pressable, ScrollView, View } from "react-native";
@@ -135,16 +136,25 @@ function EnvironmentTicketProviders({
     settings?.ticketProviderInstances ?? DEFAULT_SERVER_SETTINGS.ticketProviderInstances,
   );
   const instancesMutationQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const pendingInstanceMutationsRef = useRef(0);
+  const policyRef = useRef<TicketTitlePolicy>(
+    settings?.ticketTitlePolicy ?? DEFAULT_SERVER_SETTINGS.ticketTitlePolicy,
+  );
+  const policyMutationQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const pendingPolicyMutationsRef = useRef(0);
   useEffect(() => {
-    if (settings) instancesRef.current = settings.ticketProviderInstances;
-  }, [settings]);
+    if (settings && pendingInstanceMutationsRef.current === 0) {
+      instancesRef.current = settings.ticketProviderInstances;
+    }
+  }, [settings?.ticketProviderInstances]);
   useEffect(() => {
-    if (settings) {
+    if (settings && pendingPolicyMutationsRef.current === 0) {
+      policyRef.current = settings.ticketTitlePolicy;
       templateSaveGenerationRef.current += 1;
       setTemplateDraft(settings.ticketTitlePolicy.customTemplate);
       setTemplateError(null);
     }
-  }, [settings]);
+  }, [settings?.ticketTitlePolicy.customTemplate, settings?.ticketTitlePolicy.mode]);
 
   if (!settings) {
     return (
@@ -163,17 +173,37 @@ function EnvironmentTicketProviders({
       { environmentId, input: { patch } },
       { label: "mobile ticket provider settings" },
     );
+  const updatePolicy = (update: (current: TicketTitlePolicy) => TicketTitlePolicy) => {
+    pendingPolicyMutationsRef.current += 1;
+    const operation = policyMutationQueueRef.current.then(async () => {
+      const previous = policyRef.current;
+      const next = update(previous);
+      policyRef.current = next;
+      const result = await savePatch({ ticketTitlePolicy: next });
+      if (result._tag !== "Success") policyRef.current = previous;
+      return result;
+    });
+    policyMutationQueueRef.current = operation.then(
+      () => {
+        pendingPolicyMutationsRef.current -= 1;
+      },
+      () => {
+        pendingPolicyMutationsRef.current -= 1;
+      },
+    );
+    return operation;
+  };
   const saveTemplate = (customTemplate: string) => {
     const generation = ++templateSaveGenerationRef.current;
     setTemplateDraft(customTemplate);
-    if (customTemplate === settings.ticketTitlePolicy.customTemplate) return;
-    const ticketTitlePolicy = { ...settings.ticketTitlePolicy, customTemplate };
+    if (customTemplate === policyRef.current.customTemplate) return;
+    const ticketTitlePolicy = { ...policyRef.current, customTemplate };
     if (!renderTicketThreadTitle(ticketTitlePolicy, TEMPLATE_PREVIEW_METADATA)) {
       setTemplateError("The template contains an unsupported variable.");
       return;
     }
     setTemplateError(null);
-    void savePatch({ ticketTitlePolicy }).then((result) => {
+    void updatePolicy((current) => ({ ...current, customTemplate })).then((result) => {
       if (generation !== templateSaveGenerationRef.current) return;
       if (result._tag !== "Success") {
         setTemplateError("The template could not be saved. The previous template is still active.");
@@ -183,6 +213,7 @@ function EnvironmentTicketProviders({
   const updateInstances = (
     update: (current: TicketProviderInstanceConfigMap) => TicketProviderInstanceConfigMap,
   ) => {
+    pendingInstanceMutationsRef.current += 1;
     const operation = instancesMutationQueueRef.current.then(async () => {
       const previous = instancesRef.current;
       const next = update(previous);
@@ -196,7 +227,14 @@ function EnvironmentTicketProviders({
       }
       return result;
     });
-    instancesMutationQueueRef.current = operation.then(() => undefined);
+    instancesMutationQueueRef.current = operation.then(
+      () => {
+        pendingInstanceMutationsRef.current -= 1;
+      },
+      () => {
+        pendingInstanceMutationsRef.current -= 1;
+      },
+    );
     return operation;
   };
   const instances = Object.entries(settings.ticketProviderInstances);
@@ -340,11 +378,7 @@ function EnvironmentTicketProviders({
                 ? "flex-row items-center gap-4 p-4"
                 : "flex-row items-center gap-4 border-t border-border-subtle p-4"
             }
-            onPress={() =>
-              void savePatch({
-                ticketTitlePolicy: { ...settings.ticketTitlePolicy, mode: option.mode },
-              })
-            }
+            onPress={() => void updatePolicy((current) => ({ ...current, mode: option.mode }))}
           >
             <Text className="min-w-0 flex-1 text-lg text-foreground">{option.label}</Text>
             {settings.ticketTitlePolicy.mode === option.mode ? (
@@ -592,16 +626,24 @@ function ProjectTicketTitles({ project }: { readonly project: EnvironmentProject
   const registry = useContext(RegistryContext);
   const checkmarkColor = useThemeColor("--color-icon");
   const storedPolicy = project.ticketTitlePolicy ?? null;
-  const effectivePolicy =
-    storedPolicy ?? settings?.ticketTitlePolicy ?? DEFAULT_SERVER_SETTINGS.ticketTitlePolicy;
+  const inheritedPolicy = settings?.ticketTitlePolicy ?? DEFAULT_SERVER_SETTINGS.ticketTitlePolicy;
+  const effectivePolicy = storedPolicy ?? inheritedPolicy;
   const selectedMode = storedPolicy?.mode ?? "inherit";
   const [templateDraft, setTemplateDraft] = useState(effectivePolicy.customTemplate);
   const [templateError, setTemplateError] = useState<string | null>(null);
   const templateSaveGenerationRef = useRef(0);
+  const policyRef = useRef<TicketTitlePolicy | null>(storedPolicy);
+  const policyMutationQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const pendingPolicyMutationsRef = useRef(0);
   useEffect(() => {
-    templateSaveGenerationRef.current += 1;
-    setTemplateDraft(effectivePolicy.customTemplate);
-    setTemplateError(null);
+    if (pendingPolicyMutationsRef.current === 0) policyRef.current = storedPolicy;
+  }, [storedPolicy?.customTemplate, storedPolicy?.mode]);
+  useEffect(() => {
+    if (pendingPolicyMutationsRef.current === 0) {
+      templateSaveGenerationRef.current += 1;
+      setTemplateDraft(effectivePolicy.customTemplate);
+      setTemplateError(null);
+    }
   }, [effectivePolicy.customTemplate]);
   const bindings = project.ticketProviderBindings ?? [];
   const providerGroups = new Map<
@@ -661,6 +703,28 @@ function ProjectTicketTitles({ project }: { readonly project: EnvironmentProject
       { label: "mobile project ticket title settings" },
     );
   };
+  const updatePolicy = (
+    update: (current: TicketTitlePolicy | null) => TicketTitlePolicy | null,
+  ) => {
+    pendingPolicyMutationsRef.current += 1;
+    const operation = policyMutationQueueRef.current.then(async () => {
+      const previous = policyRef.current;
+      const next = update(previous);
+      policyRef.current = next;
+      const result = await updateProject({ ticketTitlePolicy: next });
+      if (result._tag !== "Success") policyRef.current = previous;
+      return result;
+    });
+    policyMutationQueueRef.current = operation.then(
+      () => {
+        pendingPolicyMutationsRef.current -= 1;
+      },
+      () => {
+        pendingPolicyMutationsRef.current -= 1;
+      },
+    );
+    return operation;
+  };
   const updateBinding = (
     driver: string,
     host: string,
@@ -709,14 +773,19 @@ function ProjectTicketTitles({ project }: { readonly project: EnvironmentProject
   const saveProjectTemplate = (customTemplate: string) => {
     const generation = ++templateSaveGenerationRef.current;
     setTemplateDraft(customTemplate);
-    if (customTemplate === effectivePolicy.customTemplate) return;
-    const ticketTitlePolicy = { ...effectivePolicy, mode: "custom" as const, customTemplate };
+    const currentPolicy = policyRef.current ?? inheritedPolicy;
+    if (currentPolicy.mode === "custom" && customTemplate === currentPolicy.customTemplate) return;
+    const ticketTitlePolicy = { ...currentPolicy, mode: "custom" as const, customTemplate };
     if (!renderTicketThreadTitle(ticketTitlePolicy, TEMPLATE_PREVIEW_METADATA)) {
       setTemplateError("The template contains an unsupported variable.");
       return;
     }
     setTemplateError(null);
-    void updateProject({ ticketTitlePolicy }).then((result) => {
+    void updatePolicy((current) => ({
+      ...(current ?? inheritedPolicy),
+      mode: "custom",
+      customTemplate,
+    })).then((result) => {
       if (generation !== templateSaveGenerationRef.current) return;
       if (result._tag !== "Success") {
         setTemplateError(
@@ -745,12 +814,14 @@ function ProjectTicketTitles({ project }: { readonly project: EnvironmentProject
               : "flex-row items-center gap-4 border-t border-border-subtle p-4"
           }
           onPress={() =>
-            void updateProject({
-              ticketTitlePolicy:
-                option.mode === "inherit"
-                  ? null
-                  : { ...effectivePolicy, mode: option.mode as TicketTitleMode },
-            })
+            void updatePolicy((current) =>
+              option.mode === "inherit"
+                ? null
+                : {
+                    ...(current ?? inheritedPolicy),
+                    mode: option.mode as TicketTitleMode,
+                  },
+            )
           }
         >
           <Text className="min-w-0 flex-1 text-lg text-foreground">{option.label}</Text>
