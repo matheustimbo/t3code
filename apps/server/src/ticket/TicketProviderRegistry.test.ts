@@ -7,7 +7,7 @@ import { extractUniqueTicketReference } from "@t3tools/shared/ticketTitles";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
-import { HttpClient } from "effect/unstable/http";
+import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { it as effectIt } from "@effect/vitest";
 import { describe, expect, vi } from "vite-plus/test";
 
@@ -24,12 +24,15 @@ const commandOutput = (stdout: string): VcsProcess.VcsProcessOutput => ({
 
 const githubReference = extractUniqueTicketReference("https://github.com/acme/widgets/issues/12")!;
 
-function makeRegistry(run: VcsProcess.VcsProcess["Service"]["run"]) {
+function makeRegistry(
+  run: VcsProcess.VcsProcess["Service"]["run"],
+  httpClient: HttpClient.HttpClient = {
+    execute: () => Effect.die("HTTP should not run"),
+  } as never,
+) {
   return make.pipe(
     Effect.provideService(VcsProcess.VcsProcess, { run }),
-    Effect.provideService(HttpClient.HttpClient, {
-      execute: () => Effect.die("HTTP should not run"),
-    } as never),
+    Effect.provideService(HttpClient.HttpClient, httpClient),
   );
 }
 
@@ -52,6 +55,7 @@ describe("TicketProviderRegistry", () => {
           driver: TicketProviderDriverKind.make("github"),
           baseUrl: "https://github.com",
           config: { accountLogin: "work" },
+          environment: [{ name: "GH_CONFIG_DIR", value: "/tmp/gh-work", sensitive: false }],
         },
       };
 
@@ -77,6 +81,7 @@ describe("TicketProviderRegistry", () => {
       expect(run.mock.calls[0]?.[0]).toMatchObject({
         command: "gh",
         args: ["auth", "token", "--hostname", "github.com", "--user", "work"],
+        env: expect.objectContaining({ GH_CONFIG_DIR: "/tmp/gh-work" }),
       });
       expect(run.mock.calls[1]?.[0]).toMatchObject({
         command: "gh",
@@ -227,6 +232,78 @@ describe("TicketProviderRegistry", () => {
           args: expect.arrayContaining(["--organization", baseUrl]),
         }),
       );
+    }),
+  );
+
+  effectIt.effect("probes Azure DevOps with an authenticated organization request", () =>
+    Effect.gen(function* () {
+      const run = vi.fn<VcsProcess.VcsProcess["Service"]["run"]>(() =>
+        Effect.succeed(commandOutput("")),
+      );
+      const registry = yield* makeRegistry(run);
+      const instanceId = TicketProviderInstanceId.make("azure_work");
+      const result = yield* registry.probe({
+        cwd: "/tmp/project",
+        instanceId,
+        instance: {
+          driver: TicketProviderDriverKind.make("azure-devops"),
+          baseUrl: "https://dev.azure.com/acme",
+          environment: [
+            { name: "AZURE_DEVOPS_EXT_PAT", value: "expired-or-valid", sensitive: true },
+          ],
+        },
+      });
+
+      expect(result.availability).toBe("available");
+      expect(run).toHaveBeenCalledWith(
+        expect.objectContaining({
+          command: "az",
+          args: expect.arrayContaining([
+            "devops",
+            "project",
+            "list",
+            "--organization",
+            "https://dev.azure.com/acme",
+          ]),
+          env: expect.objectContaining({ AZURE_DEVOPS_EXT_PAT: "expired-or-valid" }),
+        }),
+      );
+    }),
+  );
+
+  effectIt.effect("rejects oversized HTTP ticket responses before JSON decoding", () =>
+    Effect.gen(function* () {
+      const run = vi.fn<VcsProcess.VcsProcess["Service"]["run"]>(() =>
+        Effect.die("CLI should not run"),
+      );
+      const httpClient = HttpClient.make((request) =>
+        Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            new Response(JSON.stringify({ fields: { summary: "x".repeat(140 * 1024) } }), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            }),
+          ),
+        ),
+      );
+      const registry = yield* makeRegistry(run, httpClient);
+      const reference = extractUniqueTicketReference("https://acme.atlassian.net/browse/WEB-12")!;
+      const failure = yield* Effect.flip(
+        registry.resolve({
+          cwd: "/tmp/project",
+          reference,
+          instances: {
+            [TicketProviderInstanceId.make("jira_work")]: {
+              driver: TicketProviderDriverKind.make("jira"),
+              baseUrl: "https://acme.atlassian.net",
+            },
+          },
+          bindings: [],
+        }),
+      );
+
+      expect(failure.reason).toBe("request-failed");
     }),
   );
 

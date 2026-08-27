@@ -513,12 +513,33 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
         instances: [...(existing?.instances ?? []), [instanceId, instance]],
       });
     }
+    for (const binding of selectedCheckout.ticketProviderBindings ?? []) {
+      const host = binding.host.toLowerCase();
+      const key = `${binding.driver}:${host}`;
+      if (!groups.has(key)) {
+        groups.set(key, { driver: binding.driver, host, instances: [] });
+      }
+    }
     return [...groups.values()];
-  }, [selectedCheckoutSettings.ticketProviderInstances]);
+  }, [selectedCheckout.ticketProviderBindings, selectedCheckoutSettings.ticketProviderInstances]);
   const selectedTicketProviderBindings = selectedCheckout.ticketProviderBindings ?? [];
+  const ticketProviderBindingsRef = useRef({
+    projectId: selectedCheckout.id,
+    bindings: selectedTicketProviderBindings,
+  });
+  useEffect(() => {
+    ticketProviderBindingsRef.current = {
+      projectId: selectedCheckout.id,
+      bindings: selectedTicketProviderBindings,
+    };
+  }, [selectedCheckout.id, selectedTicketProviderBindings]);
   const setTicketProviderBinding = useCallback(
     (driver: string, host: string, instanceId: string | null) => {
-      const withoutBinding = selectedTicketProviderBindings.filter(
+      const current =
+        ticketProviderBindingsRef.current.projectId === selectedCheckout.id
+          ? ticketProviderBindingsRef.current.bindings
+          : selectedTicketProviderBindings;
+      const withoutBinding = current.filter(
         (binding) => !(binding.driver === driver && binding.host.toLowerCase() === host),
       );
       const next: TicketProviderBindings = instanceId
@@ -531,6 +552,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
             },
           ]
         : withoutBinding;
+      ticketProviderBindingsRef.current = { projectId: selectedCheckout.id, bindings: next };
       void updateProject({
         environmentId: selectedCheckout.environmentId,
         input: { projectId: selectedCheckout.id, ticketProviderBindings: next },
@@ -1001,7 +1023,9 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
           />
           <TicketTitlePolicySettings
             policy={storedTicketTitlePolicy}
-            inheritedPolicy={selectedCheckoutSettings.ticketTitlePolicy}
+            {...(group.memberProjects.length === 1
+              ? { inheritedPolicy: selectedCheckoutSettings.ticketTitlePolicy }
+              : {})}
             allowInherit
             onChange={setTicketTitlePolicy}
           />

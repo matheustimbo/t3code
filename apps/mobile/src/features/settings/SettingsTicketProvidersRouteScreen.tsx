@@ -9,13 +9,14 @@ import {
   type EnvironmentId,
   type ServerSettingsPatch,
   type TicketProviderInstanceConfig,
+  type TicketProviderInstanceConfigMap,
   type TicketProviderProbeResult,
   type TicketProviderBindings,
   type TicketTitleMode,
 } from "@t3tools/contracts";
 import { Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useContext, useState } from "react";
+import { useContext, useEffect, useRef, useState } from "react";
 
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
@@ -108,9 +109,16 @@ function EnvironmentTicketProviders({
   const [identity, setIdentity] = useState("");
   const [secret, setSecret] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
   const [probeByInstanceId, setProbeByInstanceId] = useState<
     Readonly<Record<string, TicketProviderProbeResult | "testing">>
   >({});
+  const instancesRef = useRef<TicketProviderInstanceConfigMap>(
+    settings?.ticketProviderInstances ?? DEFAULT_SERVER_SETTINGS.ticketProviderInstances,
+  );
+  useEffect(() => {
+    if (settings) instancesRef.current = settings.ticketProviderInstances;
+  }, [settings]);
 
   if (!settings) {
     return (
@@ -122,16 +130,24 @@ function EnvironmentTicketProviders({
     );
   }
 
-  const savePatch = (patch: ServerSettingsPatch) => {
-    void runAtomCommand(
+  const savePatch = (patch: ServerSettingsPatch) =>
+    runAtomCommand(
       registry,
       serverEnvironment.updateSettings,
       { environmentId, input: { patch } },
       { label: "mobile ticket provider settings" },
     );
+  const updateInstances = (
+    update: (current: TicketProviderInstanceConfigMap) => TicketProviderInstanceConfigMap,
+  ) => {
+    const next = update(instancesRef.current);
+    instancesRef.current = next;
+    return savePatch({ ticketProviderInstances: next });
   };
   const instances = Object.entries(settings.ticketProviderInstances);
   const probeProvider = (instanceId: string) => {
+    const brandedInstanceId = TicketProviderInstanceId.make(instanceId);
+    const instanceSignature = JSON.stringify(instancesRef.current[brandedInstanceId]);
     setProbeByInstanceId((current) => ({ ...current, [instanceId]: "testing" }));
     void runAtomCommand(
       registry,
@@ -142,6 +158,7 @@ function EnvironmentTicketProviders({
       },
       { label: "mobile ticket provider connection test" },
     ).then((result) => {
+      if (JSON.stringify(instancesRef.current[brandedInstanceId]) !== instanceSignature) return;
       setProbeByInstanceId((current) => ({
         ...current,
         [instanceId]:
@@ -162,7 +179,7 @@ function EnvironmentTicketProviders({
     setSecret("");
     setError(null);
   };
-  const addProvider = () => {
+  const addProvider = async () => {
     let parsed: URL;
     try {
       parsed = new URL(baseUrl.trim());
@@ -174,6 +191,10 @@ function EnvironmentTicketProviders({
       setError("The base URL must use HTTP or HTTPS.");
       return;
     }
+    if (parsed.username || parsed.password) {
+      setError("The base URL must not contain credentials.");
+      return;
+    }
     if (driver.driver === "jira" && parsed.hostname === "example.atlassian.net") {
       setError("Replace the example URL with your Jira site URL.");
       return;
@@ -182,7 +203,7 @@ function EnvironmentTicketProviders({
     const baseId = `${driver.driver}_${slugify(`${name}_${parsed.host}`)}`.slice(0, 60);
     let id = baseId;
     let suffix = 2;
-    while (settings.ticketProviderInstances[TicketProviderInstanceId.make(id)]) {
+    while (instancesRef.current[TicketProviderInstanceId.make(id)]) {
       id = `${baseId.slice(0, 60 - String(suffix).length)}_${suffix}`;
       suffix += 1;
     }
@@ -201,6 +222,13 @@ function EnvironmentTicketProviders({
       displayName: name,
       baseUrl: parsed.toString().replace(/\/$/u, ""),
       enabled: true,
+      isDefault: !Object.values(instancesRef.current).some(
+        (candidate) =>
+          candidate.enabled !== false &&
+          candidate.driver === driver.driver &&
+          new URL(candidate.baseUrl).host.toLowerCase() === parsed.host.toLowerCase() &&
+          candidate.isDefault === true,
+      ),
       ...(identityConfig ? { config: identityConfig } : {}),
       ...(driver.secret && secret.trim()
         ? {
@@ -208,13 +236,36 @@ function EnvironmentTicketProviders({
           }
         : {}),
     };
-    savePatch({
-      ticketProviderInstances: {
-        ...settings.ticketProviderInstances,
-        [TicketProviderInstanceId.make(id)]: instance,
-      },
+    setIsSaving(true);
+    const addedInstanceId = TicketProviderInstanceId.make(id);
+    const result = await updateInstances((current) => {
+      const next = { ...current };
+      if (instance.isDefault) {
+        for (const [candidateId, candidate] of Object.entries(next)) {
+          if (
+            candidate.driver === instance.driver &&
+            new URL(candidate.baseUrl).host.toLowerCase() === parsed.host.toLowerCase()
+          ) {
+            next[TicketProviderInstanceId.make(candidateId)] = {
+              ...candidate,
+              isDefault: false,
+            };
+          }
+        }
+      }
+      next[addedInstanceId] = instance;
+      return next;
     });
-    // Credentials are write-only on mobile: discard the draft immediately.
+    setIsSaving(false);
+    if (result._tag !== "Success") {
+      if (instancesRef.current[addedInstanceId] === instance) {
+        const next = { ...instancesRef.current };
+        delete next[addedInstanceId];
+        instancesRef.current = next;
+      }
+      setError("The provider could not be saved. Check the connection and try again.");
+      return;
+    }
     setSecret("");
     setIdentity("");
     setDisplayName("");
@@ -236,7 +287,7 @@ function EnvironmentTicketProviders({
                 : "flex-row items-center gap-4 border-t border-border-subtle p-4"
             }
             onPress={() =>
-              savePatch({
+              void savePatch({
                 ticketTitlePolicy: { ...settings.ticketTitlePolicy, mode: option.mode },
               })
             }
@@ -263,7 +314,7 @@ function EnvironmentTicketProviders({
               placeholder="{identifier} — {title}"
               className={inputClassName()}
               onSubmitEditing={(event) =>
-                savePatch({
+                void savePatch({
                   ticketTitlePolicy: {
                     ...settings.ticketTitlePolicy,
                     customTemplate: event.nativeEvent.text,
@@ -296,9 +347,16 @@ function EnvironmentTicketProviders({
                   accessibilityRole="button"
                   accessibilityLabel={`Remove ${instance.displayName ?? instanceId}`}
                   onPress={() => {
-                    const next = { ...settings.ticketProviderInstances };
-                    delete next[TicketProviderInstanceId.make(instanceId)];
-                    savePatch({ ticketProviderInstances: next });
+                    setProbeByInstanceId((current) => {
+                      const next = { ...current };
+                      delete next[instanceId];
+                      return next;
+                    });
+                    void updateInstances((current) => {
+                      const next = { ...current };
+                      delete next[TicketProviderInstanceId.make(instanceId)];
+                      return next;
+                    });
                   }}
                   className="p-2"
                 >
@@ -325,6 +383,30 @@ function EnvironmentTicketProviders({
                 >
                   <Text className="text-sm font-medium text-foreground">
                     {probe === "testing" ? "Testing…" : "Test"}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Make ${instance.displayName ?? instanceId} the default`}
+                  disabled={instance.isDefault === true}
+                  onPress={() => {
+                    const host = new URL(instance.baseUrl).host.toLowerCase();
+                    void updateInstances((current) =>
+                      Object.fromEntries(
+                        Object.entries(current).map(([id, candidate]) => [
+                          id,
+                          candidate.driver === instance.driver &&
+                          new URL(candidate.baseUrl).host.toLowerCase() === host
+                            ? { ...candidate, isDefault: id === instanceId }
+                            : candidate,
+                        ]),
+                      ),
+                    );
+                  }}
+                  className="rounded-full border border-border px-3 py-2 disabled:opacity-50"
+                >
+                  <Text className="text-sm font-medium text-foreground">
+                    {instance.isDefault ? "Default" : "Make default"}
                   </Text>
                 </Pressable>
               </View>
@@ -412,10 +494,13 @@ function EnvironmentTicketProviders({
             {error ? <Text className="text-sm text-destructive">{error}</Text> : null}
             <Pressable
               accessibilityRole="button"
-              onPress={addProvider}
-              className="items-center rounded-[14px] bg-foreground px-4 py-3"
+              disabled={isSaving}
+              onPress={() => void addProvider()}
+              className="items-center rounded-[14px] bg-foreground px-4 py-3 disabled:opacity-50"
             >
-              <Text className="font-t3-medium text-background">Save provider</Text>
+              <Text className="font-t3-medium text-background">
+                {isSaving ? "Saving…" : "Save provider"}
+              </Text>
             </Pressable>
           </View>
         ) : null}
@@ -456,6 +541,18 @@ function ProjectTicketTitles({ project }: { readonly project: EnvironmentProject
       // Invalid persisted URLs are ignored here; the server schema reports them on write.
     }
   }
+  for (const binding of bindings) {
+    const host = binding.host.toLowerCase();
+    const key = `${binding.driver}:${host}`;
+    if (!providerGroups.has(key)) {
+      providerGroups.set(key, { driver: binding.driver, host, instances: [] });
+    }
+  }
+
+  const bindingsRef = useRef(bindings);
+  useEffect(() => {
+    bindingsRef.current = bindings;
+  }, [bindings]);
 
   const updateProject = (input: {
     readonly ticketTitlePolicy?: EnvironmentProject["ticketTitlePolicy"];
@@ -469,21 +566,21 @@ function ProjectTicketTitles({ project }: { readonly project: EnvironmentProject
     );
   };
   const updateBinding = (driver: string, host: string, instanceId: string | null) => {
-    const remaining = bindings.filter(
+    const remaining = bindingsRef.current.filter(
       (binding) => !(binding.driver === driver && binding.host.toLowerCase() === host),
     );
-    updateProject({
-      ticketProviderBindings: instanceId
-        ? [
-            ...remaining,
-            {
-              driver: TicketProviderDriverKind.make(driver),
-              host,
-              instanceId: TicketProviderInstanceId.make(instanceId),
-            },
-          ]
-        : remaining,
-    });
+    const next: TicketProviderBindings = instanceId
+      ? [
+          ...remaining,
+          {
+            driver: TicketProviderDriverKind.make(driver),
+            host,
+            instanceId: TicketProviderInstanceId.make(instanceId),
+          },
+        ]
+      : remaining;
+    bindingsRef.current = next;
+    updateProject({ ticketProviderBindings: next });
   };
 
   return (

@@ -445,4 +445,17 @@ describe("ServerSettings ticket title configuration", () => {
       baseUrl: "https://linear.app/acme",
     });
   });
+
+  it("rejects credentials embedded in ticket provider base URLs", () => {
+    expect(() =>
+      decodeServerSettingsPatch({
+        ticketProviderInstances: {
+          jira_work: {
+            driver: "jira",
+            baseUrl: "https://user:token@jira.example.com",
+          },
+        },
+      }),
+    ).toThrow();
+  });
 });

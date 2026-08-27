@@ -44,6 +44,21 @@ describe("extractUniqueTicketReference", () => {
     ).toBe("acme/widgets#3");
   });
 
+  it("ignores indented code and variable-length fenced or inline code", () => {
+    expect(
+      extractUniqueTicketReference(
+        [
+          "    https://github.com/acme/widgets/issues/1",
+          "````",
+          "https://github.com/acme/widgets/issues/2",
+          "````",
+          "``https://github.com/acme/widgets/issues/3``",
+          "https://github.com/acme/widgets/issues/4",
+        ].join("\n"),
+      )?.identifier,
+    ).toBe("acme/widgets#4");
+  });
+
   it("uses configured hosts for self-hosted providers", () => {
     expect(
       extractUniqueTicketReference("http://git.internal/acme/widgets/-/issues/9", [

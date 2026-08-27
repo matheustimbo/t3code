@@ -905,7 +905,9 @@ const make = Effect.gen(function* () {
       readonly messageText: string;
       readonly attachments?: ReadonlyArray<ChatAttachment>;
       readonly titleSeed?: string;
-      readonly generatedTitle: Deferred.Deferred<string | undefined>;
+      readonly generatedTitle: Deferred.Deferred<CommandId | undefined>;
+      readonly expectedTitle: string;
+      readonly expectedTitleRevision: number;
     }) {
       const attachments = input.attachments ?? [];
       return yield* Effect.gen(function* () {
@@ -918,22 +920,21 @@ const make = Effect.gen(function* () {
           ...(attachments.length > 0 ? { attachments } : {}),
           modelSelection,
         });
-        yield* Deferred.succeed(input.generatedTitle, generated?.title);
-        if (!generated) return undefined;
-
-        const thread = yield* resolveThread(input.threadId);
-        if (!thread) return undefined;
-        if (!canReplaceThreadTitle(thread.title, input.titleSeed)) {
+        if (!generated) {
+          yield* Deferred.succeed(input.generatedTitle, undefined);
           return undefined;
         }
 
+        const commandId = yield* serverCommandId("thread-title-rename");
         yield* orchestrationEngine.dispatch({
           type: "thread.meta.update",
-          commandId: yield* serverCommandId("thread-title-rename"),
+          commandId,
           threadId: input.threadId,
           title: generated.title,
-          expectedTitle: thread.title,
+          expectedTitle: input.expectedTitle,
+          expectedTitleRevision: input.expectedTitleRevision,
         });
+        yield* Deferred.succeed(input.generatedTitle, commandId);
         return generated.title;
       }).pipe(
         Effect.catchCause((cause) =>
@@ -960,25 +961,14 @@ const make = Effect.gen(function* () {
     globalPolicy: TicketTitlePolicy,
   ): TicketTitlePolicy => projectPolicy ?? globalPolicy;
 
-  const generatedTitleFromDeferred = (
-    deferred: Deferred.Deferred<string | undefined>,
-  ): Effect.Effect<string | undefined> =>
-    Deferred.poll(deferred).pipe(
-      Effect.flatMap(
-        Option.match({
-          onNone: () => Effect.succeed(undefined),
-          onSome: (completed) => completed,
-        }),
-      ),
-    );
-
   const maybeResolveTicketTitleForFirstTurn = Effect.fn("maybeResolveTicketTitleForFirstTurn")(
     function* (input: {
       readonly threadId: ThreadId;
       readonly cwd: string;
       readonly messageText: string;
       readonly titleSeed?: string;
-      readonly generatedTitle: Deferred.Deferred<string | undefined>;
+      readonly generatedTitle: Deferred.Deferred<CommandId | undefined>;
+      readonly initialSequence: number;
     }) {
       const initialThread = yield* resolveThread(input.threadId);
       if (!initialThread) return;
@@ -1028,30 +1018,37 @@ const make = Effect.gen(function* () {
         return;
       }
 
-      const tryApply = Effect.fn("tryApplyTicketTitle")(function* () {
-        const thread = yield* resolveThread(input.threadId);
-        if (!thread || thread.title === ticketTitle) return;
-        const generatedTitle = yield* generatedTitleFromDeferred(input.generatedTitle);
-        const replaceableTitles = new Set(
-          [initialThread.title, input.titleSeed, generatedTitle].filter(
-            (title): title is string => title !== undefined,
+      const generatedTitleCommandId = yield* Deferred.await(input.generatedTitle);
+      const thread = yield* resolveThread(input.threadId);
+      if (!thread || thread.title === ticketTitle) return;
+      const auditedThrough = yield* orchestrationEngine.latestSequence;
+      const titleEvents = yield* orchestrationEngine
+        .readEvents(input.initialSequence, auditedThrough - input.initialSequence)
+        .pipe(
+          Stream.filter(
+            (event) =>
+              event.type === "thread.meta-updated" &&
+              event.payload.threadId === input.threadId &&
+              event.payload.title !== undefined,
           ),
+          Stream.runCollect,
         );
-        if (!replaceableTitles.has(thread.title)) return;
-        yield* orchestrationEngine.dispatch({
-          type: "thread.meta.update",
-          commandId: yield* serverCommandId("thread-ticket-title"),
-          threadId: input.threadId,
-          title: ticketTitle,
-          expectedTitle: thread.title,
-        });
-      });
-
-      yield* tryApply();
-      const afterFirstApply = yield* resolveThread(input.threadId);
-      if (afterFirstApply && afterFirstApply.title !== ticketTitle) {
-        yield* tryApply();
+      if (
+        Array.from(titleEvents).some(
+          (event) =>
+            generatedTitleCommandId === undefined || event.commandId !== generatedTitleCommandId,
+        )
+      ) {
+        return;
       }
+      yield* orchestrationEngine.dispatch({
+        type: "thread.meta.update",
+        commandId: yield* serverCommandId("thread-ticket-title"),
+        threadId: input.threadId,
+        title: ticketTitle,
+        expectedTitle: thread.title,
+        expectedTitleRevision: thread.titleRevision ?? 0,
+      });
     },
     (effect, input) =>
       effect.pipe(
@@ -1285,11 +1282,14 @@ const make = Effect.gen(function* () {
       }).pipe(Effect.forkScoped);
 
       if (canReplaceThreadTitle(thread.title, event.payload.titleSeed)) {
-        const generatedTitle = yield* Deferred.make<string | undefined>();
+        const initialSequence = yield* orchestrationEngine.latestSequence;
+        const generatedTitle = yield* Deferred.make<CommandId | undefined>();
         yield* maybeGenerateThreadTitleForFirstTurn({
           threadId: event.payload.threadId,
           cwd: generationCwd,
           generatedTitle,
+          expectedTitle: thread.title,
+          expectedTitleRevision: thread.titleRevision ?? 0,
           ...generationInput,
         }).pipe(Effect.forkScoped);
         yield* maybeResolveTicketTitleForFirstTurn({
@@ -1298,6 +1298,7 @@ const make = Effect.gen(function* () {
           messageText: message.text,
           ...(event.payload.titleSeed !== undefined ? { titleSeed: event.payload.titleSeed } : {}),
           generatedTitle,
+          initialSequence,
         }).pipe(Effect.forkScoped);
       }
     }

@@ -32,12 +32,61 @@ const BUILT_IN_HOST_DRIVERS = new Map<string, string>([
 const URL_PATTERN = /https?:\/\/[^\s<>"']+/giu;
 const TRAILING_URL_PUNCTUATION = /[),.;!?\]}]+$/u;
 
+function stripInlineCode(line: string): string {
+  let result = "";
+  let cursor = 0;
+  while (cursor < line.length) {
+    if (line[cursor] !== "`") {
+      result += line[cursor];
+      cursor += 1;
+      continue;
+    }
+    let markerEnd = cursor + 1;
+    while (line[markerEnd] === "`") markerEnd += 1;
+    const marker = line.slice(cursor, markerEnd);
+    const closing = line.indexOf(marker, markerEnd);
+    if (closing === -1) {
+      result += marker;
+      cursor = markerEnd;
+      continue;
+    }
+    result += " ";
+    cursor = closing + marker.length;
+  }
+  return result;
+}
+
 function stripIgnoredMarkdown(message: string): string {
-  return message
-    .replace(/```[\s\S]*?```/gu, " ")
-    .replace(/~~~[\s\S]*?~~~/gu, " ")
-    .replace(/^\s*>.*$/gmu, " ")
-    .replace(/`[^`\n]*`/gu, " ");
+  const visible: string[] = [];
+  let fence: { readonly marker: "`" | "~"; readonly length: number } | undefined;
+  for (const line of message.split(/\r?\n/u)) {
+    const fenceMatch = /^ {0,3}(`{3,}|~{3,})/u.exec(line);
+    if (fence) {
+      if (
+        fenceMatch &&
+        fenceMatch[1]![0] === fence.marker &&
+        fenceMatch[1]!.length >= fence.length
+      ) {
+        fence = undefined;
+      }
+      visible.push(" ");
+      continue;
+    }
+    if (fenceMatch) {
+      fence = {
+        marker: fenceMatch[1]![0] as "`" | "~",
+        length: fenceMatch[1]!.length,
+      };
+      visible.push(" ");
+      continue;
+    }
+    if (/^(?: {4}|\t)/u.test(line) || /^\s{0,3}>/u.test(line)) {
+      visible.push(" ");
+      continue;
+    }
+    visible.push(stripInlineCode(line));
+  }
+  return visible.join("\n");
 }
 
 function normalizedUrl(raw: string): URL | undefined {

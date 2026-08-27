@@ -90,4 +90,26 @@ it.layer(NodeServices.layer)("title regeneration decider", (it) => {
       }
     }),
   );
+
+  it.effect("rejects a same-value title update when the observed revision is stale", () =>
+    Effect.gen(function* () {
+      const result = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.meta.update",
+          commandId: CommandId.make("cmd-stale-title-revision"),
+          threadId: ThreadId.make("thread-1"),
+          title: "Ticket title",
+          expectedTitle: "Manual title",
+          expectedTitleRevision: 1,
+        },
+        readModel,
+      });
+      const event = Array.isArray(result) ? result[0] : result;
+
+      expect(event.type).toBe("thread.meta-updated");
+      if (event.type === "thread.meta-updated") {
+        expect(event.payload.title).toBeUndefined();
+      }
+    }),
+  );
 });

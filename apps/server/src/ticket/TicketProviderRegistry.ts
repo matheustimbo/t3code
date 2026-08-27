@@ -20,6 +20,7 @@ import {
 } from "effect/unstable/http";
 
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
 
 const LOOKUP_TIMEOUT_MS = 10_000;
 const MAX_RESPONSE_BYTES = 128 * 1024;
@@ -48,6 +49,11 @@ export class TicketProviderResolveError extends Schema.TaggedErrorClass<TicketPr
     ]),
     cause: Schema.optional(Schema.Defect()),
   },
+) {}
+
+class TicketProviderResponseTooLargeError extends Schema.TaggedErrorClass<TicketProviderResponseTooLargeError>()(
+  "TicketProviderResponseTooLargeError",
+  {},
 ) {}
 
 export interface TicketProviderResolveInput {
@@ -200,6 +206,13 @@ const decodeGitHubIssueJson = Schema.decodeUnknownEffect(
 const decodeGitLabIssueJson = Schema.decodeUnknownEffect(
   Schema.fromJsonString(GitLabIssueResponse),
 );
+const decodeBitbucketIssueJson = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(BitbucketIssueResponse),
+);
+const decodeJiraIssueJson = Schema.decodeUnknownEffect(Schema.fromJsonString(JiraIssueResponse));
+const decodeClickUpTaskJson = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(ClickUpTaskResponse),
+);
 const isTicketProviderResolveError = Schema.is(TicketProviderResolveError);
 
 export const make = Effect.gen(function* () {
@@ -224,16 +237,23 @@ export const make = Effect.gen(function* () {
     return output.stdout;
   });
 
-  const execute = Effect.fn("TicketProviderRegistry.execute")(function* (
+  const executeText = Effect.fn("TicketProviderRegistry.executeText")(function* (
     request: HttpClientRequest.HttpClientRequest,
   ) {
-    const response = yield* httpClient
-      .execute(request.pipe(HttpClientRequest.acceptJson))
-      .pipe(
-        Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }),
-        Effect.timeout(Duration.millis(LOOKUP_TIMEOUT_MS)),
-      );
-    return yield* HttpClientResponse.filterStatusOk(response);
+    return yield* Effect.gen(function* () {
+      const response = yield* httpClient
+        .execute(request.pipe(HttpClientRequest.acceptJson))
+        .pipe(Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }));
+      const success = yield* HttpClientResponse.filterStatusOk(response);
+      const collected = yield* collectUint8StreamText({
+        stream: success.stream,
+        maxBytes: MAX_RESPONSE_BYTES,
+      });
+      if (collected.truncated) {
+        return yield* new TicketProviderResponseTooLargeError();
+      }
+      return collected.text;
+    }).pipe(Effect.timeout(Duration.millis(LOOKUP_TIMEOUT_MS)));
   });
 
   const resolveGitHub = Effect.fn("TicketProviderRegistry.resolveGitHub")(function* (input: {
@@ -255,6 +275,7 @@ export const make = Effect.gen(function* () {
           "--user",
           config.accountLogin.trim(),
         ],
+        env,
         cwd: input.cwd,
         timeoutMs: LOOKUP_TIMEOUT_MS,
         maxOutputBytes: 16 * 1024,
@@ -361,8 +382,7 @@ export const make = Effect.gen(function* () {
     if (accessToken) request = request.pipe(HttpClientRequest.bearerToken(accessToken));
     else if (email && apiToken)
       request = request.pipe(HttpClientRequest.basicAuth(email, apiToken));
-    const response = yield* execute(request);
-    const issue = yield* HttpClientResponse.schemaBodyJson(BitbucketIssueResponse)(response);
+    const issue = yield* decodeBitbucketIssueJson(yield* executeText(request));
     return { title: issue.title };
   });
 
@@ -384,8 +404,7 @@ export const make = Effect.gen(function* () {
     } else if (pat ?? token) {
       request = request.pipe(HttpClientRequest.bearerToken((pat ?? token)!));
     }
-    const response = yield* execute(request);
-    const issue = yield* HttpClientResponse.schemaBodyJson(JiraIssueResponse)(response);
+    const issue = yield* decodeJiraIssueJson(yield* executeText(request));
     return { title: issue.fields.summary };
   });
 
@@ -405,12 +424,13 @@ export const make = Effect.gen(function* () {
     const query = custom
       ? `?custom_task_ids=true&team_id=${encodeURIComponent(config.workspaceId!.trim())}`
       : "";
-    const response = yield* execute(
-      HttpClientRequest.get(
-        `https://api.clickup.com/api/v2/task/${encodeURIComponent(input.reference.resourceId)}${query}`,
-      ).pipe(HttpClientRequest.setHeader("Authorization", token)),
+    const task = yield* decodeClickUpTaskJson(
+      yield* executeText(
+        HttpClientRequest.get(
+          `https://api.clickup.com/api/v2/task/${encodeURIComponent(input.reference.resourceId)}${query}`,
+        ).pipe(HttpClientRequest.setHeader("Authorization", token)),
+      ),
     );
-    const task = yield* HttpClientResponse.schemaBodyJson(ClickUpTaskResponse)(response);
     return {
       title: task.name,
       ...(task.custom_id ? { identifier: task.custom_id } : {}),
@@ -554,14 +574,24 @@ export const make = Effect.gen(function* () {
           });
           break;
         case "azure-devops":
-          if (!environmentValue(input.instance, "AZURE_DEVOPS_EXT_PAT")) {
-            yield* runText({
-              command: "az",
-              args: ["account", "show", "--output", "none"],
-              cwd: input.cwd,
-              env,
-            });
-          }
+          yield* runText({
+            command: "az",
+            args: [
+              "devops",
+              "project",
+              "list",
+              "--organization",
+              baseUrl,
+              "--top",
+              "1",
+              "--output",
+              "none",
+              "--detect",
+              "false",
+            ],
+            cwd: input.cwd,
+            env,
+          });
           break;
         case "bitbucket": {
           let request = HttpClientRequest.get("https://api.bitbucket.org/2.0/user");
@@ -572,7 +602,7 @@ export const make = Effect.gen(function* () {
           else if (email && apiToken) {
             request = request.pipe(HttpClientRequest.basicAuth(email, apiToken));
           }
-          yield* execute(request);
+          yield* executeText(request);
           break;
         }
         case "jira": {
@@ -585,7 +615,7 @@ export const make = Effect.gen(function* () {
           } else if (pat ?? token) {
             request = request.pipe(HttpClientRequest.bearerToken((pat ?? token)!));
           }
-          yield* execute(request);
+          yield* executeText(request);
           break;
         }
         case "clickup": {
@@ -597,7 +627,7 @@ export const make = Effect.gen(function* () {
               reason: "unauthenticated",
             });
           }
-          yield* execute(
+          yield* executeText(
             HttpClientRequest.get("https://api.clickup.com/api/v2/user").pipe(
               HttpClientRequest.setHeader("Authorization", token),
             ),

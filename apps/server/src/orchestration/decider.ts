@@ -825,8 +825,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           : command.branch;
       const title =
         command.title !== undefined &&
-        command.expectedTitle !== undefined &&
-        thread.title !== command.expectedTitle
+        ((command.expectedTitle !== undefined && thread.title !== command.expectedTitle) ||
+          (command.expectedTitleRevision !== undefined &&
+            (thread.titleRevision ?? 0) !== command.expectedTitleRevision))
           ? undefined
           : command.title;
       const occurredAt = yield* nowIso;

@@ -38,10 +38,26 @@ export const TicketTitlePolicy = Schema.Struct({
 });
 export type TicketTitlePolicy = typeof TicketTitlePolicy.Type;
 
+const TicketProviderBaseUrl = TrimmedNonEmptyString.check(
+  Schema.makeFilter((value) => {
+    try {
+      const url = new URL(value);
+      return (
+        ((url.protocol === "https:" || url.protocol === "http:") &&
+          url.username.length === 0 &&
+          url.password.length === 0) ||
+        "Ticket provider base URL must use HTTP or HTTPS and must not contain credentials."
+      );
+    } catch {
+      return "Ticket provider base URL must be a valid URL.";
+    }
+  }),
+);
+
 export const TicketProviderInstanceConfig = Schema.Struct({
   driver: TicketProviderDriverKind,
   displayName: Schema.optional(TrimmedNonEmptyString),
-  baseUrl: TrimmedNonEmptyString,
+  baseUrl: TicketProviderBaseUrl,
   enabled: Schema.optionalKey(Schema.Boolean),
   isDefault: Schema.optionalKey(Schema.Boolean),
   environment: Schema.optionalKey(ProviderInstanceEnvironment),

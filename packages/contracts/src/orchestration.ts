@@ -402,6 +402,7 @@ export const OrchestrationThread = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
+  titleRevision: Schema.optional(NonNegativeInt),
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode.pipe(
@@ -804,6 +805,7 @@ const ThreadMetaUpdateCommand = Schema.Struct({
   threadId: ThreadId,
   title: Schema.optional(TrimmedNonEmptyString),
   expectedTitle: Schema.optional(TrimmedNonEmptyString),
+  expectedTitleRevision: Schema.optional(NonNegativeInt),
   regenerateTitle: Schema.optional(Schema.Literal(true)),
   modelSelection: Schema.optional(ModelSelection),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),

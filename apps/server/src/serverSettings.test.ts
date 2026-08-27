@@ -1100,4 +1100,147 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       );
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
+
+  it.effect("rolls back ordinary provider secrets when a ticket secret write fails", () => {
+    const secrets = new Map<string, Uint8Array>();
+    const failingStore = ServerSecretStore.ServerSecretStore.of({
+      get: (name) => Effect.succeed(Option.fromNullishOr(secrets.get(name))),
+      set: (name, value) =>
+        name.startsWith("ticket-provider-env-")
+          ? Effect.fail(
+              new ServerSecretStore.SecretStorePersistError({
+                resource: `secret ${name}`,
+                cause: "simulated ticket secret failure",
+              }),
+            )
+          : Effect.sync(() => {
+              secrets.set(name, Uint8Array.from(value));
+            }),
+      create: (name, value) =>
+        Effect.sync(() => {
+          secrets.set(name, Uint8Array.from(value));
+        }),
+      getOrCreateRandom: () => Effect.succeed(new Uint8Array()),
+      remove: (name) =>
+        Effect.sync(() => {
+          secrets.delete(name);
+        }),
+    });
+    const settingsLayer = ServerSettingsModule.layer.pipe(
+      Layer.provide(Layer.succeed(ServerSecretStore.ServerSecretStore, failingStore)),
+      Layer.provideMerge(Layer.fresh(SqlitePersistenceMemory)),
+      Layer.provideMerge(
+        Layer.fresh(
+          ServerConfig.layerTest(process.cwd(), {
+            prefix: "t3code-server-settings-secret-rollback-test-",
+          }),
+        ),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const failure = yield* Effect.flip(
+        serverSettings.updateSettings({
+          providerInstances: {
+            [ProviderInstanceId.make("codex_personal")]: {
+              driver: ProviderDriverKind.make("codex"),
+              environment: [
+                { name: "OPENROUTER_API_KEY", value: "ordinary-secret", sensitive: true },
+              ],
+              config: {},
+            },
+          },
+          ticketProviderInstances: {
+            [TicketProviderInstanceId.make("jira_work")]: {
+              driver: TicketProviderDriverKind.make("jira"),
+              baseUrl: "https://work.atlassian.net",
+              environment: [{ name: "JIRA_API_TOKEN", value: "ticket-secret", sensitive: true }],
+            },
+          },
+        }),
+      );
+
+      assert.equal(failure.operation, "write-secret");
+      assert.equal(secrets.size, 0);
+    }).pipe(Effect.provide(settingsLayer));
+  });
+
+  it.effect("keeps ordinary credentials materialized when a ticket secret read fails", () => {
+    const secrets = new Map<string, Uint8Array>();
+    let failTicketReads = false;
+    const store = ServerSecretStore.ServerSecretStore.of({
+      get: (name) =>
+        failTicketReads && name.startsWith("ticket-provider-env-")
+          ? Effect.fail(
+              new ServerSecretStore.SecretStoreReadError({
+                resource: `secret ${name}`,
+                cause: "simulated ticket secret read failure",
+              }),
+            )
+          : Effect.succeed(Option.fromNullishOr(secrets.get(name))),
+      set: (name, value) =>
+        Effect.sync(() => {
+          secrets.set(name, Uint8Array.from(value));
+        }),
+      create: (name, value) =>
+        Effect.sync(() => {
+          secrets.set(name, Uint8Array.from(value));
+        }),
+      getOrCreateRandom: () => Effect.succeed(new Uint8Array()),
+      remove: (name) =>
+        Effect.sync(() => {
+          secrets.delete(name);
+        }),
+    });
+    const settingsLayer = ServerSettingsModule.layer.pipe(
+      Layer.provide(Layer.succeed(ServerSecretStore.ServerSecretStore, store)),
+      Layer.provideMerge(Layer.fresh(SqlitePersistenceMemory)),
+      Layer.provideMerge(
+        Layer.fresh(
+          ServerConfig.layerTest(process.cwd(), {
+            prefix: "t3code-server-settings-secret-materialize-test-",
+          }),
+        ),
+      ),
+    );
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+        const changes = yield* serverSettings.subscribeChanges;
+        yield* serverSettings.updateSettings({
+          providerInstances: {
+            [ProviderInstanceId.make("codex_personal")]: {
+              driver: ProviderDriverKind.make("codex"),
+              environment: [
+                { name: "OPENROUTER_API_KEY", value: "ordinary-secret", sensitive: true },
+              ],
+              config: {},
+            },
+          },
+          ticketProviderInstances: {
+            [TicketProviderInstanceId.make("jira_work")]: {
+              driver: TicketProviderDriverKind.make("jira"),
+              baseUrl: "https://work.atlassian.net",
+              environment: [{ name: "JIRA_API_TOKEN", value: "ticket-secret", sensitive: true }],
+            },
+          },
+        });
+        failTicketReads = true;
+        const changed = Option.getOrThrow(yield* changes.pipe(Stream.runHead));
+
+        assert.equal(
+          changed.providerInstances[ProviderInstanceId.make("codex_personal")]?.environment?.[0]
+            ?.value,
+          "ordinary-secret",
+        );
+        assert.equal(
+          changed.ticketProviderInstances[TicketProviderInstanceId.make("jira_work")]
+            ?.environment?.[0]?.value,
+          "",
+        );
+      }),
+    ).pipe(Effect.provide(settingsLayer));
+  });
 });
