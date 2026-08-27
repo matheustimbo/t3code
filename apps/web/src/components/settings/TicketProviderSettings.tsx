@@ -30,7 +30,7 @@ import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { toastManager } from "../ui/toast";
-import { SettingResetButton, SettingsRow, SettingsSection } from "./settingsLayout";
+import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 
 interface TicketDriverOption {
@@ -411,19 +411,19 @@ function AddTicketProviderDialog({
               />
             </Field>
           ) : null}
-          <label className="flex items-center justify-between gap-4 text-sm">
-            <span>
+          <Field>
+            <FieldLabel className="w-full justify-between gap-4">
               Default for this provider and host
-              <span className="mt-1 block text-xs text-muted-foreground">
-                Used when a project has no explicit account binding.
-              </span>
-            </span>
-            <Switch
-              checked={isDefault}
-              aria-label="Default for this provider and host"
-              onCheckedChange={(checked) => setIsDefault(Boolean(checked))}
-            />
-          </label>
+              <Switch
+                checked={isDefault}
+                aria-label="Default for this provider and host"
+                onCheckedChange={(checked) => setIsDefault(Boolean(checked))}
+              />
+            </FieldLabel>
+            <FieldDescription>
+              Used when a project has no explicit account binding.
+            </FieldDescription>
+          </Field>
           {error ? <p className="text-sm text-destructive-foreground">{error}</p> : null}
         </DialogPanel>
         <DialogFooter>
@@ -462,10 +462,10 @@ export function TicketProviderSettings() {
   const instancesRevisionRef = useRef(settings.ticketProviderInstancesRevision);
   const projectedInstancesRef = useRef(settings.ticketProviderInstances);
   const projectedInstancesRevisionRef = useRef(settings.ticketProviderInstancesRevision);
-  projectedInstancesRef.current = settings.ticketProviderInstances;
-  projectedInstancesRevisionRef.current = settings.ticketProviderInstancesRevision;
   const instancesMutationQueueRef = useRef<Promise<void>>(Promise.resolve());
   const pendingInstanceMutationsRef = useRef(0);
+  projectedInstancesRef.current = settings.ticketProviderInstances;
+  projectedInstancesRevisionRef.current = settings.ticketProviderInstancesRevision;
   const syncProjectedInstances = () => {
     if (projectedInstancesRevisionRef.current < instancesRevisionRef.current) return;
     instancesRef.current = projectedInstancesRef.current;
@@ -538,14 +538,6 @@ export function TicketProviderSettings() {
         <SettingsRow
           title="Accounts"
           description="Accounts T3 can use to read linked tickets. With no configured account, T3 still tries the local CLI for supported providers."
-          resetAction={
-            entries.length > 0 ? (
-              <SettingResetButton
-                label="ticket providers"
-                onClick={() => updateInstances(() => ({}))}
-              />
-            ) : null
-          }
         />
         {entries.map(([instanceId, instance]) => {
           const option = DRIVER_BY_KIND.get(instance.driver);
