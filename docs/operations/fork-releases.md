@@ -9,7 +9,7 @@ Each push to `fork-main`, or a manual **Fork release** workflow dispatch, create
 
 - `t3-<version>.tgz`, used whenever a client needs that exact server version
 - `t3-latest.tgz`, used for initial installs and background-service management
-- a universal macOS desktop DMG and ZIP, their blockmaps, and `latest-mac.yml`
+- arm64 and x64 macOS desktop DMGs and ZIPs, their blockmaps, and a merged `latest-mac.yml`
 
 The desktop build embeds `matheustimbo/t3code` as its update repository. The in-app update button,
 desktop update checks, copied server commands, background-service updates, SSH bootstrapping, WSL

@@ -77,6 +77,14 @@ jobs:
   desktop_mac:
     needs: prepare
     runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            rust_target: aarch64-apple-darwin
+          - arch: x64
+            rust_target: x86_64-apple-darwin
     steps:
       - name: Checkout fork release
         uses: actions/checkout@v6
@@ -100,9 +108,9 @@ jobs:
       - name: Setup Rust targets
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
+          targets: ${{ matrix.rust_target }}
 
-      - name: Build universal fork desktop
+      - name: Build fork desktop
         env:
           T3CODE_DESKTOP_UPDATE_REPOSITORY: matheustimbo/t3code
         shell: bash
@@ -113,7 +121,7 @@ jobs:
           vp run dist:desktop:artifact \
             --platform mac \
             --target dmg \
-            --arch universal \
+            --arch "${{ matrix.arch }}" \
             --build-version "$version" \
             --adhoc-sign \
             --verbose
@@ -129,10 +137,14 @@ jobs:
           test -n "$(find release-mac -maxdepth 1 -name '*.zip' -print -quit)"
           test -f release-mac/latest-mac.yml
 
+          if [[ "${{ matrix.arch }}" == "x64" ]]; then
+            mv release-mac/latest-mac.yml release-mac/latest-mac-x64.yml
+          fi
+
       - name: Upload desktop packages
         uses: actions/upload-artifact@v7
         with:
-          name: fork-desktop-mac
+          name: fork-desktop-mac-${{ matrix.arch }}
           path: release-mac/*
           if-no-files-found: error
           compression-level: 0
@@ -142,12 +154,40 @@ jobs:
     needs: [prepare, server, desktop_mac]
     runs-on: ubuntu-24.04
     steps:
+      - name: Checkout release tooling
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@t3tools/scripts...
+
       - name: Download release artifacts
         uses: actions/download-artifact@v8
         with:
           pattern: fork-*
           merge-multiple: true
           path: release-assets
+
+      - name: Merge macOS updater manifests
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/merge-update-manifests.ts \
+            --platform mac \
+            release-assets/latest-mac.yml \
+            release-assets/latest-mac-x64.yml
+          rm release-assets/latest-mac-x64.yml
 
       - name: Publish fork release
         uses: softprops/action-gh-release@v3
