@@ -23,9 +23,9 @@ credentials and switch the workflow to `--signed` if trusted public distribution
 The fork's **Fork mobile builds** workflow builds mobile apps directly on standard GitHub-hosted
 runners without EAS:
 
-- Android produces a release APK signed with Expo's development key. It is intended for personal
-  sideloading, not store distribution. The `ANDROID_PACKAGE` repository variable can override the
-  fork's default `com.matheustimbo.t3code.fork` package name.
+- Android produces an arm64 release APK signed with Expo's development key. It is intended for
+  personal sideloading on modern Android phones, not store distribution. The `ANDROID_PACKAGE`
+  repository variable can override the fork's default `com.matheustimbo.t3code.fork` package name.
 - iOS always produces an unsigned Simulator `.app` archive. A signed IPA for registered iPhones is
   also produced when `IOS_TEAM_ID` and the signing secrets below are configured. The optional
   `IOS_BUNDLE_ID` repository variable defaults to `com.matheustimbo.t3code.fork`.

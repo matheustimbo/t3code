@@ -91,7 +91,7 @@ jobs:
 
       - name: Build signed release APK
         working-directory: apps/mobile/android
-        run: ./gradlew app:assembleRelease --no-daemon
+        run: ./gradlew app:assembleRelease --no-daemon -PreactNativeArchitectures=arm64-v8a
 
       - name: Verify and stage APK
         shell: bash
@@ -119,7 +119,7 @@ jobs:
     if: >-
       github.repository == 'matheustimbo/t3code' &&
       (github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || inputs.platform == 'ios')
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 60
     env:
       T3CODE_IOS_PERSONAL_TEAM: "1"
