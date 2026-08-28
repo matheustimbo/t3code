@@ -23,7 +23,7 @@ import { useContext, useEffect, useRef, useState } from "react";
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
 import { SymbolView } from "../../components/AppSymbol";
-import { useThemeColor } from "../../lib/useThemeColor";
+import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { serverEnvironment } from "../../state/server";
 import { useProjects } from "../../state/entities";
@@ -113,8 +113,9 @@ function EnvironmentTicketProviders({
 }) {
   const settings = useAtomValue(serverEnvironment.settingsValueAtom(environmentId));
   const registry = useContext(RegistryContext);
-  const checkmarkColor = useThemeColor("--color-icon");
-  const destructiveColor = useThemeColor("--color-destructive");
+  const theme = useUniwindTheme();
+  const checkmarkColor = theme["--color-icon"];
+  const destructiveColor = theme["--color-destructive"];
   const [showAdd, setShowAdd] = useState(false);
   const [driver, setDriver] = useState<DriverOption>(DRIVER_OPTIONS[0]);
   const [displayName, setDisplayName] = useState("");
@@ -658,7 +659,7 @@ function EnvironmentTicketProviders({
 function ProjectTicketTitles({ project }: { readonly project: EnvironmentProject }) {
   const settings = useAtomValue(serverEnvironment.settingsValueAtom(project.environmentId));
   const registry = useContext(RegistryContext);
-  const checkmarkColor = useThemeColor("--color-icon");
+  const checkmarkColor = useUniwindTheme()["--color-icon"];
   const storedPolicy = project.ticketTitlePolicy ?? null;
   const inheritedPolicy = settings?.ticketTitlePolicy ?? DEFAULT_SERVER_SETTINGS.ticketTitlePolicy;
   const effectivePolicy = storedPolicy ?? inheritedPolicy;
