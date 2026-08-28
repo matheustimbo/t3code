@@ -1,0 +1,61 @@
+name: Sync upstream fork
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: sync-upstream-fork
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: github.repository == 'matheustimbo/t3code'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Sync upstream mirror
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh repo sync "$GITHUB_REPOSITORY" --source pingdotgg/t3code --branch main
+
+      - name: Open integration pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ahead_by="$(
+            gh api "repos/$GITHUB_REPOSITORY/compare/fork-main...main" --jq '.ahead_by'
+          )"
+          if [[ "$ahead_by" == "0" ]]; then
+            echo "fork-main already contains the current upstream main."
+            exit 0
+          fi
+
+          existing="$(
+            gh pr list \
+              --repo "$GITHUB_REPOSITORY" \
+              --base fork-main \
+              --head main \
+              --state open \
+              --json number \
+              --jq '.[0].number // empty'
+          )"
+          if [[ -n "$existing" ]]; then
+            echo "Sync PR #$existing is already open."
+            exit 0
+          fi
+
+          gh pr create \
+            --repo "$GITHUB_REPOSITORY" \
+            --base fork-main \
+            --head main \
+            --title "chore: sync upstream main" \
+            --body "Automated daily sync from \`pingdotgg/t3code:main\`. Review conflicts and fork-specific behavior before merging."
