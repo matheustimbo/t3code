@@ -104,12 +104,14 @@ describe("ssh tunnel scripts", () => {
     const script = buildRemoteT3RunnerScript({ nodeEngineRange: TEST_NODE_ENGINE_RANGE });
 
     assert.include(script, "T3_NODE_SCRIPT_PATH=''");
-    assert.include(script, 'exec t3 "$@"');
-    assert.include(script, "exec npx --yes 't3@latest' \"$@\"");
-    assert.include(script, "exec npm exec --yes 't3@latest' -- \"$@\"");
-    assert.include(script, "could not install 't3@latest'");
-    assert.include(script, "require_installed_t3_cli npx --yes --package 't3@latest'");
-    assert.include(script, "require_installed_t3_cli npm exec --yes --package 't3@latest'");
+    const packageSpec =
+      "'https://github.com/matheustimbo/t3code/releases/latest/download/t3-latest.tgz'";
+    assert.include(script, `exec npx --yes ${packageSpec} "$@"`);
+    assert.include(script, `exec npm exec --yes ${packageSpec} -- "$@"`);
+    assert.include(script, `could not install ${packageSpec}`);
+    assert.include(script, `require_installed_t3_cli npx --yes --package ${packageSpec}`);
+    assert.include(script, `require_installed_t3_cli npm exec --yes --package ${packageSpec}`);
+    assert.notInclude(script, "if command -v t3");
     assert.include(script, "npm produced no t3 executable");
     assert.include(script, 'prepend_path_if_dir "$HOME/.local/bin"');
     assert.include(script, `T3_NODE_ENGINE_RANGE='${TEST_NODE_ENGINE_RANGE}'`);

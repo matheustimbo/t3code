@@ -11,17 +11,19 @@ At least one provider CLI, installed and authenticated. See [Providers](#provide
 ## Run Without Installing
 
 ```bash
-npx t3@latest
+npx --yes --package=https://github.com/matheustimbo/t3code/releases/latest/download/t3-latest.tgz t3
 ```
 
 This starts the T3 Code server on your machine and opens the local web app. Use
-`npx t3@latest --help` for the full CLI reference.
+the same command with `--help` appended for the full CLI reference.
 
 ## Desktop App
 
 Download the latest release from
-[GitHub Releases](https://github.com/pingdotgg/t3code/releases), or install from a package
-registry.
+[the fork's GitHub Releases](https://github.com/matheustimbo/t3code/releases).
+
+The package-manager commands below install the upstream build rather than this fork. Use the
+GitHub release above when you want ticket-derived thread titles and fork updates.
 
 Windows:
 

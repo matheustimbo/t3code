@@ -15,6 +15,7 @@
  * error fallbacks) is classified the same way.
  */
 import type { ProviderDriverKind, ServerProviderModel } from "@t3tools/contracts";
+import { T3CODE_DISTRIBUTION_URLS } from "@t3tools/shared/distribution";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -30,8 +31,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import bundledManifestJson from "./model-manifest.json" with { type: "json" };
 import type { ServerProviderDraft } from "./providerSnapshot.ts";
 
-const MODEL_MANIFEST_URL =
-  "https://raw.githubusercontent.com/pingdotgg/t3code/main/apps/server/src/provider/model-manifest.json";
+const MODEL_MANIFEST_URL = T3CODE_DISTRIBUTION_URLS.modelManifest;
 
 /** How long a fetched manifest stays fresh before the next probe re-fetches. */
 const MANIFEST_TTL_MS = 60 * 60 * 1000;

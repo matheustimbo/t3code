@@ -1,0 +1,161 @@
+name: Fork release
+
+on:
+  push:
+    branches:
+      - fork-main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fork-release
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    if: github.repository == 'matheustimbo/t3code'
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - id: version
+        name: Resolve fork version
+        shell: bash
+        run: |
+          version="0.1.${GITHUB_RUN_NUMBER}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+  server:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout fork release
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=t3...
+              - --filter=@t3tools/web...
+              - --filter=@t3tools/scripts...
+
+      - name: Build versioned server package
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ needs.prepare.outputs.version }}"
+          node scripts/update-release-package-versions.ts "$version"
+          vp run --filter t3 build
+          mkdir -p release-server
+          npm pack ./apps/server --pack-destination release-server
+          test -f "release-server/t3-${version}.tgz"
+          tar -tzf "release-server/t3-${version}.tgz" | rg -Fxq package/dist/bin.mjs
+          cp "release-server/t3-${version}.tgz" release-server/t3-latest.tgz
+
+      - name: Upload server packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: fork-server
+          path: release-server/*.tgz
+          if-no-files-found: error
+          retention-days: 1
+
+  desktop_mac:
+    needs: prepare
+    runs-on: macos-15
+    steps:
+      - name: Checkout fork release
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: false
+
+      - name: Install desktop dependencies
+        run: vp install --filter=@t3tools/desktop... --filter=t3... --filter=@t3tools/scripts...
+
+      - name: Setup Rust targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Build universal fork desktop
+        env:
+          T3CODE_DESKTOP_UPDATE_REPOSITORY: matheustimbo/t3code
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ needs.prepare.outputs.version }}"
+          node scripts/update-release-package-versions.ts "$version"
+          vp run dist:desktop:artifact \
+            --platform mac \
+            --target dmg \
+            --arch universal \
+            --build-version "$version" \
+            --adhoc-sign \
+            --verbose
+
+          mkdir -p release-mac
+          shopt -s nullglob
+          for pattern in release/*.dmg release/*.zip release/*.blockmap release/*.yml; do
+            for file in $pattern; do
+              cp "$file" release-mac/
+            done
+          done
+          test -n "$(find release-mac -maxdepth 1 -name '*.dmg' -print -quit)"
+          test -n "$(find release-mac -maxdepth 1 -name '*.zip' -print -quit)"
+          test -f release-mac/latest-mac.yml
+
+      - name: Upload desktop packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: fork-desktop-mac
+          path: release-mac/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+
+  release:
+    needs: [prepare, server, desktop_mac]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: fork-*
+          merge-multiple: true
+          path: release-assets
+
+      - name: Publish fork release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: T3 Code Fork ${{ needs.prepare.outputs.version }}
+          generate_release_notes: true
+          make_latest: true
+          files: release-assets/*
+          fail_on_unmatched_files: true

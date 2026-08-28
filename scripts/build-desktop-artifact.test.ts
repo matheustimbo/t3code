@@ -314,6 +314,35 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }),
   );
 
+  it.effect("defaults desktop updates to the fork repository", () =>
+    Effect.gen(function* () {
+      const config = yield* resolveGitHubPublishConfig("latest");
+      assert.deepStrictEqual(config, {
+        provider: "github",
+        owner: "matheustimbo",
+        repo: "t3code",
+        releaseType: "release",
+      });
+    }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
+  );
+
+  it.effect("supports ad-hoc signing for fork macOS updates", () =>
+    Effect.gen(function* () {
+      const config = yield* createBuildConfig(
+        "mac",
+        "dmg",
+        "0.1.0",
+        false,
+        false,
+        undefined,
+        undefined,
+        false,
+        true,
+      );
+      assert.deepInclude(config.mac, { identity: "-", hardenedRuntime: false });
+    }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
+  );
+
   it.effect("omits update feeds for pull request preview builds", () =>
     Effect.gen(function* () {
       const preview = yield* createBuildConfig(
@@ -1763,6 +1792,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         skipBuild: Option.none(),
         keepStage: Option.none(),
         signed: Option.none(),
+        adhocSign: Option.none(),
         verbose: Option.none(),
         mockUpdates: Option.none(),
         mockUpdateServerPort: Option.none(),
@@ -1803,6 +1833,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
             skipBuild: Option.none(),
             keepStage: Option.none(),
             signed: Option.none(),
+            adhocSign: Option.none(),
             verbose: Option.none(),
             mockUpdates: Option.none(),
             mockUpdateServerPort: Option.none(),
@@ -1827,6 +1858,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         skipBuild: Option.some(false),
         keepStage: Option.some(false),
         signed: Option.some(false),
+        adhocSign: Option.some(false),
         verbose: Option.some(false),
         mockUpdates: Option.some(false),
         mockUpdateServerPort: Option.none(),
@@ -1839,6 +1871,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
                 T3CODE_DESKTOP_SKIP_BUILD: "true",
                 T3CODE_DESKTOP_KEEP_STAGE: "true",
                 T3CODE_DESKTOP_SIGNED: "true",
+                T3CODE_DESKTOP_ADHOC_SIGN: "true",
                 T3CODE_DESKTOP_VERBOSE: "true",
                 T3CODE_DESKTOP_MOCK_UPDATES: "true",
               },
@@ -1850,6 +1883,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.equal(resolved.skipBuild, false);
       assert.equal(resolved.keepStage, false);
       assert.equal(resolved.signed, false);
+      assert.equal(resolved.adhocSign, false);
       assert.equal(resolved.verbose, false);
       assert.equal(resolved.mockUpdates, false);
     }),

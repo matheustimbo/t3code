@@ -25,7 +25,7 @@ it("reports the installed service version and host paths", () => {
 it("gives a direct repair command for a stale service", () => {
   assert.include(
     formatServiceStatus({ ...status, current: false }, "0.0.29"),
-    "Next: Run `npx t3@latest service update`.",
+    "Next: Run `npx --yes --package=https://github.com/matheustimbo/t3code/releases/latest/download/t3-latest.tgz t3 service update`.",
   );
 });
 

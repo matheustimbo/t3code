@@ -223,6 +223,10 @@
       "types": "./src/devProxy.ts",
       "import": "./src/devProxy.ts"
     },
+    "./distribution": {
+      "types": "./src/distribution.ts",
+      "import": "./src/distribution.ts"
+    },
     "./usageMerge": {
       "types": "./src/usageMerge.ts",
       "import": "./src/usageMerge.ts"

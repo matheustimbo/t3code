@@ -46,12 +46,19 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
       const finalPaths = pinnedRuntimePaths(path, baseDir, "1.2.3");
       let validatedDirectory = "";
 
+      let installPackageSpec = "";
+      const runner = ProcessRunner.ProcessRunner.of({
+        run: (input) => {
+          installPackageSpec = input.args.at(-1) ?? "";
+          return successfulRunner(fs, path).run(input);
+        },
+      });
       const installed = yield* ensurePinnedRuntimeInstalled({
         baseDir,
         version: "1.2.3",
         fs,
         path,
-        runner: successfulRunner(fs, path),
+        runner,
         validate: (staging) =>
           Effect.gen(function* () {
             validatedDirectory = staging.versionDir;
@@ -64,6 +71,10 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
       assert.deepEqual(installed, finalPaths);
       assert.isTrue(yield* fs.exists(finalPaths.entryPath));
       assert.equal(yield* fs.readFileString(finalPaths.sentinelPath), "1.2.3\n");
+      assert.equal(
+        installPackageSpec,
+        "https://github.com/matheustimbo/t3code/releases/download/v1.2.3/t3-1.2.3.tgz",
+      );
     }),
   );
 

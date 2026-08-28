@@ -10,6 +10,8 @@ Object.assign(process.env, repoEnv);
 
 const APP_VARIANT = resolveAppVariant(repoEnv.APP_VARIANT);
 const isIosPersonalTeamBuild = repoEnv.T3CODE_IOS_PERSONAL_TEAM === "1";
+const easProjectId = repoEnv.T3CODE_EAS_PROJECT_ID?.trim();
+const easOwner = repoEnv.T3CODE_EAS_OWNER?.trim();
 
 const personalTeamBundleIdentifier = repoEnv.T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID?.trim();
 const IOS_BUNDLE_IDENTIFIER_PATTERN = /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/;
@@ -175,12 +177,14 @@ const config: ExpoConfig = {
   orientation: "portrait",
   icon: variant.assets.appIcon,
   userInterfaceStyle: "automatic",
-  updates: {
-    enabled: true,
-    url: "https://u.expo.dev/d763fcb8-d37c-41ea-a773-b54a0ab4a454",
-    checkAutomatically: "ON_LOAD",
-    fallbackToCacheTimeout: 0,
-  },
+  updates: easProjectId
+    ? {
+        enabled: true,
+        url: `https://u.expo.dev/${easProjectId}`,
+        checkAutomatically: "ON_LOAD",
+        fallbackToCacheTimeout: 0,
+      }
+    : { enabled: false },
   ios: {
     icon: variant.assets.iosIcon,
     supportsTablet: true,
@@ -368,11 +372,9 @@ const config: ExpoConfig = {
       tracesDataset: repoEnv.EXPO_PUBLIC_OTLP_TRACES_DATASET ?? null,
       tracesToken: repoEnv.EXPO_PUBLIC_OTLP_TRACES_TOKEN ?? null,
     },
-    eas: {
-      projectId: "d763fcb8-d37c-41ea-a773-b54a0ab4a454",
-    },
+    ...(easProjectId ? { eas: { projectId: easProjectId } } : {}),
   },
-  owner: "pingdotgg",
+  ...(easOwner ? { owner: easOwner } : {}),
 };
 
 export default config;
