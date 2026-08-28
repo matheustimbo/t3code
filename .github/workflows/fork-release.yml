@@ -63,7 +63,7 @@ jobs:
           mkdir -p release-server
           npm pack ./apps/server --pack-destination release-server
           test -f "release-server/t3-${version}.tgz"
-          tar -tzf "release-server/t3-${version}.tgz" | rg -Fxq package/dist/bin.mjs
+          tar -tzf "release-server/t3-${version}.tgz" package/dist/bin.mjs >/dev/null
           cp "release-server/t3-${version}.tgz" release-server/t3-latest.tgz
 
       - name: Upload server packages
