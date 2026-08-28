@@ -20,6 +20,25 @@ The macOS artifact is ad-hoc signed because the fork has no Apple Developer ID c
 may require the user to approve the first installation in Privacy & Security. Add Developer ID
 credentials and switch the workflow to `--signed` if trusted public distribution is needed later.
 
-The upstream Release, Mobile EAS Production, and Deploy T3 Connect relay workflows are disabled in
-the fork repository settings. Mobile Expo updates are off unless the build supplies its own
+The fork's **Fork mobile builds** workflow builds mobile apps directly on standard GitHub-hosted
+runners without EAS:
+
+- Android produces a release APK signed with Expo's development key. It is intended for personal
+  sideloading, not store distribution. The `ANDROID_PACKAGE` repository variable can override the
+  fork's default `com.matheustimbo.t3code.fork` package name.
+- iOS always produces an unsigned Simulator `.app` archive. A signed IPA for registered iPhones is
+  also produced when `IOS_TEAM_ID` and the signing secrets below are configured. The optional
+  `IOS_BUNDLE_ID` repository variable defaults to `com.matheustimbo.t3code.fork`.
+
+The iPhone build uses the reduced-capability Personal Team mode, which omits the widget and share
+extensions, push, associated domains, and native Sign in with Apple entitlements. Configure:
+
+- repository variable `IOS_TEAM_ID`
+- secret `IOS_CERTIFICATE_BASE64`, containing a base64-encoded Apple Development `.p12`
+- secret `IOS_CERTIFICATE_PASSWORD`
+- secret `IOS_PROVISIONING_PROFILE_BASE64`, containing a base64-encoded iOS development profile
+  whose App ID matches `IOS_BUNDLE_ID` and whose device list contains the target iPhone
+
+The upstream Release, Mobile EAS Production, and Deploy T3 Connect relay workflows remain disabled
+in the fork repository settings. Mobile Expo updates are off unless a build supplies its own
 `T3CODE_EAS_PROJECT_ID` and optional `T3CODE_EAS_OWNER`.

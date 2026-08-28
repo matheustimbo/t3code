@@ -1,0 +1,279 @@
+name: Fork mobile builds
+
+on:
+  push:
+    branches:
+      - fork-main
+    paths:
+      - apps/mobile/**
+      - packages/client-runtime/**
+      - packages/contracts/**
+      - packages/shared/**
+      - assets/**
+      - patches/**
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - .github/workflows/fork-mobile-builds.yml
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: Mobile platform to build
+        required: true
+        type: choice
+        default: all
+        options:
+          - all
+          - android
+          - ios
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fork-mobile-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  APP_VARIANT: production
+  MOBILE_VERSION_POLICY: appVersion
+  NODE_OPTIONS: --max-old-space-size=8192
+
+jobs:
+  android:
+    name: Android installable APK
+    if: >-
+      github.repository == 'matheustimbo/t3code' &&
+      (github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || inputs.platform == 'android')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      T3CODE_ANDROID_PACKAGE: ${{ vars.ANDROID_PACKAGE || 'com.matheustimbo.t3code.fork' }}
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@t3tools/mobile...
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Gradle cache
+        uses: gradle/actions/setup-gradle@v5
+
+      - name: Generate Android project
+        working-directory: apps/mobile
+        env:
+          EXPO_NO_GIT_STATUS: "1"
+        run: pnpm exec expo prebuild --clean --platform android --no-install
+
+      - name: Build signed release APK
+        working-directory: apps/mobile/android
+        run: ./gradlew app:assembleRelease --no-daemon
+
+      - name: Verify and stage APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk="apps/mobile/android/app/build/outputs/apk/release/app-release.apk"
+          test -f "$apk"
+          apksigner_path="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner -print | sort -V | tail -n 1)"
+          test -n "$apksigner_path"
+          "$apksigner_path" verify --verbose "$apk"
+          mkdir -p mobile-artifacts
+          cp "$apk" mobile-artifacts/t3code-fork-android.apk
+
+      - name: Upload Android APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: t3code-fork-android
+          path: mobile-artifacts/t3code-fork-android.apk
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+  ios:
+    name: iOS simulator and optional iPhone IPA
+    if: >-
+      github.repository == 'matheustimbo/t3code' &&
+      (github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || inputs.platform == 'ios')
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      T3CODE_IOS_PERSONAL_TEAM: "1"
+      T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID: ${{ vars.IOS_BUNDLE_ID || 'com.matheustimbo.t3code.fork' }}
+      T3CODE_IOS_TEAM_ID: ${{ vars.IOS_TEAM_ID }}
+    steps:
+      - id: signing
+        name: Check iPhone signing configuration
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.IOS_CERTIFICATE_BASE64 }}
+          PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+          TEAM_ID: ${{ vars.IOS_TEAM_ID }}
+        shell: bash
+        run: |
+          if [[ -n "$CERTIFICATE_BASE64" && -n "$PROVISIONING_PROFILE_BASE64" && -n "$TEAM_ID" ]]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "## iPhone IPA skipped"
+              echo
+              echo "The unsigned Simulator build is still produced. To also build an IPA for a registered iPhone, configure the repository variable \`IOS_TEAM_ID\` and secrets \`IOS_CERTIFICATE_BASE64\`, \`IOS_CERTIFICATE_PASSWORD\`, and \`IOS_PROVISIONING_PROFILE_BASE64\`."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Checkout fork
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@t3tools/mobile...
+
+      - name: Generate iOS project
+        working-directory: apps/mobile
+        env:
+          EXPO_NO_GIT_STATUS: "1"
+        run: pnpm exec expo prebuild --clean --platform ios
+
+      - name: Build iOS Simulator app
+        working-directory: apps/mobile
+        run: |
+          xcodebuild \
+            -workspace ios/T3Code.xcworkspace \
+            -scheme T3Code \
+            -configuration Release \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build/ios-simulator \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+          mkdir -p ../../mobile-artifacts
+          ditto -c -k --sequesterRsrc --keepParent \
+            build/ios-simulator/Build/Products/Release-iphonesimulator/T3Code.app \
+            ../../mobile-artifacts/t3code-fork-ios-simulator.zip
+
+      - name: Import iPhone signing assets
+        if: steps.signing.outputs.enabled == 'true'
+        id: iphone-signing
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.IOS_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+          PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          signing_dir="$RUNNER_TEMP/ios-signing"
+          keychain="$RUNNER_TEMP/t3code-build.keychain-db"
+          keychain_password="$(uuidgen)"
+          mkdir -p "$signing_dir" "$HOME/Library/MobileDevice/Provisioning Profiles"
+          printf '%s' "$CERTIFICATE_BASE64" | base64 -D > "$signing_dir/certificate.p12"
+          printf '%s' "$PROVISIONING_PROFILE_BASE64" | base64 -D > "$signing_dir/profile.mobileprovision"
+
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$signing_dir/certificate.p12" \
+            -P "$CERTIFICATE_PASSWORD" \
+            -A \
+            -t cert \
+            -f pkcs12 \
+            -k "$keychain"
+          security set-key-partition-list \
+            -S apple-tool:,apple: \
+            -k "$keychain_password" \
+            "$keychain"
+          security list-keychains -d user -s "$keychain"
+
+          security cms -D -i "$signing_dir/profile.mobileprovision" > "$signing_dir/profile.plist"
+          profile_uuid="$(/usr/libexec/PlistBuddy -c 'Print UUID' "$signing_dir/profile.plist")"
+          profile_name="$(/usr/libexec/PlistBuddy -c 'Print Name' "$signing_dir/profile.plist")"
+          profile_team="$(/usr/libexec/PlistBuddy -c 'Print TeamIdentifier:0' "$signing_dir/profile.plist")"
+          profile_app_id="$(/usr/libexec/PlistBuddy -c 'Print Entitlements:application-identifier' "$signing_dir/profile.plist")"
+          profile_bundle_id="${profile_app_id#*.}"
+
+          test "$profile_team" = "$T3CODE_IOS_TEAM_ID"
+          test "$profile_bundle_id" = "$T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID"
+          cp "$signing_dir/profile.mobileprovision" \
+            "$HOME/Library/MobileDevice/Provisioning Profiles/$profile_uuid.mobileprovision"
+
+          identity="$(security find-identity -v -p codesigning "$keychain" | sed -n '1s/.*"\(.*\)".*/\1/p')"
+          test -n "$identity"
+          echo "identity=$identity" >> "$GITHUB_OUTPUT"
+          echo "profile-name=$profile_name" >> "$GITHUB_OUTPUT"
+
+      - name: Build signed iPhone IPA
+        if: steps.signing.outputs.enabled == 'true'
+        working-directory: apps/mobile
+        env:
+          SIGNING_IDENTITY: ${{ steps.iphone-signing.outputs.identity }}
+          PROVISIONING_PROFILE_NAME: ${{ steps.iphone-signing.outputs.profile-name }}
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -workspace ios/T3Code.xcworkspace \
+            -scheme T3Code \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/T3Code.xcarchive \
+            DEVELOPMENT_TEAM="$T3CODE_IOS_TEAM_ID" \
+            PRODUCT_BUNDLE_IDENTIFIER="$T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="$SIGNING_IDENTITY" \
+            PROVISIONING_PROFILE_SPECIFIER="$PROVISIONING_PROFILE_NAME" \
+            archive
+
+          codesign --verify --deep --strict \
+            build/T3Code.xcarchive/Products/Applications/T3Code.app
+          mkdir -p build/iphone/Payload ../../mobile-artifacts
+          ditto \
+            build/T3Code.xcarchive/Products/Applications/T3Code.app \
+            build/iphone/Payload/T3Code.app
+          ditto -c -k --sequesterRsrc --keepParent \
+            build/iphone/Payload \
+            ../../mobile-artifacts/t3code-fork-iphone.ipa
+
+      - name: Upload iOS Simulator app
+        uses: actions/upload-artifact@v7
+        with:
+          name: t3code-fork-ios-simulator
+          path: mobile-artifacts/t3code-fork-ios-simulator.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+      - name: Upload signed iPhone IPA
+        if: steps.signing.outputs.enabled == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: t3code-fork-iphone
+          path: mobile-artifacts/t3code-fork-iphone.ipa
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
