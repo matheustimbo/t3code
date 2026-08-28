@@ -60,10 +60,13 @@ jobs:
           version="${{ needs.prepare.outputs.version }}"
           node scripts/update-release-package-versions.ts "$version"
           vp run --filter t3 build
-          mkdir -p release-server
-          npm pack ./apps/server --pack-destination release-server
+          node apps/server/scripts/cli.ts pack \
+            --app-version "$version" \
+            --pack-destination release-server \
+            --verbose
           test -f "release-server/t3-${version}.tgz"
           tar -tzf "release-server/t3-${version}.tgz" package/dist/bin.mjs >/dev/null
+          test "$(npx --yes --package="$GITHUB_WORKSPACE/release-server/t3-${version}.tgz" t3 --version)" = "t3 v${version}"
           cp "release-server/t3-${version}.tgz" release-server/t3-latest.tgz
 
       - name: Upload server packages
