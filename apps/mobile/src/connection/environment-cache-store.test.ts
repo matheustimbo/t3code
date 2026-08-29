@@ -1,4 +1,11 @@
-import { EnvironmentId, type VcsListRefsResult } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+  type OrchestrationThreadDetailSnapshot,
+  type VcsListRefsResult,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -7,6 +14,35 @@ import { type ClientCacheKind, MobileDatabase } from "../persistence/mobile-data
 import { make } from "./environment-cache-store";
 
 const ENVIRONMENT_ID = EnvironmentId.make("environment-1");
+const THREAD_ID = ThreadId.make("thread-1");
+const THREAD_SNAPSHOT: OrchestrationThreadDetailSnapshot = {
+  snapshotSequence: 1,
+  thread: {
+    id: THREAD_ID,
+    projectId: ProjectId.make("project-1"),
+    title: "Cached thread",
+    modelSelection: {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-5.4",
+    },
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: "main",
+    worktreePath: null,
+    latestTurn: null,
+    createdAt: "2026-04-01T00:00:00.000Z",
+    updatedAt: "2026-04-01T00:00:00.000Z",
+    archivedAt: null,
+    settledOverride: null,
+    settledAt: null,
+    deletedAt: null,
+    messages: [],
+    proposedPlans: [],
+    activities: [],
+    checkpoints: [],
+    session: null,
+  },
+};
 const REFS: VcsListRefsResult = {
   refs: [
     {
@@ -63,6 +99,41 @@ function makeDatabase() {
 }
 
 describe("mobile SQLite environment cache store", () => {
+  it.effect("round-trips the current thread snapshot generation", () =>
+    Effect.gen(function* () {
+      const memory = makeDatabase();
+      const store = yield* make().pipe(Effect.provideService(MobileDatabase, memory.database));
+
+      yield* store.saveThread(ENVIRONMENT_ID, THREAD_SNAPSHOT);
+
+      expect(yield* store.loadThread(ENVIRONMENT_ID, THREAD_ID)).toEqual(
+        Option.some(THREAD_SNAPSHOT),
+      );
+    }),
+  );
+
+  it.effect("discards v3 thread snapshots that may contain unbounded activities", () =>
+    Effect.gen(function* () {
+      const memory = makeDatabase();
+      const store = yield* make().pipe(Effect.provideService(MobileDatabase, memory.database));
+      const id = cacheId(ENVIRONMENT_ID, "thread", THREAD_ID);
+
+      yield* store.saveThread(ENVIRONMENT_ID, THREAD_SNAPSHOT);
+      const currentPayload = memory.values.get(id);
+      expect(currentPayload).toBeDefined();
+      memory.values.set(
+        id,
+        JSON.stringify({
+          ...(JSON.parse(currentPayload!) as Record<string, unknown>),
+          schemaVersion: 3,
+        }),
+      );
+
+      expect(yield* store.loadThread(ENVIRONMENT_ID, THREAD_ID)).toEqual(Option.none());
+      expect(memory.removed).toEqual([id]);
+    }),
+  );
+
   it.effect("round-trips schema-validated VCS refs", () =>
     Effect.gen(function* () {
       const memory = makeDatabase();
