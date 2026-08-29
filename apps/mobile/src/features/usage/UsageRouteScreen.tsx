@@ -230,13 +230,13 @@ function MobilePlanLimits(props: {
           ) : (
             environment.entries.map((entry) => {
               const provider = entry.provider;
-              const limits = provider.usageLimits;
+              const limits = entry.limits;
               const exhausted = limits?.windows.some(
                 (window) => displayRemainingPercent(limits, window) === 0,
               );
               return (
                 <View
-                  key={provider.instanceId}
+                  key={entry.entryId}
                   className="gap-3 rounded-2xl border border-border-subtle bg-card p-4"
                   style={exhausted ? { borderColor: "#dc2626" } : undefined}
                 >
@@ -247,7 +247,7 @@ function MobilePlanLimits(props: {
                         {provider.displayName ?? provider.driver}
                       </Text>
                       <Text className="text-xs text-foreground-muted" numberOfLines={1}>
-                        {provider.auth.email ?? provider.auth.label ?? provider.instanceId}
+                        {entry.accountLabel}
                         {entry.sharedAcrossEnvironments ? " · Shared account" : ""}
                       </Text>
                     </View>

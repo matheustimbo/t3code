@@ -49,6 +49,33 @@ describe("ServerProvider", () => {
 
     expect(parsed.usageLimits?.windows[0]?.remainingPercent).toBe(75);
   });
+
+  it("decodes independently metered provider-pool accounts", () => {
+    const parsed = decodeServerProvider({
+      ...baseProviderSnapshot,
+      usageLimits: {
+        status: "available",
+        support: "experimental",
+        source: "cliproxyapi-management",
+        checkedAt: "2026-08-29T12:00:00.000Z",
+        windows: [],
+        accounts: [
+          {
+            id: "auth-index-one",
+            email: "claude@example.com",
+            status: "available",
+            support: "experimental",
+            source: "cliproxyapi-management",
+            checkedAt: "2026-08-29T12:00:00.000Z",
+            windows: [{ id: "five_hour", label: "5 hours", remainingPercent: 80 }],
+          },
+        ],
+      },
+    });
+
+    expect(parsed.usageLimits?.accounts?.[0]?.email).toBe("claude@example.com");
+    expect(parsed.usageLimits?.accounts?.[0]?.windows[0]?.remainingPercent).toBe(80);
+  });
   it("defaults capability arrays when decoding provider snapshots", () => {
     const parsed = decodeServerProvider({
       instanceId: "codex",

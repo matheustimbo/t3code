@@ -185,14 +185,7 @@ export const ServerProviderUsageLimitWindow = Schema.Struct({
 });
 export type ServerProviderUsageLimitWindow = typeof ServerProviderUsageLimitWindow.Type;
 
-/**
- * Current subscription allowance for one configured provider instance.
- *
- * The payload is deliberately provider-neutral: credentials and raw upstream
- * responses never cross the server/client boundary. Optional percentages and
- * reset timestamps let adapters report honest partial data.
- */
-export const ServerProviderUsageLimits = Schema.Struct({
+const ServerProviderUsageLimitsFields = {
   status: ServerProviderUsageLimitsStatus,
   support: ServerProviderUsageLimitsSupport,
   source: TrimmedNonEmptyString,
@@ -200,6 +193,28 @@ export const ServerProviderUsageLimits = Schema.Struct({
   windows: Schema.Array(ServerProviderUsageLimitWindow),
   message: Schema.optional(TrimmedNonEmptyString),
   dashboardUrl: Schema.optional(TrimmedNonEmptyString),
+} as const;
+
+/** One independently metered account exposed by a provider-side account pool. */
+export const ServerProviderUsageLimitsAccount = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  label: Schema.optional(TrimmedNonEmptyString),
+  email: Schema.optional(TrimmedNonEmptyString),
+  ...ServerProviderUsageLimitsFields,
+});
+export type ServerProviderUsageLimitsAccount = typeof ServerProviderUsageLimitsAccount.Type;
+
+/**
+ * Current subscription allowance for one configured provider instance. A
+ * provider-side account pool may expose independent readings in `accounts`.
+ *
+ * The payload is deliberately provider-neutral: credentials and raw upstream
+ * responses never cross the server/client boundary. Optional percentages and
+ * reset timestamps let adapters report honest partial data.
+ */
+export const ServerProviderUsageLimits = Schema.Struct({
+  ...ServerProviderUsageLimitsFields,
+  accounts: Schema.optional(Schema.Array(ServerProviderUsageLimitsAccount)),
 });
 export type ServerProviderUsageLimits = typeof ServerProviderUsageLimits.Type;
 

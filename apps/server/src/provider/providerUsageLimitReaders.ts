@@ -9,7 +9,10 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
 import {
+  makePooledUsageLimitsSnapshot,
   makeUsageLimitsSnapshot,
+  makeUsageLimitsAccount,
+  makeUnavailableUsageLimitsAccount,
   parseClaudeUsageWindows,
   parseCursorUsageWindows,
   parseOpenCodeUsageWindows,
@@ -25,6 +28,26 @@ const ClaudeCredentials = Schema.Struct({
 const decodeClaudeCredentials = Schema.decodeUnknownOption(
   Schema.fromJsonString(ClaudeCredentials),
 );
+
+const CliProxyAuthFile = Schema.Struct({
+  auth_index: Schema.String,
+  name: Schema.String,
+  provider: Schema.String,
+  label: Schema.optional(Schema.String),
+  email: Schema.optional(Schema.String),
+  account: Schema.optional(Schema.String),
+  disabled: Schema.optional(Schema.Boolean),
+});
+const decodeCliProxyAuthFiles = Schema.decodeUnknownOption(
+  Schema.Struct({ files: Schema.Array(CliProxyAuthFile) }),
+);
+
+const CliProxyApiCallResponse = Schema.Struct({
+  status_code: Schema.Number,
+  body: Schema.String,
+});
+const decodeCliProxyApiCallResponse = Schema.decodeUnknownOption(CliProxyApiCallResponse);
+const decodeJsonBody = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 
 const CursorCredentials = Schema.Union([
   Schema.Struct({ accessToken: Schema.String }),
@@ -42,6 +65,52 @@ function cursorCredentialToken(value: typeof CursorCredentials.Type): string {
 }
 
 const safeReadError = (message: string) => new ProviderUsageLimitsReadError({ message });
+
+interface CliProxyManagementConfig {
+  readonly apiBaseUrl: string;
+  readonly dashboardUrl: string;
+  readonly key: string;
+}
+
+const parseUrl = Option.liftThrowable((value: string) => new URL(value));
+
+export function resolveCliProxyManagementConfig(
+  environment: NodeJS.ProcessEnv,
+): CliProxyManagementConfig | undefined {
+  const key = environment.CLIPROXYAPI_MANAGEMENT_KEY?.trim();
+  if (!key) return undefined;
+
+  const explicitUrl = environment.CLIPROXYAPI_MANAGEMENT_URL?.trim();
+  const inferenceUrl = environment.ANTHROPIC_BASE_URL?.trim();
+  const parsed = parseUrl(explicitUrl || inferenceUrl || "");
+  if (Option.isNone(parsed)) return undefined;
+
+  const url = parsed.value;
+  url.search = "";
+  url.hash = "";
+  const explicitManagementIndex = url.pathname.indexOf("/v0/management");
+  if (explicitUrl) {
+    url.pathname =
+      explicitManagementIndex >= 0
+        ? url.pathname.slice(0, explicitManagementIndex + "/v0/management".length)
+        : `${url.pathname.replace(/\/+$/u, "")}/v0/management`;
+  } else {
+    url.pathname = "/v0/management";
+  }
+  const apiBaseUrl = url.toString().replace(/\/+$/u, "");
+  const dashboardUrl = `${apiBaseUrl.slice(0, -"/v0/management".length)}/management.html#/quota`;
+  return { apiBaseUrl, dashboardUrl, key };
+}
+
+export function parseCliProxyClaudeAuthFiles(
+  input: unknown,
+): ReadonlyArray<typeof CliProxyAuthFile.Type> {
+  const decoded = decodeCliProxyAuthFiles(input);
+  if (Option.isNone(decoded)) return [];
+  return decoded.value.files.filter(
+    (authFile) => authFile.provider.trim().toLowerCase() === "claude",
+  );
+}
 
 const readFirstToken = Effect.fn("providerUsageLimits.readFirstToken")(function* (input: {
   readonly paths: ReadonlyArray<string>;
@@ -78,7 +147,107 @@ const executePrivateJson = Effect.fn("providerUsageLimits.executePrivateJson")(f
   );
 });
 
-export const readClaudeUsageLimits = Effect.fn("readClaudeUsageLimits")(function* (
+const readCliProxyClaudeUsageLimits = Effect.fn("readCliProxyClaudeUsageLimits")(function* (
+  config: CliProxyManagementConfig,
+) {
+  const authPayload = yield* executePrivateJson(
+    HttpClientRequest.get(`${config.apiBaseUrl}/auth-files`).pipe(
+      HttpClientRequest.bearerToken(config.key),
+      HttpClientRequest.acceptJson,
+    ),
+    "CLIProxyAPI",
+  );
+  const authFiles = parseCliProxyClaudeAuthFiles(authPayload);
+  if (authFiles.length === 0) {
+    return yield* safeReadError("CLIProxyAPI did not report any Claude OAuth accounts.");
+  }
+
+  const checkedAt = DateTime.formatIso(yield* DateTime.now);
+  const accounts = yield* Effect.forEach(
+    authFiles,
+    (authFile) =>
+      Effect.gen(function* () {
+        const label =
+          authFile.label?.trim() ||
+          authFile.email?.trim() ||
+          authFile.account?.trim() ||
+          authFile.name.trim();
+        const payload = yield* executePrivateJson(
+          HttpClientRequest.post(`${config.apiBaseUrl}/api-call`).pipe(
+            HttpClientRequest.bearerToken(config.key),
+            HttpClientRequest.acceptJson,
+            HttpClientRequest.bodyJsonUnsafe({
+              auth_index: authFile.auth_index,
+              method: "GET",
+              url: "https://api.anthropic.com/api/oauth/usage",
+              header: {
+                Authorization: "Bearer $TOKEN$",
+                "anthropic-beta": "oauth-2025-04-20",
+              },
+            }),
+          ),
+          "CLIProxyAPI",
+        );
+        const apiCall = decodeCliProxyApiCallResponse(payload);
+        if (Option.isNone(apiCall)) {
+          return yield* safeReadError("CLIProxyAPI returned an unreadable account response.");
+        }
+        if (apiCall.value.status_code < 200 || apiCall.value.status_code >= 300) {
+          return yield* safeReadError(
+            `Claude account ${label} returned HTTP ${apiCall.value.status_code}.`,
+          );
+        }
+        const usagePayload = decodeJsonBody(apiCall.value.body);
+        if (Option.isNone(usagePayload)) {
+          return yield* safeReadError(`Claude account ${label} returned unreadable limits.`);
+        }
+        const windows = parseClaudeUsageWindows(usagePayload.value);
+        if (windows.length === 0) {
+          return yield* safeReadError(`Claude account ${label} returned no subscription windows.`);
+        }
+        return makeUsageLimitsAccount({
+          id: authFile.auth_index,
+          label,
+          ...(authFile.email?.trim() ? { email: authFile.email.trim() } : {}),
+          source: "cliproxyapi-management",
+          support: "experimental",
+          checkedAt,
+          windows,
+          dashboardUrl: config.dashboardUrl,
+        });
+      }).pipe(
+        Effect.catch((error) =>
+          Effect.succeed(
+            makeUnavailableUsageLimitsAccount({
+              id: authFile.auth_index,
+              label:
+                authFile.label?.trim() ||
+                authFile.email?.trim() ||
+                authFile.account?.trim() ||
+                authFile.name.trim(),
+              ...(authFile.email?.trim() ? { email: authFile.email.trim() } : {}),
+              source: "cliproxyapi-management",
+              support: "experimental",
+              checkedAt,
+              status: authFile.disabled ? "disabled" : "error",
+              message: authFile.disabled ? "Disabled in CLIProxyAPI." : error.message,
+              dashboardUrl: config.dashboardUrl,
+            }),
+          ),
+        ),
+      ),
+    { concurrency: 3 },
+  );
+  return makePooledUsageLimitsSnapshot({
+    source: "cliproxyapi-management",
+    support: "experimental",
+    checkedAt,
+    accounts,
+    dashboardUrl: config.dashboardUrl,
+  });
+});
+
+const readNativeClaudeUsageLimits = Effect.fn("readNativeClaudeUsageLimits")(function* (
   settings: Pick<ClaudeSettings, "homePath">,
   environment: NodeJS.ProcessEnv,
 ) {
@@ -112,6 +281,20 @@ export const readClaudeUsageLimits = Effect.fn("readClaudeUsageLimits")(function
     windows,
     dashboardUrl: "https://claude.ai/settings/usage",
   });
+});
+
+export const readClaudeUsageLimits = Effect.fn("readClaudeUsageLimits")(function* (
+  settings: Pick<ClaudeSettings, "homePath">,
+  environment: NodeJS.ProcessEnv,
+) {
+  const cliProxy = resolveCliProxyManagementConfig(environment);
+  if (cliProxy) return yield* readCliProxyClaudeUsageLimits(cliProxy);
+  if (environment.CLIPROXYAPI_MANAGEMENT_KEY?.trim()) {
+    return yield* safeReadError(
+      "Set CLIPROXYAPI_MANAGEMENT_URL or ANTHROPIC_BASE_URL to read CLIProxyAPI accounts.",
+    );
+  }
+  return yield* readNativeClaudeUsageLimits(settings, environment);
 });
 
 export const readCursorUsageLimits = Effect.fn("readCursorUsageLimits")(function* (

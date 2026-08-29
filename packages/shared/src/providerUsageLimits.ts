@@ -20,6 +20,36 @@ export function providerLimitColor(
   return customAccent ?? PROVIDER_LIMIT_COLORS[driver] ?? "#64748b";
 }
 
+export interface ProviderUsageLimitDisplayWindow {
+  readonly id: string;
+  readonly label: string;
+  readonly limits: ServerProviderUsageLimits;
+  readonly window: ServerProviderUsageLimitWindow;
+}
+
+/** Expands pooled accounts without combining their independently metered windows. */
+export function providerUsageLimitDisplayWindows(
+  limits: ServerProviderUsageLimits,
+): ReadonlyArray<ProviderUsageLimitDisplayWindow> {
+  if (limits.accounts && limits.accounts.length > 0) {
+    return limits.accounts.flatMap((account) => {
+      const accountLabel = account.email ?? account.label ?? account.id;
+      return account.windows.map((window) => ({
+        id: `${account.id}:${window.id}`,
+        label: `${accountLabel} · ${window.label}`,
+        limits: account,
+        window,
+      }));
+    });
+  }
+  return limits.windows.map((window) => ({
+    id: window.id,
+    label: window.label,
+    limits,
+    window,
+  }));
+}
+
 export function displayRemainingPercent(
   limits: ServerProviderUsageLimits,
   window: ServerProviderUsageLimitWindow,

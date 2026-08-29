@@ -213,6 +213,32 @@ CLAUDE_CONFIG_DIR path: ~/.claude_router_home
 Follow the upstream project's README for the router's own install, startup, and configuration
 steps: <https://github.com/musistudio/claude-code-router>.
 
+## I Want To Use CLIProxyAPI
+
+Configure Claude Code to use CLIProxyAPI normally, then add these variables to that Claude provider
+instance in T3 Code:
+
+```text
+ANTHROPIC_BASE_URL             http://127.0.0.1:8317
+ANTHROPIC_AUTH_TOKEN           your-proxy-api-key             Sensitive
+CLIPROXYAPI_MANAGEMENT_KEY     your-management-key            Sensitive
+```
+
+Enable **Experimental plan limits** in the same provider settings. T3 Code uses
+`ANTHROPIC_BASE_URL` to find the CLIProxyAPI management API, lists every Claude OAuth credential,
+and shows each account's official reset windows separately. It does not add allowance percentages
+across the pool.
+
+If the management API uses another origin or a reverse-proxy path, also set:
+
+```text
+CLIPROXYAPI_MANAGEMENT_URL     https://proxy.example.com
+```
+
+The management API must be enabled in CLIProxyAPI. Remote T3 environments also require CLIProxyAPI
+to allow management access from that environment. Treat the management key as a sensitive secret:
+it authorizes account inventory and authenticated upstream calls.
+
 ## I Want Different Claude Settings, Not A Different Account
 
 Create another Claude provider with the same account if you want a named preset.

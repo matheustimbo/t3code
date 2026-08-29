@@ -17,6 +17,7 @@ import {
   displayRemainingPercent,
   formatLimitReset,
   formatRemainingPercent,
+  providerUsageLimitDisplayWindows,
 } from "@t3tools/shared/providerUsageLimits";
 import type { ServerProviderUsageLimits } from "@t3tools/contracts";
 import { useNavigation, useRoute, type RouteProp } from "@react-navigation/native";
@@ -164,6 +165,9 @@ function ProviderHeader(props: {
   readonly usageLimits?: ServerProviderUsageLimits | undefined;
   readonly onToggle: () => void;
 }) {
+  const usageLimitWindows = props.usageLimits
+    ? providerUsageLimitDisplayWindows(props.usageLimits)
+    : [];
   const titleRow = (
     <View className="flex-row items-center gap-2">
       <ProviderIcon provider={props.driver} size={15} />
@@ -188,21 +192,21 @@ function ProviderHeader(props: {
   );
   const limitsRow = props.usageLimits ? (
     <View className="flex-row flex-wrap gap-1.5 pb-1 pl-6">
-      {props.usageLimits.windows.length > 0 ? (
-        props.usageLimits.windows.map((window) => {
-          const remaining = displayRemainingPercent(props.usageLimits!, window);
+      {usageLimitWindows.length > 0 ? (
+        usageLimitWindows.map((entry) => {
+          const remaining = displayRemainingPercent(entry.limits, entry.window);
           return (
             <View
-              key={window.id}
+              key={entry.id}
               className="flex-row items-center gap-1 rounded-lg border border-border-subtle bg-card px-2 py-1"
               style={remaining === 0 ? { borderColor: "#dc2626" } : undefined}
             >
-              <Text className="text-3xs text-foreground-muted">{window.label}</Text>
+              <Text className="text-3xs text-foreground-muted">{entry.label}</Text>
               <Text className="text-3xs font-t3-bold text-foreground">
                 {formatRemainingPercent(remaining)}
               </Text>
               <Text className="text-3xs text-foreground-muted">
-                · {formatLimitReset(window.resetsAt)}
+                · {formatLimitReset(entry.window.resetsAt)}
               </Text>
             </View>
           );
