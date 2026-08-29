@@ -49,6 +49,7 @@ import type { ProviderDriver, ProviderInstance } from "../ProviderDriver.ts";
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import { pollProviderUsageLimits } from "../providerUsageLimits.ts";
+import { readCliProxyCodexUsageLimits } from "../providerUsageLimitReaders.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
   makePackageManagedProviderMaintenanceResolver,
@@ -216,13 +217,17 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
               instanceId,
               getSnapshot,
               publishSnapshot,
-              read: readCodexUsageLimits({
-                binaryPath: settings.provider.binaryPath,
-                homePath: settings.provider.homePath,
-                launchArgs: resolveCodexLaunchArgs(settings.provider.launchArgs, processEnv),
-                cwd: process.cwd(),
-                environment: processEnv,
-              }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner)),
+              read: processEnv.CLIPROXYAPI_MANAGEMENT_KEY?.trim()
+                ? readCliProxyCodexUsageLimits(processEnv).pipe(
+                    Effect.provideService(HttpClient.HttpClient, httpClient),
+                  )
+                : readCodexUsageLimits({
+                    binaryPath: settings.provider.binaryPath,
+                    homePath: settings.provider.homePath,
+                    launchArgs: resolveCodexLaunchArgs(settings.provider.launchArgs, processEnv),
+                    cwd: process.cwd(),
+                    environment: processEnv,
+                  }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner)),
               backgroundPolicy,
             });
           }),

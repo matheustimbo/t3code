@@ -319,33 +319,266 @@ export function parseCursorUsageWindows(
   ];
 }
 
+const NumericValue = Schema.Union([Schema.Number, Schema.String]);
+const NullableNumericValue = Schema.Union([NumericValue, Schema.Null]);
+const NullableDateValue = Schema.Union([Schema.String, Schema.Number, Schema.Null]);
+
+function numericValue(value: number | string | null | undefined): number | undefined {
+  if (typeof value === "number") return Number.isFinite(value) ? value : undefined;
+  if (typeof value !== "string" || value.trim().length === 0) return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+const CodexUsageWindow = Schema.Struct({
+  used_percent: Schema.optional(NullableNumericValue),
+  usedPercent: Schema.optional(NullableNumericValue),
+  limit_window_seconds: Schema.optional(NullableNumericValue),
+  limitWindowSeconds: Schema.optional(NullableNumericValue),
+  reset_after_seconds: Schema.optional(NullableNumericValue),
+  resetAfterSeconds: Schema.optional(NullableNumericValue),
+  reset_at: Schema.optional(NullableDateValue),
+  resetAt: Schema.optional(NullableDateValue),
+});
+const NullableCodexUsageWindow = Schema.Union([CodexUsageWindow, Schema.Null]);
+const CodexRateLimit = Schema.Struct({
+  allowed: Schema.optional(Schema.Boolean),
+  limit_reached: Schema.optional(Schema.Boolean),
+  limitReached: Schema.optional(Schema.Boolean),
+  primary_window: Schema.optional(NullableCodexUsageWindow),
+  primaryWindow: Schema.optional(NullableCodexUsageWindow),
+  secondary_window: Schema.optional(NullableCodexUsageWindow),
+  secondaryWindow: Schema.optional(NullableCodexUsageWindow),
+});
+const NullableCodexRateLimit = Schema.Union([CodexRateLimit, Schema.Null]);
+const CodexAdditionalRateLimit = Schema.Struct({
+  limit_name: Schema.optional(Schema.String),
+  limitName: Schema.optional(Schema.String),
+  metered_feature: Schema.optional(Schema.String),
+  meteredFeature: Schema.optional(Schema.String),
+  rate_limit: Schema.optional(NullableCodexRateLimit),
+  rateLimit: Schema.optional(NullableCodexRateLimit),
+});
+const CodexUsagePayload = Schema.Struct({
+  rate_limit: Schema.optional(NullableCodexRateLimit),
+  rateLimit: Schema.optional(NullableCodexRateLimit),
+  code_review_rate_limit: Schema.optional(NullableCodexRateLimit),
+  codeReviewRateLimit: Schema.optional(NullableCodexRateLimit),
+  additional_rate_limits: Schema.optional(
+    Schema.Union([Schema.Array(CodexAdditionalRateLimit), Schema.Null]),
+  ),
+  additionalRateLimits: Schema.optional(
+    Schema.Union([Schema.Array(CodexAdditionalRateLimit), Schema.Null]),
+  ),
+});
+const decodeCodexUsagePayload = Schema.decodeUnknownOption(CodexUsagePayload);
+
+function usageWindowLabel(durationSeconds: number | undefined, fallback: string): string {
+  if (durationSeconds === 18_000) return "5 hours";
+  if (durationSeconds === 604_800) return "7 days";
+  if (durationSeconds && durationSeconds >= 28 * 86_400 && durationSeconds <= 31 * 86_400) {
+    return "Monthly";
+  }
+  if (durationSeconds && durationSeconds % 86_400 === 0) {
+    return `${durationSeconds / 86_400} days`;
+  }
+  if (durationSeconds && durationSeconds % 3_600 === 0) {
+    return `${durationSeconds / 3_600} hours`;
+  }
+  return fallback;
+}
+
+function slugifyUsageWindowId(value: string): string {
+  return (
+    value
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/gu, "-")
+      .replace(/^-+|-+$/gu, "") || "limit"
+  );
+}
+
+export function parseCliProxyCodexUsageWindows(
+  input: unknown,
+  nowMs: number,
+): ReadonlyArray<ServerProviderUsageLimitWindow> {
+  const decoded = decodeCodexUsagePayload(input);
+  if (Option.isNone(decoded)) return [];
+  const payload = decoded.value;
+  const windows: Array<ServerProviderUsageLimitWindow> = [];
+
+  const appendRateLimit = (
+    prefix: string,
+    labelPrefix: string | undefined,
+    rateLimit: typeof CodexRateLimit.Type | null | undefined,
+  ) => {
+    if (!rateLimit) return;
+    const limitReached = rateLimit.limit_reached ?? rateLimit.limitReached ?? false;
+    const allowed = rateLimit.allowed;
+    const entries = [
+      ["primary", rateLimit.primary_window ?? rateLimit.primaryWindow],
+      ["secondary", rateLimit.secondary_window ?? rateLimit.secondaryWindow],
+    ] as const;
+    for (const [kind, window] of entries) {
+      if (!window) continue;
+      const durationSeconds = numericValue(
+        window.limit_window_seconds ?? window.limitWindowSeconds,
+      );
+      const resetAfterSeconds = numericValue(
+        window.reset_after_seconds ?? window.resetAfterSeconds,
+      );
+      const label = usageWindowLabel(durationSeconds, kind === "primary" ? "Primary" : "Secondary");
+      windows.push(
+        normalizedWindow({
+          id: `${prefix}:${kind}`,
+          label: labelPrefix ? `${labelPrefix} · ${label}` : label,
+          usedPercent:
+            numericValue(window.used_percent ?? window.usedPercent) ??
+            (limitReached || allowed === false ? 100 : undefined),
+          resetsAt:
+            window.reset_at ??
+            window.resetAt ??
+            (resetAfterSeconds === undefined ? undefined : nowMs + resetAfterSeconds * 1_000),
+          ...(durationSeconds === undefined ? {} : { windowDurationMinutes: durationSeconds / 60 }),
+        }),
+      );
+    }
+  };
+
+  appendRateLimit("codex", undefined, payload.rate_limit ?? payload.rateLimit);
+  appendRateLimit(
+    "code-review",
+    "Code review",
+    payload.code_review_rate_limit ?? payload.codeReviewRateLimit,
+  );
+  const additional = payload.additional_rate_limits ?? payload.additionalRateLimits ?? [];
+  for (const [index, item] of additional.entries()) {
+    const label =
+      item.limit_name ??
+      item.limitName ??
+      item.metered_feature ??
+      item.meteredFeature ??
+      `Additional ${index + 1}`;
+    appendRateLimit(
+      `${slugifyUsageWindowId(label)}:${index}`,
+      label,
+      item.rate_limit ?? item.rateLimit,
+    );
+  }
+  return windows;
+}
+
+const GrokBillingCent = Schema.Union([
+  NumericValue,
+  Schema.Struct({ val: Schema.optional(NullableNumericValue) }),
+  Schema.Null,
+]);
+const GrokProductUsage = Schema.Struct({
+  product: Schema.optional(Schema.String),
+  usagePercent: Schema.optional(NullableNumericValue),
+  usage_percent: Schema.optional(NullableNumericValue),
+});
+const GrokCurrentPeriod = Schema.Struct({
+  type: Schema.optional(Schema.String),
+  start: Schema.optional(NullableDateValue),
+  end: Schema.optional(NullableDateValue),
+});
 const GrokUsagePayload = Schema.Struct({
   config: Schema.Struct({
-    creditUsagePercent: Schema.optional(Schema.Number),
-    currentPeriod: Schema.optional(
-      Schema.Struct({
-        type: Schema.optional(Schema.String),
-        end: Schema.optional(Schema.Union([Schema.String, Schema.Number, Schema.Null])),
-      }),
-    ),
+    creditUsagePercent: Schema.optional(NullableNumericValue),
+    credit_usage_percent: Schema.optional(NullableNumericValue),
+    currentPeriod: Schema.optional(Schema.Union([GrokCurrentPeriod, Schema.Null])),
+    current_period: Schema.optional(Schema.Union([GrokCurrentPeriod, Schema.Null])),
+    productUsage: Schema.optional(Schema.Union([Schema.Array(GrokProductUsage), Schema.Null])),
+    product_usage: Schema.optional(Schema.Union([Schema.Array(GrokProductUsage), Schema.Null])),
+    monthlyLimit: Schema.optional(GrokBillingCent),
+    monthly_limit: Schema.optional(GrokBillingCent),
+    used: Schema.optional(GrokBillingCent),
+    onDemandCap: Schema.optional(GrokBillingCent),
+    on_demand_cap: Schema.optional(GrokBillingCent),
+    onDemandUsed: Schema.optional(GrokBillingCent),
+    on_demand_used: Schema.optional(GrokBillingCent),
+    billingPeriodStart: Schema.optional(NullableDateValue),
+    billing_period_start: Schema.optional(NullableDateValue),
+    billingPeriodEnd: Schema.optional(NullableDateValue),
+    billing_period_end: Schema.optional(NullableDateValue),
   }),
 });
 const decodeGrokUsagePayload = Schema.decodeUnknownOption(GrokUsagePayload);
+
+function billingCentValue(value: typeof GrokBillingCent.Type | undefined): number | undefined {
+  if (value === null || value === undefined) return undefined;
+  if (typeof value === "object") return numericValue(value.val);
+  return numericValue(value);
+}
 
 export function parseGrokUsageWindows(
   input: unknown,
 ): ReadonlyArray<ServerProviderUsageLimitWindow> {
   const decoded = decodeGrokUsagePayload(input);
   if (Option.isNone(decoded)) return [];
-  const period = decoded.value.config.currentPeriod;
-  const id = period?.type?.toLowerCase().includes("weekly") ? "weekly" : "billing_period";
-  return [
-    normalizedWindow({
-      id,
-      usedPercent: decoded.value.config.creditUsagePercent,
-      resetsAt: period?.end,
-    }),
-  ];
+  const config = decoded.value.config;
+  const period = config.currentPeriod ?? config.current_period;
+  const usagePercent = numericValue(config.creditUsagePercent ?? config.credit_usage_percent);
+  const windows: Array<ServerProviderUsageLimitWindow> = [];
+  const isWeekly = period?.type?.toLowerCase().includes("weekly") ?? false;
+  if (usagePercent !== undefined || period) {
+    windows.push(
+      normalizedWindow({
+        id: isWeekly ? "weekly" : "billing_period",
+        label: isWeekly ? "Weekly" : "Billing period",
+        usedPercent: usagePercent,
+        resetsAt: period?.end,
+      }),
+    );
+  }
+  const productUsage = config.productUsage ?? config.product_usage ?? [];
+  for (const [index, product] of productUsage.entries()) {
+    const usedPercent = numericValue(product.usagePercent ?? product.usage_percent);
+    if (usedPercent === undefined) continue;
+    const productLabel = product.product?.trim() || `Product ${index + 1}`;
+    windows.push(
+      normalizedWindow({
+        id: `weekly:${slugifyUsageWindowId(productLabel)}:${index}`,
+        label: `Weekly · ${productLabel}`,
+        usedPercent,
+        resetsAt: period?.end,
+      }),
+    );
+  }
+
+  const monthlyLimit = billingCentValue(config.monthlyLimit ?? config.monthly_limit);
+  const used = billingCentValue(config.used);
+  const billingEnd = config.billingPeriodEnd ?? config.billing_period_end;
+  if (monthlyLimit !== undefined && monthlyLimit > 0 && used !== undefined) {
+    windows.push(
+      normalizedWindow({
+        id: "monthly_credits",
+        label: "Monthly credits",
+        usedPercent: (Math.min(used, monthlyLimit) / monthlyLimit) * 100,
+        resetsAt: billingEnd,
+      }),
+    );
+  }
+
+  const onDemandCap = billingCentValue(config.onDemandCap ?? config.on_demand_cap);
+  const explicitOnDemandUsed = billingCentValue(config.onDemandUsed ?? config.on_demand_used);
+  const onDemandUsed =
+    explicitOnDemandUsed ??
+    (used !== undefined && monthlyLimit !== undefined
+      ? Math.max(0, used - monthlyLimit)
+      : undefined);
+  if (onDemandCap !== undefined && onDemandCap > 0 && onDemandUsed !== undefined) {
+    windows.push(
+      normalizedWindow({
+        id: "on_demand",
+        label: "Pay as you go",
+        usedPercent: (onDemandUsed / onDemandCap) * 100,
+        resetsAt: billingEnd,
+      }),
+    );
+  }
+  return windows;
 }
 
 const OpenCodeUsageWindow = Schema.Struct({

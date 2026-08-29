@@ -49,10 +49,13 @@ and credentials do not cross the server/client contract.
 Codex reads its official `account/rateLimits/read` app-server method. Claude, Cursor, Grok, and
 OpenCode integrations are experimental opt-ins at the driver boundary: respectively a local OAuth
 usage request with the structured Claude SDK `/usage` call as fallback, Cursor's dashboard API,
-Grok's optional `x.ai/billing` ACP request, and OpenCode Go's usage API. Claude can instead use the
-CLIProxyAPI management API to enumerate stable credential indexes and query the official usage
-endpoint once per account. Their credentials are resolved ephemerally from the provider instance's
-local files or environment.
+Grok's optional `x.ai/billing` ACP request, and OpenCode Go's usage API. When a management key is
+configured, the Claude, Codex, and Grok drivers instead use the CLIProxyAPI management API to
+enumerate stable credential indexes and query each account's official usage endpoints. Grok reads
+only the weekly and monthly billing endpoints; it deliberately does not send the model health-probe
+request used by some CLIProxyAPI dashboards. Cursor and OpenCode remain on their native readers
+because CLIProxyAPI does not expose corresponding quota adapters. Credentials are resolved
+ephemerally from the provider instance's local files or environment.
 
 The managed provider enrichment loop owns the background policy passed to
 `pollProviderUsageLimits`. A reader runs at most every 45 seconds and only when generic or

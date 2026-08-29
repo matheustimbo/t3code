@@ -118,6 +118,29 @@ This is useful when a Codex-compatible setup needs account-specific variables. A
 the provider instance that should receive them, and mark API keys or tokens as sensitive. Sensitive
 values are stored as server secrets and are not sent back to the app after saving.
 
+## I Want To Use CLIProxyAPI
+
+Configure Codex to use CLIProxyAPI normally, then add these environment variables to that Codex
+provider instance:
+
+```text
+CLIPROXYAPI_MANAGEMENT_URL     http://127.0.0.1:8317
+CLIPROXYAPI_MANAGEMENT_KEY     your-management-key            Sensitive
+```
+
+T3 Code then lists every Codex OAuth credential returned by CLIProxyAPI and reads its official
+five-hour, weekly or monthly, code-review, and model-specific windows independently. It does not add
+allowance percentages across accounts. A disabled or failed account remains visible with its own
+status.
+
+The management URL can be omitted when a CLIProxyAPI base URL is already configured through
+`OPENAI_BASE_URL` or `CODEX_BASE_URL`, but setting it explicitly is recommended. The management API
+must be enabled and reachable from the T3 Code server. Keep the management key sensitive: it
+authorizes account inventory and authenticated upstream calls.
+
+See [Review usage and plan limits](./usage.md#cliproxyapi-account-pools) for the complete provider
+support matrix.
+
 ## Can I Switch Accounts In An Existing Thread?
 
 Yes, when both Codex providers share the same `CODEX_HOME path`.

@@ -239,6 +239,10 @@ The management API must be enabled in CLIProxyAPI. Remote T3 environments also r
 to allow management access from that environment. Treat the management key as a sensitive secret:
 it authorizes account inventory and authenticated upstream calls.
 
+The same account-pool integration also supports T3 Code's Codex and Grok providers. See
+[Review usage and plan limits](./usage.md#cliproxyapi-account-pools) for the shared setup and the
+provider types that CLIProxyAPI does not expose to T3 Code.
+
 ## I Want Different Claude Settings, Not A Different Account
 
 Create another Claude provider with the same account if you want a named preset.
