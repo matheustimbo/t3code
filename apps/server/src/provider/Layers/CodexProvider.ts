@@ -21,6 +21,8 @@ import type {
   ProviderOptionDescriptor,
   ServerProviderModel,
   ServerProviderSkill,
+  ServerProviderUsageLimitWindow,
+  ServerProviderUsageLimits,
 } from "@t3tools/contracts";
 import { PREFERRED_DEFAULT_CODEX_MODELS, ServerSettingsError } from "@t3tools/contracts";
 
@@ -33,8 +35,10 @@ import {
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
+import { ProviderUsageLimitsReadError } from "../providerUsageLimits.ts";
 import packageJson from "../../../package.json" with { type: "json" };
 const isCodexAppServerSpawnError = Schema.is(CodexErrors.CodexAppServerSpawnError);
+const isProviderUsageLimitsReadError = Schema.is(ProviderUsageLimitsReadError);
 
 const CODEX_APP_SERVER_PROBE_FORCE_KILL_AFTER = "2 seconds" as const;
 
@@ -45,9 +49,83 @@ const CODEX_PRESENTATION = {
 
 export interface CodexAppServerProviderSnapshot {
   readonly account: CodexSchema.V2GetAccountResponse;
+  readonly rateLimits?: CodexSchema.V2GetAccountRateLimitsResponse | undefined;
   readonly version: string | undefined;
   readonly models: ReadonlyArray<ServerProviderModel>;
   readonly skills: ReadonlyArray<ServerProviderSkill>;
+}
+
+function codexWindowLabel(
+  durationMinutes: number | null | undefined,
+  fallback: "Primary" | "Secondary",
+): string {
+  if (durationMinutes === 300) return "5 hours";
+  if (durationMinutes === 10_080) return "7 days";
+  if (durationMinutes && durationMinutes % 1_440 === 0) {
+    return `${durationMinutes / 1_440} days`;
+  }
+  if (durationMinutes && durationMinutes % 60 === 0) {
+    return `${durationMinutes / 60} hours`;
+  }
+  return fallback;
+}
+
+function mapCodexRateLimitWindow(input: {
+  readonly bucketId: string;
+  readonly bucketName: string | null | undefined;
+  readonly kind: "primary" | "secondary";
+  readonly window: CodexSchema.V2GetAccountRateLimitsResponse__RateLimitWindow;
+}): ServerProviderUsageLimitWindow {
+  const duration = input.window.windowDurationMins ?? undefined;
+  const baseLabel = codexWindowLabel(duration, input.kind === "primary" ? "Primary" : "Secondary");
+  const prefix = input.bucketName?.trim();
+  return {
+    id: `${input.bucketId}:${input.kind}`,
+    label: prefix ? `${prefix} · ${baseLabel}` : baseLabel,
+    usedPercent: Math.min(100, Math.max(0, input.window.usedPercent)),
+    remainingPercent: Math.min(100, Math.max(0, 100 - input.window.usedPercent)),
+    ...(input.window.resetsAt
+      ? { resetsAt: DateTime.formatIso(DateTime.makeUnsafe(input.window.resetsAt * 1_000)) }
+      : {}),
+    ...(duration && duration > 0 ? { windowDurationMinutes: duration } : {}),
+  };
+}
+
+export function mapCodexUsageLimits(
+  response: CodexSchema.V2GetAccountRateLimitsResponse,
+  checkedAt: string,
+): ServerProviderUsageLimits {
+  const entries =
+    response.rateLimitsByLimitId && Object.keys(response.rateLimitsByLimitId).length > 0
+      ? Object.entries(response.rateLimitsByLimitId)
+      : [[response.rateLimits.limitId ?? "codex", response.rateLimits] as const];
+  const windows = entries.flatMap(([bucketId, bucket]) =>
+    (["primary", "secondary"] as const).flatMap((kind) => {
+      const window = bucket[kind];
+      return window
+        ? [
+            mapCodexRateLimitWindow({
+              bucketId,
+              bucketName: bucket.limitName,
+              kind,
+              window,
+            }),
+          ]
+        : [];
+    }),
+  );
+  return {
+    status: windows.length === 0 ? "unavailable" : "available",
+    support: "supported",
+    source: "codex-app-server",
+    checkedAt,
+    windows: windows.toSorted(
+      (left, right) =>
+        (left.remainingPercent ?? Number.POSITIVE_INFINITY) -
+        (right.remainingPercent ?? Number.POSITIVE_INFINITY),
+    ),
+    ...(windows.length === 0 ? { message: "Codex did not report subscription windows." } : {}),
+  };
 }
 
 const REASONING_EFFORT_LABELS: Readonly<Record<string, string>> = {
@@ -318,14 +396,17 @@ export function buildCodexInitializeParams(): CodexSchema.V1InitializeParams {
   };
 }
 
-const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(function* (input: {
+interface CodexAppServerConnectionInput {
   readonly binaryPath: string;
   readonly homePath?: string;
   readonly launchArgs?: string;
   readonly cwd: string;
-  readonly customModels?: ReadonlyArray<string>;
   readonly environment?: NodeJS.ProcessEnv;
-}) {
+}
+
+const connectCodexAppServer = Effect.fn("connectCodexAppServer")(function* (
+  input: CodexAppServerConnectionInput,
+) {
   // `~` is not shell-expanded when env vars are set via `child_process.spawn`,
   // so `CODEX_HOME=~/.codex_work` would reach codex verbatim and trip
   // "CODEX_HOME points to '~/.codex_work', but that path does not exist".
@@ -368,21 +449,24 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     Effect.provide(clientContext),
   );
 
-  const initialize = yield* client.request("initialize", {
-    clientInfo: {
-      name: "t3code_desktop",
-      title: "T3 Code Desktop",
-      version: "0.1.0",
-    },
-    capabilities: {
-      experimentalApi: true,
-    },
-  });
+  const initialize = yield* client.request("initialize", buildCodexInitializeParams());
   yield* client.notify("initialized", undefined);
 
   // Extract the version string after the first '/' in userAgent, up to the next space or the end
   const versionMatch = initialize.userAgent.match(/\/([^\s]+)/);
   const version = versionMatch ? versionMatch[1] : undefined;
+  return { client, version };
+});
+
+const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(function* (input: {
+  readonly binaryPath: string;
+  readonly homePath?: string;
+  readonly launchArgs?: string;
+  readonly cwd: string;
+  readonly customModels?: ReadonlyArray<string>;
+  readonly environment?: NodeJS.ProcessEnv;
+}) {
+  const { client, version } = yield* connectCodexAppServer(input);
 
   const accountResponse = yield* client.request("account/read", {});
   if (!accountResponse.account && accountResponse.requiresOpenaiAuth) {
@@ -394,24 +478,56 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     } satisfies CodexAppServerProviderSnapshot;
   }
 
-  const [skillsResponse, models] = yield* Effect.all(
+  const [skillsResponse, models, rateLimits] = yield* Effect.all(
     [
       client.request("skills/list", {
         cwds: [input.cwd],
       }),
       requestAllCodexModels(client),
+      client.request("account/rateLimits/read", undefined).pipe(Effect.option),
     ],
     { concurrency: "unbounded" },
   );
 
   return {
     account: accountResponse,
+    ...(Option.isSome(rateLimits) ? { rateLimits: rateLimits.value } : {}),
     version,
     models: applyPreferredCodexDefaultModel(
       appendCustomCodexModels(models, input.customModels ?? []),
     ),
     skills: parseCodexSkillsListResponse(skillsResponse, input.cwd),
   } satisfies CodexAppServerProviderSnapshot;
+});
+
+export const readCodexUsageLimits = Effect.fn("readCodexUsageLimits")(function* (input: {
+  readonly binaryPath: string;
+  readonly homePath?: string;
+  readonly launchArgs?: string;
+  readonly cwd: string;
+  readonly environment?: NodeJS.ProcessEnv;
+}) {
+  const response = yield* Effect.gen(function* () {
+    const { client } = yield* connectCodexAppServer(input);
+    const account = yield* client.request("account/read", {});
+    if (!account.account && account.requiresOpenaiAuth) {
+      return yield* new ProviderUsageLimitsReadError({
+        message: "Codex CLI is not authenticated.",
+      });
+    }
+    return yield* client.request("account/rateLimits/read", undefined);
+  }).pipe(
+    Effect.scoped,
+    Effect.timeout("10 seconds"),
+    Effect.mapError((error) =>
+      isProviderUsageLimitsReadError(error)
+        ? error
+        : new ProviderUsageLimitsReadError({
+            message: "Codex app-server could not read subscription limits.",
+          }),
+    ),
+  );
+  return mapCodexUsageLimits(response, DateTime.formatIso(yield* DateTime.now));
 });
 
 const emptyCodexModelsFromSettings = (codexSettings: CodexSettings): ServerProvider["models"] => {
@@ -607,6 +723,9 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
         input: { hint: "Describe the issue (optional)" },
       },
     ],
+    ...(snapshot.rateLimits
+      ? { usageLimits: mapCodexUsageLimits(snapshot.rateLimits, checkedAt) }
+      : {}),
     probe: {
       installed: true,
       version: snapshot.version ?? null,

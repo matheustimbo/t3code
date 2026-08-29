@@ -1,6 +1,7 @@
 import type { UsageProviderKind } from "@t3tools/contracts";
 import { CheckIcon, RefreshCwIcon, XIcon } from "lucide-react";
 import { useMemo, useState } from "react";
+import * as Schema from "effect/Schema";
 
 import type { DailyTotals, HourlyTotals } from "@t3tools/shared/usageMerge";
 
@@ -33,6 +34,8 @@ import { WorkspacePageContainer } from "../WorkspacePageContainer";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { UsageProviderChart, type UsageChartMetric } from "./UsageProviderChart";
 import { PROVIDER_ORDER, PROVIDER_PRESENTATION, providersWithUsage } from "./usageProviders";
+import { PlanLimitsPanel } from "./PlanLimitsPanel";
+import { useLocalStorage } from "../../hooks/useLocalStorage";
 
 const WINDOW_OPTIONS = [
   { days: 1, label: "Past 24h" },
@@ -40,8 +43,14 @@ const WINDOW_OPTIONS = [
   { days: 30, label: "30 days" },
   { days: 90, label: "90 days" },
 ] as const;
+const UsageTab = Schema.Literals(["limits", "local"]);
 
 export function UsagePage() {
+  const [usageTab, setUsageTab] = useLocalStorage(
+    "t3code:usage-tab:v1",
+    "limits" as const,
+    UsageTab,
+  );
   const [windowSelection, setWindowSelection] = useState(() => ({
     days: 30,
     window: makeWindow(30),
@@ -117,87 +126,106 @@ export function UsagePage() {
         </WorkspaceBreadcrumbItem>
         <WorkspaceBreadcrumbSeparator className="hidden md:flex" />
         <WorkspaceBreadcrumbItem className="hidden min-w-0 shrink md:flex">
-          <span className="truncate">{windowLabel}</span>
+          <span className="truncate">
+            {usageTab === "limits" ? "Subscription allowances" : windowLabel}
+          </span>
         </WorkspaceBreadcrumbItem>
       </WorkspaceBreadcrumb>
-      <div className="ms-auto hidden min-w-0 items-center justify-end gap-2 lg:flex">
-        <ToggleGroup
-          aria-label="Usage metric"
-          variant="segmented"
-          value={[metric]}
-          onValueChange={(next) => {
-            const value = next[0];
-            if (value === "cost" || value === "tokens") setMetric(value);
-          }}
-        >
-          {(["cost", "tokens"] as const).map((option) => (
-            <Toggle key={option} value={option}>
-              {option === "cost" ? "Cost" : "Tokens"}
-            </Toggle>
-          ))}
-        </ToggleGroup>
-        <ToggleGroup
-          aria-label="Usage period"
-          variant="segmented"
-          value={[String(windowDays)]}
-          onValueChange={(next) => {
-            const value = next[0];
-            if (value) selectWindow(Number(value));
-          }}
-        >
-          {WINDOW_OPTIONS.map((option) => (
-            <Toggle key={option.days} value={String(option.days)}>
-              {option.label}
-            </Toggle>
-          ))}
-        </ToggleGroup>
-        <Button onClick={refreshWindow} aria-label="Refresh usage" size="icon-sm" variant="ghost">
-          <RefreshCwIcon className="size-3.5" />
-        </Button>
-      </div>
-      <div className="ms-auto flex min-w-0 items-center justify-end gap-1 lg:hidden">
-        <Select
-          value={metric}
-          onValueChange={(value) => {
-            if (value === "cost" || value === "tokens") setMetric(value);
-          }}
-        >
-          <SelectTrigger
-            aria-label="Usage metric"
-            size="compact"
-            variant="ghost"
-            className="w-auto min-w-0"
-          >
-            <SelectValue>{metric === "cost" ? "Cost" : "Tokens"}</SelectValue>
-          </SelectTrigger>
-          <SelectPopup align="end" alignItemWithTrigger={false}>
-            <SelectItem value="cost">Cost</SelectItem>
-            <SelectItem value="tokens">Tokens</SelectItem>
-          </SelectPopup>
-        </Select>
-        <Select value={String(windowDays)} onValueChange={(value) => selectWindow(Number(value))}>
-          <SelectTrigger
-            aria-label="Usage period"
-            size="compact"
-            variant="ghost"
-            className="w-auto min-w-0"
-          >
-            <SelectValue>
-              {WINDOW_OPTIONS.find((option) => option.days === windowDays)?.label}
-            </SelectValue>
-          </SelectTrigger>
-          <SelectPopup align="end" alignItemWithTrigger={false}>
-            {WINDOW_OPTIONS.map((option) => (
-              <SelectItem key={option.days} value={String(option.days)}>
-                {option.label}
-              </SelectItem>
-            ))}
-          </SelectPopup>
-        </Select>
-        <Button onClick={refreshWindow} aria-label="Refresh usage" size="icon-sm" variant="ghost">
-          <RefreshCwIcon className="size-3.5" />
-        </Button>
-      </div>
+      {usageTab === "local" ? (
+        <>
+          <div className="ms-auto hidden min-w-0 items-center justify-end gap-2 lg:flex">
+            <ToggleGroup
+              aria-label="Usage metric"
+              variant="segmented"
+              value={[metric]}
+              onValueChange={(next) => {
+                const value = next[0];
+                if (value === "cost" || value === "tokens") setMetric(value);
+              }}
+            >
+              {(["cost", "tokens"] as const).map((option) => (
+                <Toggle key={option} value={option}>
+                  {option === "cost" ? "Cost" : "Tokens"}
+                </Toggle>
+              ))}
+            </ToggleGroup>
+            <ToggleGroup
+              aria-label="Usage period"
+              variant="segmented"
+              value={[String(windowDays)]}
+              onValueChange={(next) => {
+                const value = next[0];
+                if (value) selectWindow(Number(value));
+              }}
+            >
+              {WINDOW_OPTIONS.map((option) => (
+                <Toggle key={option.days} value={String(option.days)}>
+                  {option.label}
+                </Toggle>
+              ))}
+            </ToggleGroup>
+            <Button
+              onClick={refreshWindow}
+              aria-label="Refresh usage"
+              size="icon-sm"
+              variant="ghost"
+            >
+              <RefreshCwIcon className="size-3.5" />
+            </Button>
+          </div>
+          <div className="ms-auto flex min-w-0 items-center justify-end gap-1 lg:hidden">
+            <Select
+              value={metric}
+              onValueChange={(value) => {
+                if (value === "cost" || value === "tokens") setMetric(value);
+              }}
+            >
+              <SelectTrigger
+                aria-label="Usage metric"
+                size="compact"
+                variant="ghost"
+                className="w-auto min-w-0"
+              >
+                <SelectValue>{metric === "cost" ? "Cost" : "Tokens"}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem value="cost">Cost</SelectItem>
+                <SelectItem value="tokens">Tokens</SelectItem>
+              </SelectPopup>
+            </Select>
+            <Select
+              value={String(windowDays)}
+              onValueChange={(value) => selectWindow(Number(value))}
+            >
+              <SelectTrigger
+                aria-label="Usage period"
+                size="compact"
+                variant="ghost"
+                className="w-auto min-w-0"
+              >
+                <SelectValue>
+                  {WINDOW_OPTIONS.find((option) => option.days === windowDays)?.label}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {WINDOW_OPTIONS.map((option) => (
+                  <SelectItem key={option.days} value={String(option.days)}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+            <Button
+              onClick={refreshWindow}
+              aria-label="Refresh usage"
+              size="icon-sm"
+              variant="ghost"
+            >
+              <RefreshCwIcon className="size-3.5" />
+            </Button>
+          </div>
+        </>
+      ) : null}
     </div>
   );
 
@@ -208,7 +236,22 @@ export function UsagePage() {
 
         <ScrollArea className="min-h-0 flex-1">
           <WorkspacePageContainer width="wide">
-            {settling ? (
+            <ToggleGroup
+              aria-label="Usage view"
+              variant="segmented"
+              value={[usageTab]}
+              onValueChange={(next) => {
+                const value = next[0];
+                if (value === "limits" || value === "local") setUsageTab(value);
+              }}
+              className="mb-6 w-fit"
+            >
+              <Toggle value="limits">Plan limits</Toggle>
+              <Toggle value="local">Local usage</Toggle>
+            </ToggleGroup>
+            {usageTab === "limits" ? (
+              <PlanLimitsPanel />
+            ) : settling ? (
               <>
                 {environments.length > 1 ? <UsageDeviceStrip environments={environments} /> : null}
                 <UsageSkeleton />

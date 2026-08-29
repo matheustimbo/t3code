@@ -158,6 +158,51 @@ export const ServerProviderUpdateState = Schema.Struct({
 });
 export type ServerProviderUpdateState = typeof ServerProviderUpdateState.Type;
 
+export const ServerProviderUsageLimitsStatus = Schema.Literals([
+  "available",
+  "partial",
+  "stale",
+  "unavailable",
+  "error",
+  "disabled",
+]);
+export type ServerProviderUsageLimitsStatus = typeof ServerProviderUsageLimitsStatus.Type;
+
+export const ServerProviderUsageLimitsSupport = Schema.Literals([
+  "supported",
+  "experimental",
+  "unavailable",
+]);
+export type ServerProviderUsageLimitsSupport = typeof ServerProviderUsageLimitsSupport.Type;
+
+export const ServerProviderUsageLimitWindow = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  label: TrimmedNonEmptyString,
+  remainingPercent: Schema.optional(Schema.Number),
+  usedPercent: Schema.optional(Schema.Number),
+  resetsAt: Schema.optional(IsoDateTime),
+  windowDurationMinutes: Schema.optional(PositiveInt),
+});
+export type ServerProviderUsageLimitWindow = typeof ServerProviderUsageLimitWindow.Type;
+
+/**
+ * Current subscription allowance for one configured provider instance.
+ *
+ * The payload is deliberately provider-neutral: credentials and raw upstream
+ * responses never cross the server/client boundary. Optional percentages and
+ * reset timestamps let adapters report honest partial data.
+ */
+export const ServerProviderUsageLimits = Schema.Struct({
+  status: ServerProviderUsageLimitsStatus,
+  support: ServerProviderUsageLimitsSupport,
+  source: TrimmedNonEmptyString,
+  checkedAt: IsoDateTime,
+  windows: Schema.Array(ServerProviderUsageLimitWindow),
+  message: Schema.optional(TrimmedNonEmptyString),
+  dashboardUrl: Schema.optional(TrimmedNonEmptyString),
+});
+export type ServerProviderUsageLimits = typeof ServerProviderUsageLimits.Type;
+
 export const ServerProvider = Schema.Struct({
   // Routing key for the configured instance this snapshot represents. This
   // is the only stable identity consumers may use for provider routing.
@@ -194,6 +239,7 @@ export const ServerProvider = Schema.Struct({
   skills: Schema.Array(ServerProviderSkill).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   versionAdvisory: Schema.optionalKey(ServerProviderVersionAdvisory),
   updateState: Schema.optionalKey(ServerProviderUpdateState),
+  usageLimits: Schema.optionalKey(ServerProviderUsageLimits),
 });
 export type ServerProvider = typeof ServerProvider.Type;
 

@@ -443,9 +443,17 @@ export const ClaudeSettings = makeProviderSettingsSchema(
         },
       }),
     ),
+    usageLimitsEnabled: Schema.optionalKey(Schema.Boolean).pipe(
+      Schema.annotateKey({
+        title: "Experimental plan limits",
+        description:
+          "Read Claude subscription limits from local CLI credentials and fall back to /usage. Tokens stay on this machine.",
+        providerSettingsForm: { control: "switch", clearWhenEmpty: "omit" },
+      }),
+    ),
   },
   {
-    order: ["binaryPath", "homePath", "autoCompactWindow", "launchArgs"],
+    order: ["binaryPath", "homePath", "autoCompactWindow", "launchArgs", "usageLimitsEnabled"],
   },
 );
 export type ClaudeSettings = typeof ClaudeSettings.Type;
@@ -479,9 +487,17 @@ export const CursorSettings = makeProviderSettingsSchema(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
+    usageLimitsEnabled: Schema.optionalKey(Schema.Boolean).pipe(
+      Schema.annotateKey({
+        title: "Experimental plan limits",
+        description:
+          "Read Cursor plan limits with the existing local CLI session. Credentials are never persisted by T3 Code.",
+        providerSettingsForm: { control: "switch", clearWhenEmpty: "omit" },
+      }),
+    ),
   },
   {
-    order: ["binaryPath", "apiEndpoint"],
+    order: ["binaryPath", "apiEndpoint", "usageLimitsEnabled"],
   },
 );
 export type CursorSettings = typeof CursorSettings.Type;
@@ -505,9 +521,16 @@ export const GrokSettings = makeProviderSettingsSchema(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
+    usageLimitsEnabled: Schema.optionalKey(Schema.Boolean).pipe(
+      Schema.annotateKey({
+        title: "Experimental plan limits",
+        description: "Read Grok subscription limits through the optional x.ai billing capability.",
+        providerSettingsForm: { control: "switch", clearWhenEmpty: "omit" },
+      }),
+    ),
   },
   {
-    order: ["binaryPath"],
+    order: ["binaryPath", "usageLimitsEnabled"],
   },
 );
 export type GrokSettings = typeof GrokSettings.Type;
@@ -557,9 +580,17 @@ export const OpenCodeSettings = makeProviderSettingsSchema(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
+    usageLimitsEnabled: Schema.optionalKey(Schema.Boolean).pipe(
+      Schema.annotateKey({
+        title: "Experimental OpenCode Go limits",
+        description:
+          "Read rolling, weekly, and monthly limits when this instance uses an OpenCode Go subscription.",
+        providerSettingsForm: { control: "switch", clearWhenEmpty: "omit" },
+      }),
+    ),
   },
   {
-    order: ["binaryPath", "serverUrl", "serverPassword"],
+    order: ["binaryPath", "serverUrl", "serverPassword", "usageLimitsEnabled"],
   },
 );
 export type OpenCodeSettings = typeof OpenCodeSettings.Type;
