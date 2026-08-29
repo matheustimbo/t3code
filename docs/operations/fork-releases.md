@@ -42,3 +42,15 @@ extensions, push, associated domains, and native Sign in with Apple entitlements
 The upstream Release, Mobile EAS Production, and Deploy T3 Connect relay workflows remain disabled
 in the fork repository settings. Mobile Expo updates are off unless a build supplies its own
 `T3CODE_EAS_PROJECT_ID` and optional `T3CODE_EAS_OWNER`.
+
+## Upstream synchronization
+
+The **Sync upstream fork** workflow runs daily and can also be dispatched manually. It first mirrors
+`pingdotgg/t3code:main` into the fork's `main` branch, then merges that branch into `fork-main` when
+Git reports no conflicts. A successful integration explicitly dispatches the fork release because
+GitHub does not start additional workflows for ordinary pushes made with `GITHUB_TOKEN`; mobile
+builds are dispatched only when mobile or shared runtime paths changed.
+
+When the automatic merge conflicts, the workflow leaves `fork-main` untouched and opens one pull
+request from `main` instead. Resolve that PR manually while preserving the fork-only ticket-title,
+update-channel, and build behavior.
