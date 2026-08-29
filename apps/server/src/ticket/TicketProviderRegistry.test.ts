@@ -353,6 +353,63 @@ describe("TicketProviderRegistry", () => {
     }),
   );
 
+  effectIt.effect("sends ClickUp personal tokens without an authentication scheme", () =>
+    Effect.gen(function* () {
+      const authorizationHeaders: Array<string | undefined> = [];
+      const httpClient = HttpClient.make((request) => {
+        authorizationHeaders.push(request.headers.authorization);
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(request, Response.json({ name: "Fix reconnect" })),
+        );
+      });
+      const registry = yield* makeRegistry(() => Effect.die("CLI should not run"), httpClient);
+      const reference = extractUniqueTicketReference("https://app.clickup.com/t/abc123")!;
+
+      const result = yield* registry.resolve({
+        cwd: "/tmp/project",
+        reference,
+        instances: {
+          [TicketProviderInstanceId.make("clickup_personal")]: {
+            driver: TicketProviderDriverKind.make("clickup"),
+            baseUrl: "https://app.clickup.com",
+            environment: [{ name: "CLICKUP_API_TOKEN", value: "pk_personal", sensitive: true }],
+          },
+        },
+        bindings: [],
+      });
+
+      expect(result.title).toBe("Fix reconnect");
+      expect(authorizationHeaders).toEqual(["pk_personal"]);
+    }),
+  );
+
+  effectIt.effect("adds Bearer to ClickUp OAuth tokens without duplicating it", () =>
+    Effect.gen(function* () {
+      const authorizationHeaders: Array<string | undefined> = [];
+      const httpClient = HttpClient.make((request) => {
+        authorizationHeaders.push(request.headers.authorization);
+        return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json({ user: {} })));
+      });
+      const registry = yield* makeRegistry(() => Effect.die("CLI should not run"), httpClient);
+
+      for (const token of ["oauth-token", "Bearer oauth-token"]) {
+        const instanceId = TicketProviderInstanceId.make(`clickup_${authorizationHeaders.length}`);
+        const result = yield* registry.probe({
+          cwd: "/tmp/project",
+          instanceId,
+          instance: {
+            driver: TicketProviderDriverKind.make("clickup"),
+            baseUrl: "https://app.clickup.com",
+            environment: [{ name: "CLICKUP_API_TOKEN", value: token, sensitive: true }],
+          },
+        });
+        expect(result.availability).toBe("available");
+      }
+
+      expect(authorizationHeaders).toEqual(["Bearer oauth-token", "Bearer oauth-token"]);
+    }),
+  );
+
   effectIt.effect("passes a configured Azure DevOps Server collection to the CLI", () =>
     Effect.gen(function* () {
       const run = vi.fn<VcsProcess.VcsProcess["Service"]["run"]>(() =>

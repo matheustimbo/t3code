@@ -118,6 +118,10 @@ function environmentValue(
   return value ? value : undefined;
 }
 
+function clickUpAuthorizationHeader(token: string): string {
+  return token.startsWith("pk_") || /^Bearer\s+/iu.test(token) ? token : `Bearer ${token}`;
+}
+
 function normalizedBaseUrl(value: string): URL | undefined {
   try {
     const url = new URL(value);
@@ -479,7 +483,7 @@ export const make = Effect.gen(function* () {
         yield* executeText(
           HttpClientRequest.get(
             `https://api.clickup.com/api/v2/task/${encodeURIComponent(input.reference.resourceId)}${query}`,
-          ).pipe(HttpClientRequest.setHeader("Authorization", token)),
+          ).pipe(HttpClientRequest.setHeader("Authorization", clickUpAuthorizationHeader(token))),
         ),
       ),
     );
@@ -691,7 +695,10 @@ export const make = Effect.gen(function* () {
         case "clickup": {
           yield* executeText(
             HttpClientRequest.get("https://api.clickup.com/api/v2/user").pipe(
-              HttpClientRequest.setHeader("Authorization", clickUpToken!),
+              HttpClientRequest.setHeader(
+                "Authorization",
+                clickUpAuthorizationHeader(clickUpToken!),
+              ),
             ),
           );
           break;
