@@ -35,6 +35,25 @@ const makeEnvironment = (
   DesktopEnvironment.DesktopEnvironment.pipe(Effect.provide(makeEnvironmentLayer(overrides, env)));
 
 describe("DesktopEnvironment", () => {
+  it("uses an injected fork label without changing development branding", () => {
+    assert.equal(
+      DesktopEnvironment.resolveDesktopAppStageLabel({
+        isDevelopment: false,
+        appVersion: "0.1.14",
+        distributionLabel: " Fork ",
+      }),
+      "Fork",
+    );
+    assert.equal(
+      DesktopEnvironment.resolveDesktopAppStageLabel({
+        isDevelopment: true,
+        appVersion: "0.1.14",
+        distributionLabel: "Fork",
+      }),
+      "Dev",
+    );
+  });
+
   it.effect("derives state paths and development identity inside Effect", () =>
     Effect.gen(function* () {
       const environment = yield* makeEnvironment(

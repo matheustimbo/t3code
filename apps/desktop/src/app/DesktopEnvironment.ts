@@ -16,6 +16,13 @@ import * as DesktopConfig from "./DesktopConfig.ts";
 import { resolveDesktopBaseDir, resolveDesktopStateDir } from "./DesktopStatePaths.ts";
 import { isNightlyDesktopVersion } from "../updates/updateChannels.ts";
 
+declare const __T3CODE_DESKTOP_DISTRIBUTION_LABEL__: string | undefined;
+
+const DESKTOP_DISTRIBUTION_LABEL =
+  typeof __T3CODE_DESKTOP_DISTRIBUTION_LABEL__ === "undefined"
+    ? ""
+    : __T3CODE_DESKTOP_DISTRIBUTION_LABEL__;
+
 export interface MakeDesktopEnvironmentInput {
   readonly dirname: string;
   readonly homeDirectory: string;
@@ -87,12 +94,17 @@ export class DesktopEnvironment extends Context.Service<
 
 const APP_BASE_NAME = "T3 Code";
 
-function resolveDesktopAppStageLabel(input: {
+export function resolveDesktopAppStageLabel(input: {
   readonly isDevelopment: boolean;
   readonly appVersion: string;
+  readonly distributionLabel?: string;
 }): DesktopAppStageLabel {
   if (input.isDevelopment) {
     return "Dev";
+  }
+
+  if (input.distributionLabel?.trim().toLowerCase() === "fork") {
+    return "Fork";
   }
 
   return isNightlyDesktopVersion(input.appVersion) ? "Nightly" : "Alpha";
@@ -101,6 +113,7 @@ function resolveDesktopAppStageLabel(input: {
 function resolveDesktopAppBranding(input: {
   readonly isDevelopment: boolean;
   readonly appVersion: string;
+  readonly distributionLabel?: string;
 }): DesktopAppBranding {
   const stageLabel = resolveDesktopAppStageLabel(input);
   return {
@@ -170,6 +183,7 @@ const make = Effect.fn("desktop.environment.make")(function* (
   const branding = resolveDesktopAppBranding({
     isDevelopment,
     appVersion: input.appVersion,
+    distributionLabel: DESKTOP_DISTRIBUTION_LABEL,
   });
   const displayName = branding.displayName;
   const stateDir = resolveDesktopStateDir({

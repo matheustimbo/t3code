@@ -43,6 +43,9 @@ The upstream Release, Mobile EAS Production, and Deploy T3 Connect relay workflo
 in the fork repository settings. Mobile Expo updates are off unless a build supplies its own
 `T3CODE_EAS_PROJECT_ID` and optional `T3CODE_EAS_OWNER`.
 
+Fork desktop artifacts inject the `Fork` distribution label. The desktop title and sidebar expose
+that identity independently from the stable update channel and `0.1.x` release version.
+
 ## Upstream synchronization
 
 The **Sync upstream fork** workflow runs daily and can also be dispatched manually. It first mirrors

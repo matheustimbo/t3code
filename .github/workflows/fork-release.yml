@@ -115,6 +115,7 @@ jobs:
 
       - name: Build fork desktop
         env:
+          T3CODE_DESKTOP_DISTRIBUTION_LABEL: Fork
           T3CODE_DESKTOP_UPDATE_REPOSITORY: matheustimbo/t3code
         shell: bash
         run: |

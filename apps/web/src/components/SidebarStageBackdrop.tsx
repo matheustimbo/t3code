@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import type { EnvironmentIdentificationMode } from "@t3tools/contracts";
 import { useId } from "react";
 
 import { APP_STAGE_LABEL } from "../branding";
@@ -6,7 +7,7 @@ import { resolveServerBackedAppStageLabel } from "../branding.logic";
 import { primaryServerConfigAtom } from "../state/server";
 
 export type SidebarStageBackdropVariant = "nightly" | "dev";
-export type EnvironmentIdentificationPillLabel = "Dev" | "Nightly";
+export type EnvironmentIdentificationPillLabel = "Dev" | "Fork" | "Nightly";
 
 // A wide viewBox keeps the 96-unit art height at a fixed scale while sidebar resizing reveals
 // more horizontal canvas instead of zooming the scene.
@@ -33,11 +34,21 @@ export function resolveSidebarStageFocusRingOffsetClass(
 
 export function resolveEnvironmentIdentificationPillLabel(
   stageLabel: string,
+  enabled = true,
 ): EnvironmentIdentificationPillLabel | null {
+  if (!enabled) return null;
   const normalized = stageLabel.trim().toLowerCase();
   if (normalized === "dev") return "Dev";
+  if (normalized === "fork") return "Fork";
   if (normalized === "nightly") return "Nightly";
   return null;
+}
+
+export function shouldShowEnvironmentIdentificationPill(input: {
+  readonly mode: EnvironmentIdentificationMode;
+  readonly backdropVariant: SidebarStageBackdropVariant | null;
+}): boolean {
+  return input.mode === "pill" || (input.mode === "artwork" && input.backdropVariant === null);
 }
 
 export function useEnvironmentStageLabel(): string {
