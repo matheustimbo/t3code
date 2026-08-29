@@ -12,6 +12,7 @@ import {
   resolveDesktopUpdateButtonAction,
   shouldShowArm64IntelBuildWarning,
   shouldShowDesktopUpdateButton,
+  shouldShowDesktopUpdateReleaseNotes,
   shouldToastDesktopUpdateActionResult,
 } from "./desktopUpdate.logic";
 
@@ -34,6 +35,15 @@ const baseState: DesktopUpdateState = {
 };
 
 describe("desktop update button state", () => {
+  it("shows available release notes on the stable channel", () => {
+    expect(
+      shouldShowDesktopUpdateReleaseNotes({
+        releaseNotes: [{ version: "1.1.0", items: ["feat: show stable release notes"] }],
+      }),
+    ).toBe(true);
+    expect(shouldShowDesktopUpdateReleaseNotes({ releaseNotes: [] })).toBe(false);
+  });
+
   it("shows a download action when an update is available", () => {
     const state: DesktopUpdateState = {
       ...baseState,

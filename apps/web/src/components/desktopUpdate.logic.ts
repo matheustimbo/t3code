@@ -53,6 +53,12 @@ export function shouldShowDesktopUpdateButton(state: DesktopUpdateState | null):
   return resolveDesktopUpdateButtonAction(state) !== "none";
 }
 
+export function shouldShowDesktopUpdateReleaseNotes(
+  state: Pick<DesktopUpdateState, "releaseNotes">,
+): boolean {
+  return state.releaseNotes.length > 0;
+}
+
 export function shouldShowArm64IntelBuildWarning(state: DesktopUpdateState | null): boolean {
   return state?.hostArch === "arm64" && state.appArch === "x64";
 }
