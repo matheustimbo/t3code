@@ -1,5 +1,6 @@
 import {
   DEFAULT_TICKET_TITLE_TEMPLATE,
+  EnvironmentId,
   TicketProviderDriverKind,
   TicketProviderInstanceId,
   type TicketProviderProbeResult,
@@ -11,8 +12,8 @@ import { renderTicketThreadTitle } from "@t3tools/shared/ticketTitles";
 import { PlusIcon, Trash2Icon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
-import { usePrimaryEnvironmentId } from "../../state/environments";
+import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "../../hooks/useSettings";
+import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
@@ -30,6 +31,10 @@ import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { toastManager } from "../ui/toast";
+import {
+  buildProviderEnvironmentOptions,
+  resolveSelectedProviderEnvironmentId,
+} from "./ProviderSettingsPanel.logic";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 
@@ -439,10 +444,13 @@ function AddTicketProviderDialog({
   );
 }
 
-export function TicketProviderSettings() {
-  const settings = usePrimarySettings();
-  const updateSettings = useUpdatePrimarySettings();
-  const environmentId = usePrimaryEnvironmentId();
+function TicketProviderSettingsForEnvironment({
+  environmentId,
+}: {
+  readonly environmentId: EnvironmentId;
+}) {
+  const settings = useEnvironmentSettings(environmentId);
+  const updateSettings = useUpdateEnvironmentSettings(environmentId);
   const persistProviderSettings = useAtomCommand(
     serverEnvironment.updateSettings,
     "ticket provider settings update",
@@ -480,7 +488,6 @@ export function TicketProviderSettings() {
       current: typeof settings.ticketProviderInstances,
     ) => typeof settings.ticketProviderInstances,
   ) => {
-    if (!environmentId) return;
     pendingInstanceMutationsRef.current += 1;
     const operation = instancesMutationQueueRef.current.then(async () => {
       const previous = instancesRef.current;
@@ -564,9 +571,8 @@ export function TicketProviderSettings() {
                   <Button
                     size="xs"
                     variant="outline"
-                    disabled={!environmentId || probe === "testing" || instance.enabled === false}
+                    disabled={probe === "testing" || instance.enabled === false}
                     onClick={() => {
-                      if (!environmentId) return;
                       const brandedInstanceId = TicketProviderInstanceId.make(instanceId);
                       const instanceSignature = JSON.stringify(
                         instancesRef.current[brandedInstanceId],
@@ -632,7 +638,7 @@ export function TicketProviderSettings() {
       <AddTicketProviderDialog
         open={dialogOpen}
         onOpenChange={setDialogOpen}
-        canSave={environmentId !== null}
+        canSave
         onAdd={(instance) => {
           updateInstances((current) => {
             const host = hostOf(instance.baseUrl);
@@ -653,6 +659,77 @@ export function TicketProviderSettings() {
             return next;
           });
         }}
+      />
+    </>
+  );
+}
+
+export function TicketProviderSettings() {
+  const { environments, isReady } = useEnvironments();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const options = useMemo(
+    () => buildProviderEnvironmentOptions(environments, primaryEnvironmentId),
+    [environments, primaryEnvironmentId],
+  );
+  const [selectedEnvironmentId, setSelectedEnvironmentId] = useState<EnvironmentId | null>(
+    primaryEnvironmentId,
+  );
+  const effectiveEnvironmentId = resolveSelectedProviderEnvironmentId(
+    options,
+    selectedEnvironmentId,
+    primaryEnvironmentId,
+  );
+
+  if (effectiveEnvironmentId === null) {
+    return (
+      <SettingsSection {...searchableSetting("ticket-providers")}>
+        <SettingsRow
+          title={isReady ? "No connected environments" : "Loading environments"}
+          description={
+            isReady
+              ? "Connect an environment before configuring ticket providers."
+              : "Reading connected environments."
+          }
+        />
+      </SettingsSection>
+    );
+  }
+
+  return (
+    <>
+      {options.length > 1 ? (
+        <SettingsSection title="Ticket provider environment">
+          <SettingsRow
+            title="Configure providers on"
+            description="Ticket credentials and defaults belong to the server that owns the project."
+            control={
+              <Select
+                value={effectiveEnvironmentId}
+                onValueChange={(value) => {
+                  if (value) setSelectedEnvironmentId(EnvironmentId.make(value));
+                }}
+              >
+                <SelectTrigger className="min-w-52" aria-label="Ticket provider environment">
+                  <SelectValue>
+                    {options.find((option) => option.environmentId === effectiveEnvironmentId)
+                      ?.label ?? effectiveEnvironmentId}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup>
+                  {options.map((environment) => (
+                    <SelectItem key={environment.environmentId} value={environment.environmentId}>
+                      {environment.label}
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+            }
+          />
+        </SettingsSection>
+      ) : null}
+      <TicketProviderSettingsForEnvironment
+        key={effectiveEnvironmentId}
+        environmentId={effectiveEnvironmentId}
       />
     </>
   );
