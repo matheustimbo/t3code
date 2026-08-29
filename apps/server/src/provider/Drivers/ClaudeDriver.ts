@@ -16,6 +16,7 @@ import { ClaudeSettings, ProviderDriverKind, type ServerProvider } from "@t3tool
 import * as Cache from "effect/Cache";
 import * as Duration from "effect/Duration";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -33,6 +34,7 @@ import {
   checkClaudeProviderStatus,
   makePendingClaudeProvider,
   probeClaudeCapabilities,
+  readClaudeSdkUsageLimits,
 } from "../Layers/ClaudeProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
@@ -44,6 +46,8 @@ import {
 } from "../ProviderDriver.ts";
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
+import { readClaudeUsageLimits } from "../providerUsageLimitReaders.ts";
+import { makeUnavailableUsageLimits, pollProviderUsageLimits } from "../providerUsageLimits.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
   makePackageManagedProviderMaintenanceResolver,
@@ -203,13 +207,42 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
               stampIdentity(ModelManifest.applyModelManifest(draft, manifest, DRIVER_KIND)),
           ),
         checkProvider,
-        enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
-          enrichProviderSnapshotWithVersionAdvisory(snapshot, maintenanceCapabilities, {
-            enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
-          }).pipe(
-            Effect.provideService(HttpClient.HttpClient, httpClient),
-            Effect.flatMap((enrichedSnapshot) => publishSnapshot(enrichedSnapshot)),
-          ),
+        enrichSnapshot: ({ settings, snapshot, getSnapshot, publishSnapshot, backgroundPolicy }) =>
+          Effect.gen(function* () {
+            const enrichedSnapshot = yield* enrichProviderSnapshotWithVersionAdvisory(
+              snapshot,
+              maintenanceCapabilities,
+              { enableProviderUpdateChecks: settings.enableProviderUpdateChecks },
+            ).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
+            yield* publishSnapshot(enrichedSnapshot);
+            if (!settings.provider.usageLimitsEnabled) {
+              const current = yield* getSnapshot;
+              yield* publishSnapshot({
+                ...current,
+                usageLimits: makeUnavailableUsageLimits({
+                  source: "claude-oauth-private",
+                  support: "experimental",
+                  checkedAt: DateTime.formatIso(yield* DateTime.now),
+                  status: "disabled",
+                  message: "Experimental Claude plan limits are disabled in provider settings.",
+                  dashboardUrl: "https://claude.ai/settings/usage",
+                }),
+              });
+              return;
+            }
+            return yield* pollProviderUsageLimits({
+              instanceId,
+              getSnapshot,
+              publishSnapshot,
+              read: readClaudeUsageLimits(settings.provider, processEnv).pipe(
+                Effect.catch(() => readClaudeSdkUsageLimits(settings.provider, processEnv, cwd)),
+                Effect.provideService(FileSystem.FileSystem, fileSystem),
+                Effect.provideService(Path.Path, path),
+                Effect.provideService(HttpClient.HttpClient, httpClient),
+              ),
+              backgroundPolicy,
+            });
+          }),
       }).pipe(
         Effect.mapError(
           (cause) =>

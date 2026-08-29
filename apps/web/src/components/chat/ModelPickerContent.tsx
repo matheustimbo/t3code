@@ -4,6 +4,12 @@ import {
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
 import { resolveSelectableModel } from "@t3tools/shared/model";
+import {
+  displayRemainingPercent,
+  formatLimitReset,
+  formatRemainingPercent,
+  providerLimitColor,
+} from "@t3tools/shared/providerUsageLimits";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { memo, useMemo, useState, useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import { ChevronRightIcon, SearchIcon } from "lucide-react";
@@ -148,6 +154,10 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       return favorites.length > 0 ? "favorites" : props.activeInstanceId;
     },
   );
+  const selectedLimitsEntry =
+    selectedInstanceId === "favorites"
+      ? null
+      : (instanceEntries.find((entry) => entry.instanceId === selectedInstanceId) ?? null);
   const [expandedLegacyInstances, setExpandedLegacyInstances] = useState(
     () =>
       new Set<ProviderInstanceId>(
@@ -745,6 +755,50 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                 />
               </div>
             </div>
+
+            {selectedLimitsEntry?.snapshot.usageLimits ? (
+              <div className="flex flex-wrap gap-1.5 border-b border-border/70 px-2 py-2">
+                {selectedLimitsEntry.snapshot.usageLimits.windows.length > 0 ? (
+                  selectedLimitsEntry.snapshot.usageLimits.windows.map((window) => {
+                    const remaining = displayRemainingPercent(
+                      selectedLimitsEntry.snapshot.usageLimits!,
+                      window,
+                    );
+                    return (
+                      <div
+                        key={window.id}
+                        className={cn(
+                          "flex min-w-0 items-center gap-1.5 rounded-md border border-border/70 bg-background/55 px-2 py-1 text-[10px]",
+                          remaining === 0 && "border-destructive/70",
+                        )}
+                      >
+                        <span
+                          aria-hidden
+                          className="size-1.5 shrink-0 rounded-full"
+                          style={{
+                            backgroundColor: providerLimitColor(
+                              selectedLimitsEntry.driverKind,
+                              selectedLimitsEntry.accentColor,
+                            ),
+                          }}
+                        />
+                        <span className="truncate text-foreground">{window.label}</span>
+                        <span className="shrink-0 font-medium text-foreground tabular-nums">
+                          {formatRemainingPercent(remaining)}
+                        </span>
+                        <span className="shrink-0 text-muted-foreground">
+                          · {formatLimitReset(window.resetsAt)}
+                        </span>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <span className="text-[11px] text-muted-foreground">
+                    {selectedLimitsEntry.snapshot.usageLimits.message ?? "Plan limits unavailable."}
+                  </span>
+                )}
+              </div>
+            ) : null}
 
             {/* Model list */}
             <div className="relative min-h-0 flex-1 overflow-hidden pr-px">

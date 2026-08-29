@@ -4,6 +4,7 @@ import {
   type ModelSelection,
   type ServerProviderModel,
   type ServerProviderSlashCommand,
+  type ServerProviderUsageLimits,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -42,6 +43,11 @@ import {
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 import { discoverClaudeSkills } from "../Drivers/ClaudeSkills.ts";
+import {
+  makeUsageLimitsSnapshot,
+  parseClaudeUsageWindows,
+  ProviderUsageLimitsReadError,
+} from "../providerUsageLimits.ts";
 
 const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
@@ -781,6 +787,73 @@ const probeClaudeCapabilities = (
     }),
   );
 };
+
+/** Structured SDK fallback for the data behind Claude Code's `/usage` dialog. */
+export const readClaudeSdkUsageLimits = Effect.fn("readClaudeSdkUsageLimits")(function* (
+  claudeSettings: ClaudeSettings,
+  environment?: NodeJS.ProcessEnv,
+  cwd?: string,
+): Effect.fn.Return<
+  ServerProviderUsageLimits,
+  ProviderUsageLimitsReadError,
+  FileSystem.FileSystem | Path.Path
+> {
+  const abort = new AbortController();
+  const usage = yield* Effect.gen(function* () {
+    const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
+    const executablePath = yield* resolveClaudeSdkExecutablePath(
+      claudeSettings.binaryPath,
+      claudeEnvironment,
+    );
+    return yield* Effect.tryPromise(async () => {
+      const q = claudeQuery({
+        // oxlint-disable-next-line require-yield
+        prompt: (async function* (): AsyncGenerator<SDKUserMessage> {
+          await waitForAbortSignal(abort.signal);
+        })(),
+        options: buildClaudeCapabilitiesProbeQueryOptions({
+          executablePath,
+          abortController: abort,
+          environment: claudeEnvironment,
+          cwd,
+        }),
+      });
+      await q.initializationResult();
+      return q.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET();
+    });
+  }).pipe(
+    Effect.ensuring(
+      Effect.sync(() => {
+        if (!abort.signal.aborted) abort.abort();
+      }),
+    ),
+    Effect.timeout("25 seconds"),
+    Effect.mapError(
+      () =>
+        new ProviderUsageLimitsReadError({
+          message: "Claude Code could not read the structured /usage data.",
+        }),
+    ),
+  );
+  if (!usage.rate_limits_available || usage.rate_limits === null) {
+    return yield* new ProviderUsageLimitsReadError({
+      message: "This Claude session does not expose subscription limits.",
+    });
+  }
+  const windows = parseClaudeUsageWindows(usage.rate_limits);
+  if (windows.length === 0) {
+    return yield* new ProviderUsageLimitsReadError({
+      message: "Claude Code returned no subscription windows.",
+    });
+  }
+  return makeUsageLimitsSnapshot({
+    source: "claude-sdk-usage",
+    support: "experimental",
+    checkedAt: DateTime.formatIso(yield* DateTime.now),
+    windows,
+    dashboardUrl: "https://claude.ai/settings/usage",
+  });
+});
 
 const runClaudeCommand = Effect.fn("runClaudeCommand")(function* (
   claudeSettings: ClaudeSettings,
