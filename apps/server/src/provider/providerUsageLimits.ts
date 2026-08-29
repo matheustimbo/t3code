@@ -3,6 +3,7 @@ import type {
   ServerProvider,
   ServerProviderUsageLimitWindow,
   ServerProviderUsageLimits,
+  ServerProviderUsageLimitsAccount,
   ServerProviderUsageLimitsSupport,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -91,6 +92,71 @@ export function makeUsageLimitsSnapshot(input: {
   };
 }
 
+export function makeUsageLimitsAccount(input: {
+  readonly id: string;
+  readonly label?: string | undefined;
+  readonly email?: string | undefined;
+  readonly source: string;
+  readonly support: ServerProviderUsageLimitsSupport;
+  readonly checkedAt: string;
+  readonly windows: ReadonlyArray<ServerProviderUsageLimitWindow>;
+  readonly message?: string | undefined;
+  readonly dashboardUrl?: string | undefined;
+}): ServerProviderUsageLimitsAccount {
+  return {
+    id: input.id,
+    ...(input.label ? { label: input.label } : {}),
+    ...(input.email ? { email: input.email } : {}),
+    ...makeUsageLimitsSnapshot(input),
+  };
+}
+
+export function makeUnavailableUsageLimitsAccount(input: {
+  readonly id: string;
+  readonly label?: string | undefined;
+  readonly email?: string | undefined;
+  readonly source: string;
+  readonly support: ServerProviderUsageLimitsSupport;
+  readonly checkedAt: string;
+  readonly status?: "unavailable" | "error" | "disabled";
+  readonly message: string;
+  readonly dashboardUrl?: string | undefined;
+}): ServerProviderUsageLimitsAccount {
+  return {
+    id: input.id,
+    ...(input.label ? { label: input.label } : {}),
+    ...(input.email ? { email: input.email } : {}),
+    ...makeUnavailableUsageLimits(input),
+  };
+}
+
+export function makePooledUsageLimitsSnapshot(input: {
+  readonly source: string;
+  readonly support: ServerProviderUsageLimitsSupport;
+  readonly checkedAt: string;
+  readonly accounts: ReadonlyArray<ServerProviderUsageLimitsAccount>;
+  readonly dashboardUrl?: string | undefined;
+}): ServerProviderUsageLimits {
+  const availableAccounts = input.accounts.filter((account) => account.windows.length > 0).length;
+  return {
+    status:
+      input.accounts.length === 0
+        ? "error"
+        : availableAccounts === input.accounts.length
+          ? "available"
+          : availableAccounts > 0
+            ? "partial"
+            : "error",
+    support: input.support,
+    source: input.source,
+    checkedAt: input.checkedAt,
+    windows: [],
+    accounts: [...input.accounts],
+    message: `${input.accounts.length} independently metered account${input.accounts.length === 1 ? "" : "s"}.`,
+    ...(input.dashboardUrl ? { dashboardUrl: input.dashboardUrl } : {}),
+  };
+}
+
 export function makeUnavailableUsageLimits(input: {
   readonly source: string;
   readonly support: ServerProviderUsageLimitsSupport;
@@ -139,12 +205,24 @@ export const pollProviderUsageLimits = Effect.fn("pollProviderUsageLimits")(func
         } else {
           const checkedAt = DateTime.formatIso(yield* DateTime.now);
           const previous = snapshot.usageLimits;
+          const hasPreviousReadings =
+            previous &&
+            (previous.windows.length > 0 ||
+              previous.accounts?.some((account) => account.windows.length > 0));
           const usageLimits: ServerProviderUsageLimits =
-            previous && previous.windows.length > 0
+            previous && hasPreviousReadings
               ? {
                   ...previous,
                   status: "stale",
                   message: result.failure.message,
+                  ...(previous.accounts
+                    ? {
+                        accounts: previous.accounts.map((account) => ({
+                          ...account,
+                          ...(account.windows.length > 0 ? { status: "stale" as const } : {}),
+                        })),
+                      }
+                    : {}),
                 }
               : makeUnavailableUsageLimits({
                   source: previous?.source ?? "unknown",

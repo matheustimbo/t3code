@@ -1,4 +1,5 @@
 import { PROVIDER_DISPLAY_NAMES, type ServerProvider } from "@t3tools/contracts";
+import type { ProviderUsageLimitsEntry } from "@t3tools/client-runtime/providerUsageLimits";
 import {
   displayRemainingPercent,
   formatLimitReset,
@@ -82,11 +83,7 @@ export function PlanLimitsPanel() {
             </div>
             <div className="grid gap-3 xl:grid-cols-2">
               {environment.entries.map((entry) => (
-                <ProviderLimitCard
-                  key={entry.provider.instanceId}
-                  provider={entry.provider}
-                  sharedAcrossEnvironments={entry.sharedAcrossEnvironments}
-                />
+                <ProviderLimitCard key={entry.entryId} entry={entry} />
               ))}
             </div>
           </section>
@@ -96,17 +93,15 @@ export function PlanLimitsPanel() {
   );
 }
 
-function ProviderLimitCard(props: {
-  readonly provider: ServerProvider;
-  readonly sharedAcrossEnvironments: boolean;
-}) {
-  const limits = props.provider.usageLimits;
-  const color = providerColor(props.provider);
+function ProviderLimitCard(props: { readonly entry: ProviderUsageLimitsEntry }) {
+  const { entry } = props;
+  const limits = entry.limits;
+  const color = providerColor(entry.provider);
   const exhausted = limits?.windows.some((window) => displayRemainingPercent(limits, window) === 0);
   const providerName =
-    props.provider.displayName?.trim() ||
-    PROVIDER_DISPLAY_NAMES[props.provider.driver] ||
-    props.provider.driver;
+    entry.provider.displayName?.trim() ||
+    PROVIDER_DISPLAY_NAMES[entry.provider.driver] ||
+    entry.provider.driver;
 
   return (
     <article
@@ -118,10 +113,10 @@ function ProviderLimitCard(props: {
     >
       <header className="flex min-w-0 items-start gap-3">
         <ProviderInstanceIcon
-          driverKind={props.provider.driver}
+          driverKind={entry.provider.driver}
           displayName={providerName}
-          accentColor={props.provider.accentColor}
-          showBadge={Boolean(props.provider.accentColor)}
+          accentColor={entry.provider.accentColor}
+          showBadge={Boolean(entry.provider.accentColor)}
           className="mt-0.5 size-5"
           iconClassName="size-5"
         />
@@ -138,8 +133,8 @@ function ProviderLimitCard(props: {
             ) : null}
           </div>
           <p className="truncate text-xs text-muted-foreground">
-            {props.provider.auth.email ?? props.provider.auth.label ?? props.provider.instanceId}
-            {props.sharedAcrossEnvironments ? " · Same account on another environment" : ""}
+            {entry.accountLabel}
+            {entry.sharedAcrossEnvironments ? " · Same account on another environment" : ""}
           </p>
         </div>
         {exhausted ? (

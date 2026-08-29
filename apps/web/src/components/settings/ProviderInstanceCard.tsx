@@ -26,6 +26,7 @@ import {
   displayRemainingPercent,
   formatLimitReset,
   formatRemainingPercent,
+  providerUsageLimitDisplayWindows,
   usageLimitsStatusLabel,
 } from "@t3tools/shared/providerUsageLimits";
 
@@ -486,6 +487,9 @@ export function ProviderInstanceCard({
     ? instance.driver
     : null;
   const visibleTab = driverOption === undefined ? "configuration" : activeTab;
+  const usageLimitWindows = liveProvider?.usageLimits
+    ? providerUsageLimitDisplayWindows(liveProvider.usageLimits)
+    : [];
 
   const customModels = readConfigStringArray(instance.config, "customModels");
   // Server-returned models may lag behind settings writes. Treat probe
@@ -874,20 +878,20 @@ export function ProviderInstanceCard({
                     {usageLimitsStatusLabel(liveProvider.usageLimits)}
                   </Badge>
                 </div>
-                {liveProvider.usageLimits.windows.length > 0 ? (
+                {usageLimitWindows.length > 0 ? (
                   <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                    {liveProvider.usageLimits.windows.map((window) => (
-                      <div key={window.id} className="rounded-md bg-background/60 px-2.5 py-2">
+                    {usageLimitWindows.map((entry) => (
+                      <div key={entry.id} className="rounded-md bg-background/60 px-2.5 py-2">
                         <div className="flex items-center justify-between gap-2 text-xs">
-                          <span className="truncate text-foreground">{window.label}</span>
+                          <span className="truncate text-foreground">{entry.label}</span>
                           <span className="shrink-0 font-medium text-foreground tabular-nums">
                             {formatRemainingPercent(
-                              displayRemainingPercent(liveProvider.usageLimits!, window),
+                              displayRemainingPercent(entry.limits, entry.window),
                             )}
                           </span>
                         </div>
                         <div className="mt-1 text-[11px] text-muted-foreground">
-                          {formatLimitReset(window.resetsAt)}
+                          {formatLimitReset(entry.window.resetsAt)}
                         </div>
                       </div>
                     ))}

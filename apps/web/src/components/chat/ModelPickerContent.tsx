@@ -9,6 +9,7 @@ import {
   formatLimitReset,
   formatRemainingPercent,
   providerLimitColor,
+  providerUsageLimitDisplayWindows,
 } from "@t3tools/shared/providerUsageLimits";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { memo, useMemo, useState, useCallback, useEffect, useLayoutEffect, useRef } from "react";
@@ -158,6 +159,9 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     selectedInstanceId === "favorites"
       ? null
       : (instanceEntries.find((entry) => entry.instanceId === selectedInstanceId) ?? null);
+  const selectedLimitWindows = selectedLimitsEntry?.snapshot.usageLimits
+    ? providerUsageLimitDisplayWindows(selectedLimitsEntry.snapshot.usageLimits)
+    : [];
   const [expandedLegacyInstances, setExpandedLegacyInstances] = useState(
     () =>
       new Set<ProviderInstanceId>(
@@ -758,15 +762,12 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
 
             {selectedLimitsEntry?.snapshot.usageLimits ? (
               <div className="flex flex-wrap gap-1.5 border-b border-border/70 px-2 py-2">
-                {selectedLimitsEntry.snapshot.usageLimits.windows.length > 0 ? (
-                  selectedLimitsEntry.snapshot.usageLimits.windows.map((window) => {
-                    const remaining = displayRemainingPercent(
-                      selectedLimitsEntry.snapshot.usageLimits!,
-                      window,
-                    );
+                {selectedLimitWindows.length > 0 ? (
+                  selectedLimitWindows.map((entry) => {
+                    const remaining = displayRemainingPercent(entry.limits, entry.window);
                     return (
                       <div
-                        key={window.id}
+                        key={entry.id}
                         className={cn(
                           "flex min-w-0 items-center gap-1.5 rounded-md border border-border/70 bg-background/55 px-2 py-1 text-[10px]",
                           remaining === 0 && "border-destructive/70",
@@ -782,12 +783,12 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                             ),
                           }}
                         />
-                        <span className="truncate text-foreground">{window.label}</span>
+                        <span className="truncate text-foreground">{entry.label}</span>
                         <span className="shrink-0 font-medium text-foreground tabular-nums">
                           {formatRemainingPercent(remaining)}
                         </span>
                         <span className="shrink-0 text-muted-foreground">
-                          · {formatLimitReset(window.resetsAt)}
+                          · {formatLimitReset(entry.window.resetsAt)}
                         </span>
                       </div>
                     );

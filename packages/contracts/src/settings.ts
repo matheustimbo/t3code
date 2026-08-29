@@ -447,7 +447,7 @@ export const ClaudeSettings = makeProviderSettingsSchema(
       Schema.annotateKey({
         title: "Experimental plan limits",
         description:
-          "Read Claude subscription limits from local CLI credentials and fall back to /usage. Tokens stay on this machine.",
+          "Read Claude limits from local OAuth or CLIProxyAPI management credentials and fall back to /usage. Tokens stay on this machine.",
         providerSettingsForm: { control: "switch", clearWhenEmpty: "omit" },
       }),
     ),

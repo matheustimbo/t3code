@@ -1,4 +1,9 @@
-import type { EnvironmentId, ServerProvider } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ServerProvider,
+  ServerProviderUsageLimits,
+  ServerProviderUsageLimitsAccount,
+} from "@t3tools/contracts";
 
 export interface ProviderUsageLimitsEnvironmentInput {
   readonly environmentId: EnvironmentId;
@@ -8,6 +13,10 @@ export interface ProviderUsageLimitsEnvironmentInput {
 
 export interface ProviderUsageLimitsEntry {
   readonly provider: ServerProvider;
+  readonly entryId: string;
+  readonly accountLabel: string;
+  readonly accountEmail?: string | undefined;
+  readonly limits?: ServerProviderUsageLimits | ServerProviderUsageLimitsAccount | undefined;
   readonly accountKey: string | null;
   readonly sharedAcrossEnvironments: boolean;
 }
@@ -18,40 +27,66 @@ export interface ProviderUsageLimitsEnvironment {
   readonly entries: ReadonlyArray<ProviderUsageLimitsEntry>;
 }
 
-function reliableAccountKey(provider: ServerProvider): string | null {
-  const email = provider.auth.email?.trim().toLowerCase();
-  return email ? `${provider.driver}:${email}` : null;
+function reliableAccountKey(provider: ServerProvider, email: string | undefined): string | null {
+  const normalizedEmail = email?.trim().toLowerCase();
+  return normalizedEmail ? `${provider.driver}:${normalizedEmail}` : null;
+}
+
+function providerEntries(
+  provider: ServerProvider,
+): ReadonlyArray<Omit<ProviderUsageLimitsEntry, "sharedAcrossEnvironments">> {
+  const accounts = provider.usageLimits?.accounts;
+  if (accounts && accounts.length > 0) {
+    return accounts.map((account) => ({
+      provider,
+      entryId: `${provider.instanceId}:${account.id}`,
+      accountLabel: account.email ?? account.label ?? account.id,
+      ...(account.email ? { accountEmail: account.email } : {}),
+      limits: account,
+      accountKey: reliableAccountKey(provider, account.email),
+    }));
+  }
+  const accountLabel = provider.auth.email ?? provider.auth.label ?? provider.instanceId;
+  return [
+    {
+      provider,
+      entryId: provider.instanceId,
+      accountLabel,
+      ...(provider.auth.email ? { accountEmail: provider.auth.email } : {}),
+      ...(provider.usageLimits ? { limits: provider.usageLimits } : {}),
+      accountKey: reliableAccountKey(provider, provider.auth.email),
+    },
+  ];
 }
 
 /** Groups limits by environment while only linking accounts with reliable identity. */
 export function collectProviderUsageLimits(
   environments: ReadonlyArray<ProviderUsageLimitsEnvironmentInput>,
 ): ReadonlyArray<ProviderUsageLimitsEnvironment> {
+  const environmentEntries = environments.map((environment) => ({
+    environmentId: environment.environmentId,
+    label: environment.label,
+    entries: environment.providers.flatMap((provider) =>
+      provider.enabled ? providerEntries(provider) : [],
+    ),
+  }));
   const accountEnvironments = new Map<string, Set<EnvironmentId>>();
-  for (const environment of environments) {
-    for (const provider of environment.providers) {
-      if (!provider.enabled) continue;
-      const key = reliableAccountKey(provider);
+  for (const environment of environmentEntries) {
+    for (const entry of environment.entries) {
+      const key = entry.accountKey;
       if (!key) continue;
       const environmentIds = accountEnvironments.get(key) ?? new Set<EnvironmentId>();
       environmentIds.add(environment.environmentId);
       accountEnvironments.set(key, environmentIds);
     }
   }
-  return environments.map((environment) => ({
+  return environmentEntries.map((environment) => ({
     environmentId: environment.environmentId,
     label: environment.label,
-    entries: environment.providers.flatMap((provider) => {
-      if (!provider.enabled) return [];
-      const accountKey = reliableAccountKey(provider);
-      return [
-        {
-          provider,
-          accountKey,
-          sharedAcrossEnvironments:
-            accountKey !== null && (accountEnvironments.get(accountKey)?.size ?? 0) > 1,
-        },
-      ];
-    }),
+    entries: environment.entries.map((entry) => ({
+      ...entry,
+      sharedAcrossEnvironments:
+        entry.accountKey !== null && (accountEnvironments.get(entry.accountKey)?.size ?? 0) > 1,
+    })),
   }));
 }

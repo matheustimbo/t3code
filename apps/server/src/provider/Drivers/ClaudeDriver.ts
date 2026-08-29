@@ -234,8 +234,14 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
               instanceId,
               getSnapshot,
               publishSnapshot,
-              read: readClaudeUsageLimits(settings.provider, processEnv).pipe(
-                Effect.catch(() => readClaudeSdkUsageLimits(settings.provider, processEnv, cwd)),
+              read: (processEnv.CLIPROXYAPI_MANAGEMENT_KEY?.trim()
+                ? readClaudeUsageLimits(settings.provider, processEnv)
+                : readClaudeUsageLimits(settings.provider, processEnv).pipe(
+                    Effect.catch(() =>
+                      readClaudeSdkUsageLimits(settings.provider, processEnv, cwd),
+                    ),
+                  )
+              ).pipe(
                 Effect.provideService(FileSystem.FileSystem, fileSystem),
                 Effect.provideService(Path.Path, path),
                 Effect.provideService(HttpClient.HttpClient, httpClient),

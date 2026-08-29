@@ -47,4 +47,53 @@ describe("collectProviderUsageLimits", () => {
     ]);
     expect(result[0]?.entries.every((entry) => !entry.sharedAcrossEnvironments)).toBe(true);
   });
+
+  it("expands independently metered proxy accounts without combining their windows", () => {
+    const result = collectProviderUsageLimits([
+      {
+        environmentId: EnvironmentId.make("one"),
+        label: "Laptop",
+        providers: [
+          {
+            ...provider("proxy@example.com"),
+            usageLimits: {
+              status: "available",
+              support: "experimental",
+              source: "cliproxyapi-management",
+              checkedAt: "2026-08-29T12:00:00.000Z",
+              windows: [],
+              accounts: [
+                {
+                  id: "auth-one",
+                  email: "one@example.com",
+                  status: "available",
+                  support: "experimental",
+                  source: "cliproxyapi-management",
+                  checkedAt: "2026-08-29T12:00:00.000Z",
+                  windows: [{ id: "five_hour", label: "5 hours", remainingPercent: 80 }],
+                },
+                {
+                  id: "auth-two",
+                  email: "two@example.com",
+                  status: "available",
+                  support: "experimental",
+                  source: "cliproxyapi-management",
+                  checkedAt: "2026-08-29T12:00:00.000Z",
+                  windows: [{ id: "five_hour", label: "5 hours", remainingPercent: 20 }],
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ]);
+
+    expect(result[0]?.entries.map((entry) => entry.accountLabel)).toEqual([
+      "one@example.com",
+      "two@example.com",
+    ]);
+    expect(result[0]?.entries.map((entry) => entry.limits?.windows[0]?.remainingPercent)).toEqual([
+      80, 20,
+    ]);
+  });
 });

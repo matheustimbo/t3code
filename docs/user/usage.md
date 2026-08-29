@@ -15,7 +15,8 @@ Codex plan limits use the official Codex app-server and are available automatica
 integrations are experimental and off by default:
 
 - **Claude** reads the local Claude OAuth session and falls back to Claude Code's structured
-  `/usage` data.
+  `/usage` data. When configured for CLIProxyAPI, it lists and reads every Claude OAuth account in
+  that proxy independently.
 - **Cursor** reads the local Cursor session through Cursor's dashboard API.
 - **Grok** uses the optional `x.ai/billing` CLI capability.
 - **OpenCode** reports OpenCode Go windows when `OPENCODE_GO_API_KEY` or `OPENCODE_API_KEY` is
@@ -25,6 +26,11 @@ Enable an experimental integration from that provider's settings. Credentials ar
 the environment that owns them; T3 Code does not persist them in usage snapshots, log them, or send
 them to clients. Private provider APIs can change without notice, so an experimental source may
 temporarily show **Unavailable** until the integration is updated.
+
+For CLIProxyAPI, add `CLIPROXYAPI_MANAGEMENT_KEY` as a sensitive environment variable on the Claude
+provider. T3 Code infers the proxy address from `ANTHROPIC_BASE_URL`. Set
+`CLIPROXYAPI_MANAGEMENT_URL` as well when the management API is served from a different address.
+The CLIProxyAPI management API must be enabled and reachable from the T3 Code server.
 
 T3 Code refreshes limits only while provider status is in demand and respects the environment's
 background-activity policy. A failed refresh keeps the last successful values marked **Out of
