@@ -26,9 +26,9 @@ runners without EAS:
 - Android produces an arm64 release APK signed with Expo's development key. It is intended for
   personal sideloading on modern Android phones, not store distribution. The `ANDROID_PACKAGE`
   repository variable can override the fork's default `com.matheustimbo.t3code.fork` package name.
-- iOS always produces an unsigned Simulator `.app` archive. A signed IPA for registered iPhones is
-  also produced when `IOS_TEAM_ID` and the signing secrets below are configured. The optional
-  `IOS_BUNDLE_ID` repository variable defaults to `com.matheustimbo.t3code.fork`.
+- iOS always produces an unsigned arm64 Simulator `.app` archive. A signed IPA for registered
+  iPhones is also produced when `IOS_TEAM_ID` and the signing secrets below are configured. The
+  optional `IOS_BUNDLE_ID` repository variable defaults to `com.matheustimbo.t3code.fork`.
 
 The iPhone build uses the reduced-capability Personal Team mode, which omits the widget and share
 extensions, push, associated domains, and native Sign in with Apple entitlements. Configure:
