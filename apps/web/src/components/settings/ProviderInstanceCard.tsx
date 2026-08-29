@@ -22,6 +22,12 @@ import {
   type ServerProvider,
   type ServerProviderModel,
 } from "@t3tools/contracts";
+import {
+  displayRemainingPercent,
+  formatLimitReset,
+  formatRemainingPercent,
+  usageLimitsStatusLabel,
+} from "@t3tools/shared/providerUsageLimits";
 
 import { cn } from "../../lib/utils";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
@@ -855,6 +861,47 @@ export function ProviderInstanceCard({
             aria-disabled={readOnly || undefined}
             className={cn("space-y-5 px-4 py-5", readOnly && "opacity-50 select-none")}
           >
+            {liveProvider?.usageLimits ? (
+              <div className="rounded-lg border border-border/70 bg-muted/25 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <div className="text-xs font-medium text-foreground">Plan limits</div>
+                    <div className="mt-0.5 text-[11px] text-muted-foreground">
+                      {liveProvider.usageLimits.source} · {liveProvider.usageLimits.support}
+                    </div>
+                  </div>
+                  <Badge variant="outline" size="sm">
+                    {usageLimitsStatusLabel(liveProvider.usageLimits)}
+                  </Badge>
+                </div>
+                {liveProvider.usageLimits.windows.length > 0 ? (
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                    {liveProvider.usageLimits.windows.map((window) => (
+                      <div key={window.id} className="rounded-md bg-background/60 px-2.5 py-2">
+                        <div className="flex items-center justify-between gap-2 text-xs">
+                          <span className="truncate text-foreground">{window.label}</span>
+                          <span className="shrink-0 font-medium text-foreground tabular-nums">
+                            {formatRemainingPercent(
+                              displayRemainingPercent(liveProvider.usageLimits!, window),
+                            )}
+                          </span>
+                        </div>
+                        <div className="mt-1 text-[11px] text-muted-foreground">
+                          {formatLimitReset(window.resetsAt)}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    {liveProvider.usageLimits.message ?? "No subscription windows reported."}
+                  </p>
+                )}
+                <div className="mt-2 text-[11px] text-muted-foreground">
+                  Updated {new Date(liveProvider.usageLimits.checkedAt).toLocaleString()}
+                </div>
+              </div>
+            ) : null}
             <div>
               <label htmlFor={`provider-instance-${instanceId}-display-name`} className="block">
                 <span className="text-xs font-medium text-foreground">Display name</span>

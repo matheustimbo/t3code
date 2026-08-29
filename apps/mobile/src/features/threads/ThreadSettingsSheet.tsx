@@ -13,6 +13,12 @@ import {
   getProviderOptionCurrentValue,
   getProviderOptionDescriptors,
 } from "@t3tools/shared/model";
+import {
+  displayRemainingPercent,
+  formatLimitReset,
+  formatRemainingPercent,
+} from "@t3tools/shared/providerUsageLimits";
+import type { ServerProviderUsageLimits } from "@t3tools/contracts";
 import { useNavigation, useRoute, type RouteProp } from "@react-navigation/native";
 import {
   createNativeStackNavigator,
@@ -155,10 +161,11 @@ function ProviderHeader(props: {
   readonly collapsible: boolean;
   readonly collapsed: boolean;
   readonly modelCount: number;
+  readonly usageLimits?: ServerProviderUsageLimits | undefined;
   readonly onToggle: () => void;
 }) {
-  const content = (
-    <>
+  const titleRow = (
+    <View className="flex-row items-center gap-2">
       <ProviderIcon provider={props.driver} size={15} />
       <Text className="text-sm font-t3-medium text-foreground-muted">{props.label}</Text>
       {props.collapsible ? (
@@ -177,6 +184,40 @@ function ProviderHeader(props: {
           />
         </>
       ) : null}
+    </View>
+  );
+  const limitsRow = props.usageLimits ? (
+    <View className="flex-row flex-wrap gap-1.5 pb-1 pl-6">
+      {props.usageLimits.windows.length > 0 ? (
+        props.usageLimits.windows.map((window) => {
+          const remaining = displayRemainingPercent(props.usageLimits!, window);
+          return (
+            <View
+              key={window.id}
+              className="flex-row items-center gap-1 rounded-lg border border-border-subtle bg-card px-2 py-1"
+              style={remaining === 0 ? { borderColor: "#dc2626" } : undefined}
+            >
+              <Text className="text-3xs text-foreground-muted">{window.label}</Text>
+              <Text className="text-3xs font-t3-bold text-foreground">
+                {formatRemainingPercent(remaining)}
+              </Text>
+              <Text className="text-3xs text-foreground-muted">
+                · {formatLimitReset(window.resetsAt)}
+              </Text>
+            </View>
+          );
+        })
+      ) : (
+        <Text className="text-3xs text-foreground-muted">
+          {props.usageLimits.message ?? "Plan limits unavailable"}
+        </Text>
+      )}
+    </View>
+  ) : null;
+  const content = (
+    <>
+      {titleRow}
+      {limitsRow}
     </>
   );
 
@@ -186,7 +227,7 @@ function ProviderHeader(props: {
         accessibilityLabel={`${props.label}, ${props.modelCount} models`}
         accessibilityRole="button"
         accessibilityState={{ expanded: !props.collapsed }}
-        className="mx-4 mt-1 min-h-11 flex-row items-center gap-2 rounded-xl px-1 pt-2 active:opacity-60"
+        className="mx-4 mt-1 min-h-11 gap-1 rounded-xl px-1 pt-2 active:opacity-60"
         onPress={props.onToggle}
       >
         {content}
@@ -195,7 +236,7 @@ function ProviderHeader(props: {
   }
 
   return (
-    <View accessibilityRole="header" className="mx-4 min-h-9 flex-row items-center gap-2 px-1 pt-1">
+    <View accessibilityRole="header" className="mx-4 min-h-9 gap-1 px-1 pt-1">
       {content}
     </View>
   );
@@ -536,6 +577,7 @@ type ThreadSettingsProviderCatalog = {
   readonly collapsed: boolean;
   readonly modelCount: number;
   readonly models: ReadonlyArray<ModelOption>;
+  readonly usageLimits?: ServerProviderUsageLimits | undefined;
 };
 
 type ThreadSettingsCatalogItem =
@@ -598,6 +640,7 @@ function ThreadSettingsProviderListHeader(props: {
       driver={props.provider.driver}
       label={props.provider.label}
       modelCount={props.provider.modelCount}
+      usageLimits={props.provider.usageLimits}
       onToggle={onToggle}
     />
   );
@@ -646,6 +689,7 @@ function useThreadSettingsCatalogItems(
           collapsed,
           modelCount: visibleModels.length,
           models: collapsed ? [] : visibleModels,
+          ...(group.usageLimits ? { usageLimits: group.usageLimits } : {}),
         };
         return [
           {

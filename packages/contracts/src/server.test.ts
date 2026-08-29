@@ -26,6 +26,29 @@ const baseProviderSnapshot = {
 };
 
 describe("ServerProvider", () => {
+  it("decodes normalized subscription limits", () => {
+    const parsed = decodeServerProvider({
+      ...baseProviderSnapshot,
+      usageLimits: {
+        status: "available",
+        support: "supported",
+        source: "codex-app-server",
+        checkedAt: "2026-08-29T12:00:00.000Z",
+        windows: [
+          {
+            id: "codex:primary",
+            label: "5 hours",
+            remainingPercent: 75,
+            usedPercent: 25,
+            resetsAt: "2026-08-29T17:00:00.000Z",
+            windowDurationMinutes: 300,
+          },
+        ],
+      },
+    });
+
+    expect(parsed.usageLimits?.windows[0]?.remainingPercent).toBe(75);
+  });
   it("defaults capability arrays when decoding provider snapshots", () => {
     const parsed = decodeServerProvider({
       instanceId: "codex",

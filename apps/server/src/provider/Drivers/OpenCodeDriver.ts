@@ -14,6 +14,7 @@
  */
 import { OpenCodeSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -42,6 +43,8 @@ import {
 } from "../ProviderDriver.ts";
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
+import { readOpenCodeGoUsageLimits } from "../providerUsageLimitReaders.ts";
+import { makeUnavailableUsageLimits, pollProviderUsageLimits } from "../providerUsageLimits.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
   makePackageManagedProviderMaintenanceResolver,
@@ -176,13 +179,46 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
           initialSnapshot: (settings) =>
             makePendingOpenCodeProvider(settings.provider).pipe(Effect.map(stampIdentity)),
           checkProvider,
-          enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
-            enrichProviderSnapshotWithVersionAdvisory(snapshot, maintenanceCapabilities, {
-              enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
-            }).pipe(
-              Effect.provideService(HttpClient.HttpClient, httpClient),
-              Effect.flatMap((enrichedSnapshot) => publishSnapshot(enrichedSnapshot)),
-            ),
+          enrichSnapshot: ({
+            settings,
+            snapshot,
+            getSnapshot,
+            publishSnapshot,
+            backgroundPolicy,
+          }) =>
+            Effect.gen(function* () {
+              const enrichedSnapshot = yield* enrichProviderSnapshotWithVersionAdvisory(
+                snapshot,
+                maintenanceCapabilities,
+                { enableProviderUpdateChecks: settings.enableProviderUpdateChecks },
+              ).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
+              yield* publishSnapshot(enrichedSnapshot);
+              if (!settings.provider.usageLimitsEnabled) {
+                const current = yield* getSnapshot;
+                yield* publishSnapshot({
+                  ...current,
+                  usageLimits: makeUnavailableUsageLimits({
+                    source: "opencode-go",
+                    support: "experimental",
+                    checkedAt: DateTime.formatIso(yield* DateTime.now),
+                    status: "disabled",
+                    message:
+                      "Experimental OpenCode Go plan limits are disabled in provider settings.",
+                    dashboardUrl: "https://opencode.ai/zen",
+                  }),
+                });
+                return;
+              }
+              return yield* pollProviderUsageLimits({
+                instanceId,
+                getSnapshot,
+                publishSnapshot,
+                read: readOpenCodeGoUsageLimits(settings.provider, processEnv).pipe(
+                  Effect.provideService(HttpClient.HttpClient, httpClient),
+                ),
+                backgroundPolicy,
+              });
+            }),
         },
       ).pipe(
         Effect.mapError(
