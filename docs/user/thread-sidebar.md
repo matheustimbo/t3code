@@ -40,6 +40,8 @@ generated thread title with the ticket's title. The generated title appears imme
 ticket is read in the background. If you rename the thread before that finishes, your title is kept.
 
 Configure the title format and ticket accounts in **Settings → Integrations → Ticket providers**.
+When more than one environment is connected, select the server that owns the project before adding
+or testing an account; credentials and global title defaults are stored by that server.
 You can use the ticket title, its identifier and title, or a custom template with `{title}`,
 `{identifier}`, `{provider}`, and `{project}`. Project settings can override the global format and
 bind a provider and host to a particular configured account.

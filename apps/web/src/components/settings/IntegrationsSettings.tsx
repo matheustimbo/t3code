@@ -26,7 +26,6 @@ import type { ReactNode } from "react";
 
 import { ScreenRotationIcon } from "~/browser/ScreenRotationIcon";
 import { isElectron } from "../../env";
-import { usePrimaryEnvironmentId } from "../../state/environments";
 
 import { Button } from "../ui/button";
 import { NumberField, NumberFieldGroup, NumberFieldInput } from "../ui/number-field";
@@ -456,7 +455,6 @@ function DesktopOnlyBrowserDefaults({ children }: { readonly children: ReactNode
 }
 
 export function IntegrationsSettingsPanel() {
-  const primaryEnvironmentId = usePrimaryEnvironmentId();
   // Client-local preview defaults are editable only where the preview exists.
   const previewDefaultsDisabled = !isElectron;
   const previewDefaults = (
@@ -480,7 +478,7 @@ export function IntegrationsSettingsPanel() {
           previewDefaults
         )}
       </SettingsSection>
-      <TicketProviderSettings key={primaryEnvironmentId ?? "no-environment"} />
+      <TicketProviderSettings />
     </SettingsPageContainer>
   );
 }
