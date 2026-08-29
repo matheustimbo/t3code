@@ -187,6 +187,8 @@ jobs:
             -destination 'generic/platform=iOS Simulator' \
             -derivedDataPath build/ios-simulator \
             CODE_SIGNING_ALLOWED=NO \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=YES \
             build
           mkdir -p ../../mobile-artifacts
           ditto -c -k --sequesterRsrc --keepParent \
