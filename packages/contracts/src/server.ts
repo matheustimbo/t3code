@@ -200,6 +200,7 @@ export const ServerProviderUsageLimitsAccount = Schema.Struct({
   id: TrimmedNonEmptyString,
   label: Schema.optional(TrimmedNonEmptyString),
   email: Schema.optional(TrimmedNonEmptyString),
+  planLabel: Schema.optional(TrimmedNonEmptyString),
   ...ServerProviderUsageLimitsFields,
 });
 export type ServerProviderUsageLimitsAccount = typeof ServerProviderUsageLimitsAccount.Type;

@@ -20,6 +20,7 @@ import {
   makeUsageLimitsAccount,
   makeUnavailableUsageLimitsAccount,
   parseCliProxyCodexUsageWindows,
+  parseClaudePlanLabel,
   parseClaudeUsageWindows,
   parseCursorUsageWindows,
   parseGrokUsageWindows,
@@ -317,11 +318,14 @@ const readCliProxyUsageLimits = Effect.fn("readCliProxyUsageLimits")(function* (
   readonly config: CliProxyManagementConfig;
   readonly provider: CliProxyQuotaProvider;
   readonly providerLabel: string;
-  readonly readWindows: (
+  readonly readAccount: (
     authFile: typeof CliProxyAuthFile.Type,
     checkedAtMs: number,
   ) => Effect.Effect<
-    ReadonlyArray<ServerProviderUsageLimitWindow>,
+    {
+      readonly windows: ReadonlyArray<ServerProviderUsageLimitWindow>;
+      readonly planLabel?: string | undefined;
+    },
     ProviderUsageLimitsReadError,
     HttpClient.HttpClient
   >;
@@ -361,7 +365,8 @@ const readCliProxyUsageLimits = Effect.fn("readCliProxyUsageLimits")(function* (
             dashboardUrl: input.config.dashboardUrl,
           });
         }
-        const windows = yield* input.readWindows(authFile, checkedAtMs);
+        const accountUsage = yield* input.readAccount(authFile, checkedAtMs);
+        const windows = accountUsage.windows;
         if (windows.length === 0) {
           return yield* safeReadError(
             `${input.providerLabel} account ${label} returned no subscription windows.`,
@@ -371,6 +376,7 @@ const readCliProxyUsageLimits = Effect.fn("readCliProxyUsageLimits")(function* (
           id: authFile.auth_index,
           label,
           ...(authFile.email?.trim() ? { email: authFile.email.trim() } : {}),
+          ...(accountUsage.planLabel ? { planLabel: accountUsage.planLabel } : {}),
           source: "cliproxyapi-management",
           support: "experimental",
           checkedAt,
@@ -412,18 +418,32 @@ const readCliProxyClaudeUsageLimits = Effect.fn("readCliProxyClaudeUsageLimits")
     config,
     provider: "claude",
     providerLabel: "Claude",
-    readWindows: (authFile) =>
-      executeCliProxyApiCall({
-        config,
-        authFile,
-        providerLabel: "Claude",
-        url: "https://api.anthropic.com/api/oauth/usage",
-        header: {
-          Authorization: "Bearer $TOKEN$",
-          "Content-Type": "application/json",
-          "anthropic-beta": "oauth-2025-04-20",
-        },
-      }).pipe(Effect.map(parseClaudeUsageWindows)),
+    readAccount: (authFile) => {
+      const header = {
+        Authorization: "Bearer $TOKEN$",
+        "Content-Type": "application/json",
+        "anthropic-beta": "oauth-2025-04-20",
+      };
+      const request = (url: string) =>
+        executeCliProxyApiCall({ config, authFile, providerLabel: "Claude", url, header });
+      return Effect.all(
+        [
+          request("https://api.anthropic.com/api/oauth/usage"),
+          request("https://api.anthropic.com/api/oauth/profile").pipe(Effect.result),
+        ],
+        { concurrency: 2 },
+      ).pipe(
+        Effect.map(([usagePayload, profileResult]) => {
+          const planLabel = Result.isSuccess(profileResult)
+            ? parseClaudePlanLabel(profileResult.success)
+            : undefined;
+          return {
+            windows: parseClaudeUsageWindows(usagePayload),
+            ...(planLabel ? { planLabel } : {}),
+          };
+        }),
+      );
+    },
   });
 });
 
@@ -440,7 +460,7 @@ export const readCliProxyCodexUsageLimits = Effect.fn("readCliProxyCodexUsageLim
     config,
     provider: "codex",
     providerLabel: "Codex",
-    readWindows: (authFile, checkedAtMs) => {
+    readAccount: (authFile, checkedAtMs) => {
       const accountId = cliProxyCodexAccountId(authFile);
       return executeCliProxyApiCall({
         config,
@@ -454,7 +474,11 @@ export const readCliProxyCodexUsageLimits = Effect.fn("readCliProxyCodexUsageLim
             "codex-tui/0.149.1 (Mac OS 26.5.2; arm64) iTerm.app/3.6.11 (codex-tui; 0.149.1)",
           ...(accountId ? { "Chatgpt-Account-Id": accountId } : {}),
         },
-      }).pipe(Effect.map((payload) => parseCliProxyCodexUsageWindows(payload, checkedAtMs)));
+      }).pipe(
+        Effect.map((payload) => ({
+          windows: parseCliProxyCodexUsageWindows(payload, checkedAtMs),
+        })),
+      );
     },
   });
 });
@@ -472,7 +496,7 @@ export const readCliProxyGrokUsageLimits = Effect.fn("readCliProxyGrokUsageLimit
     config,
     provider: "xai",
     providerLabel: "Grok",
-    readWindows: (authFile) => {
+    readAccount: (authFile) => {
       const userId = cliProxyXaiUserId(authFile);
       const header = {
         Authorization: "Bearer $TOKEN$",
@@ -502,7 +526,7 @@ export const readCliProxyGrokUsageLimits = Effect.fn("readCliProxyGrokUsageLimit
             Result.isSuccess(result) ? parseGrokUsageWindows(result.success) : [],
           );
           const deduplicated = [...new Map(windows.map((window) => [window.id, window])).values()];
-          if (deduplicated.length > 0) return Effect.succeed(deduplicated);
+          if (deduplicated.length > 0) return Effect.succeed({ windows: deduplicated });
           const failure = results.find(Result.isFailure);
           return Effect.fail(
             failure?.failure ??

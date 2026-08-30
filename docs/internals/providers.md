@@ -57,6 +57,10 @@ request used by some CLIProxyAPI dashboards. Cursor and OpenCode remain on their
 because CLIProxyAPI does not expose corresponding quota adapters. Credentials are resolved
 ephemerally from the provider instance's local files or environment.
 
+The CLIProxyAPI Claude adapter accepts both named legacy windows and the current nullable payload.
+It reads model-scoped weekly limits from `limits` and fetches the OAuth profile in parallel as a
+best-effort plan label; a profile failure never hides valid usage windows.
+
 The managed provider enrichment loop owns the background policy passed to
 `pollProviderUsageLimits`. A reader runs at most every 45 seconds and only when generic or
 instance-specific provider-status work is allowed. A failure retains the last good windows as

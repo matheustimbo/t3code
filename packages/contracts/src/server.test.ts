@@ -63,6 +63,7 @@ describe("ServerProvider", () => {
           {
             id: "auth-index-one",
             email: "claude@example.com",
+            planLabel: "Max",
             status: "available",
             support: "experimental",
             source: "cliproxyapi-management",
@@ -74,6 +75,7 @@ describe("ServerProvider", () => {
     });
 
     expect(parsed.usageLimits?.accounts?.[0]?.email).toBe("claude@example.com");
+    expect(parsed.usageLimits?.accounts?.[0]?.planLabel).toBe("Max");
     expect(parsed.usageLimits?.accounts?.[0]?.windows[0]?.remainingPercent).toBe(80);
   });
   it("defaults capability arrays when decoding provider snapshots", () => {

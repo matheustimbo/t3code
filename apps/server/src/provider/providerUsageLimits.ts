@@ -96,6 +96,7 @@ export function makeUsageLimitsAccount(input: {
   readonly id: string;
   readonly label?: string | undefined;
   readonly email?: string | undefined;
+  readonly planLabel?: string | undefined;
   readonly source: string;
   readonly support: ServerProviderUsageLimitsSupport;
   readonly checkedAt: string;
@@ -107,6 +108,7 @@ export function makeUsageLimitsAccount(input: {
     id: input.id,
     ...(input.label ? { label: input.label } : {}),
     ...(input.email ? { email: input.email } : {}),
+    ...(input.planLabel ? { planLabel: input.planLabel } : {}),
     ...makeUsageLimitsSnapshot(input),
   };
 }
@@ -240,46 +242,149 @@ export const pollProviderUsageLimits = Effect.fn("pollProviderUsageLimits")(func
   );
 });
 
+const NumericValue = Schema.Union([Schema.Number, Schema.String]);
+const NullableNumericValue = Schema.Union([NumericValue, Schema.Null]);
+const NullableDateValue = Schema.Union([Schema.String, Schema.Number, Schema.Null]);
+
 const ClaudeWindow = Schema.Struct({
-  utilization: Schema.optional(Schema.Number),
-  used_percentage: Schema.optional(Schema.Number),
+  utilization: Schema.optional(NullableNumericValue),
+  used_percentage: Schema.optional(NullableNumericValue),
   resets_at: Schema.optional(Schema.Union([Schema.String, Schema.Number, Schema.Null])),
 });
+const NullableClaudeWindow = Schema.Union([ClaudeWindow, Schema.Null]);
+const ClaudeUsageLimit = Schema.Struct({
+  kind: Schema.optional(Schema.Union([Schema.String, Schema.Null])),
+  percent: Schema.optional(NullableNumericValue),
+  resets_at: Schema.optional(NullableDateValue),
+  is_active: Schema.optional(Schema.Union([Schema.Boolean, Schema.Null])),
+  scope: Schema.optional(
+    Schema.Union([
+      Schema.Struct({
+        model: Schema.optional(
+          Schema.Union([
+            Schema.Struct({
+              display_name: Schema.optional(Schema.Union([Schema.String, Schema.Null])),
+            }),
+            Schema.Null,
+          ]),
+        ),
+      }),
+      Schema.Null,
+    ]),
+  ),
+});
 const ClaudeUsagePayload = Schema.Struct({
-  five_hour: Schema.optional(ClaudeWindow),
-  seven_day: Schema.optional(ClaudeWindow),
-  seven_day_oauth_apps: Schema.optional(ClaudeWindow),
-  seven_day_sonnet: Schema.optional(ClaudeWindow),
-  seven_day_opus: Schema.optional(ClaudeWindow),
-  extra_usage: Schema.optional(ClaudeWindow),
+  five_hour: Schema.optional(NullableClaudeWindow),
+  seven_day: Schema.optional(NullableClaudeWindow),
+  seven_day_oauth_apps: Schema.optional(NullableClaudeWindow),
+  seven_day_sonnet: Schema.optional(NullableClaudeWindow),
+  seven_day_opus: Schema.optional(NullableClaudeWindow),
+  seven_day_cowork: Schema.optional(NullableClaudeWindow),
+  iguana_necktie: Schema.optional(NullableClaudeWindow),
+  extra_usage: Schema.optional(NullableClaudeWindow),
+  limits: Schema.optional(
+    Schema.Union([Schema.Array(Schema.Union([ClaudeUsageLimit, Schema.Null])), Schema.Null]),
+  ),
 });
 const decodeClaudeUsagePayload = Schema.decodeUnknownOption(ClaudeUsagePayload);
+
+const ClaudeProfilePayload = Schema.Struct({
+  account: Schema.optional(
+    Schema.Struct({
+      has_claude_max: Schema.optional(
+        Schema.Union([Schema.Boolean, Schema.Number, Schema.String, Schema.Null]),
+      ),
+      has_claude_pro: Schema.optional(
+        Schema.Union([Schema.Boolean, Schema.Number, Schema.String, Schema.Null]),
+      ),
+    }),
+  ),
+  organization: Schema.optional(
+    Schema.Struct({
+      organization_type: Schema.optional(Schema.Union([Schema.String, Schema.Null])),
+      subscription_status: Schema.optional(Schema.Union([Schema.String, Schema.Null])),
+    }),
+  ),
+});
+const decodeClaudeProfilePayload = Schema.decodeUnknownOption(ClaudeProfilePayload);
+
+function booleanValue(value: boolean | number | string | null | undefined): boolean | undefined {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value !== 0;
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim().toLowerCase();
+  if (["true", "1", "yes", "y", "on"].includes(normalized)) return true;
+  if (["false", "0", "no", "n", "off"].includes(normalized)) return false;
+  return undefined;
+}
+
+export function parseClaudePlanLabel(input: unknown): string | undefined {
+  const decoded = decodeClaudeProfilePayload(input);
+  if (Option.isNone(decoded)) return undefined;
+  const hasMax = booleanValue(decoded.value.account?.has_claude_max);
+  if (hasMax) return "Max";
+  const hasPro = booleanValue(decoded.value.account?.has_claude_pro);
+  if (hasPro) return "Pro";
+  if (
+    decoded.value.organization?.organization_type?.trim().toLowerCase() === "claude_team" &&
+    decoded.value.organization.subscription_status?.trim().toLowerCase() === "active"
+  ) {
+    return "Team";
+  }
+  return hasMax === false && hasPro === false ? "Free" : undefined;
+}
 
 export function parseClaudeUsageWindows(
   input: unknown,
 ): ReadonlyArray<ServerProviderUsageLimitWindow> {
   const decoded = decodeClaudeUsagePayload(input);
   if (Option.isNone(decoded)) return [];
-  const labels: Readonly<Record<string, string>> = {
-    five_hour: "5 hours",
-    seven_day: "7 days",
-    seven_day_oauth_apps: "7 days · OAuth apps",
-    seven_day_sonnet: "7 days · Sonnet",
-    seven_day_opus: "7 days · Opus",
-    extra_usage: "Extra usage",
-  };
-  return Object.entries(decoded.value).flatMap(([id, window]) =>
+  const payload = decoded.value;
+  const fableCandidates = (payload.limits ?? []).filter((limit) => {
+    const model = limit?.scope?.model?.display_name?.trim().toLowerCase();
+    return (
+      limit?.kind?.trim().toLowerCase() === "weekly_scoped" &&
+      (model === "fable" || model === "fable 5") &&
+      numericValue(limit.percent) !== undefined
+    );
+  });
+  const fableLimit =
+    fableCandidates.find((limit) => limit?.is_active === true) ?? fableCandidates[0];
+  const entries = [
+    ["five_hour", "5 hours", payload.five_hour],
+    ["seven_day", "7 days", payload.seven_day],
+    ["seven_day_oauth_apps", "7 days · OAuth apps", payload.seven_day_oauth_apps],
+    ["seven_day_sonnet", "7 days · Sonnet", payload.seven_day_sonnet],
+    ["seven_day_opus", "7 days · Opus", payload.seven_day_opus],
+    ["seven_day_cowork", "7 days · Cowork", payload.seven_day_cowork],
+    ...(fableLimit
+      ? []
+      : [["iguana_necktie", "7 days · Fable 5", payload.iguana_necktie] as const]),
+    ["extra_usage", "Extra usage", payload.extra_usage],
+  ] as const;
+  const windows = entries.flatMap(([id, label, window]) =>
     window
       ? [
           normalizedWindow({
             id,
-            label: labels[id],
-            usedPercent: window.used_percentage ?? window.utilization,
+            label,
+            usedPercent: numericValue(window.used_percentage ?? window.utilization),
             resetsAt: window.resets_at,
           }),
         ]
       : [],
   );
+  if (fableLimit) {
+    windows.push(
+      normalizedWindow({
+        id: "seven_day_fable",
+        label: "7 days · Fable 5",
+        usedPercent: numericValue(fableLimit.percent),
+        resetsAt: fableLimit.resets_at,
+      }),
+    );
+  }
+  return windows;
 }
 
 const CursorUsagePayload = Schema.Struct({
@@ -318,10 +423,6 @@ export function parseCursorUsageWindows(
     }),
   ];
 }
-
-const NumericValue = Schema.Union([Schema.Number, Schema.String]);
-const NullableNumericValue = Schema.Union([NumericValue, Schema.Null]);
-const NullableDateValue = Schema.Union([Schema.String, Schema.Number, Schema.Null]);
 
 function numericValue(value: number | string | null | undefined): number | undefined {
   if (typeof value === "number") return Number.isFinite(value) ? value : undefined;

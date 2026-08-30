@@ -131,6 +131,11 @@ function ProviderLimitCard(props: { readonly entry: ProviderUsageLimitsEntry }) 
                 Experimental
               </Badge>
             ) : null}
+            {entry.accountPlanLabel ? (
+              <Badge variant="outline" size="sm">
+                {entry.accountPlanLabel}
+              </Badge>
+            ) : null}
           </div>
           <p className="truncate text-xs text-muted-foreground">
             {entry.accountLabel}

@@ -248,6 +248,7 @@ function MobilePlanLimits(props: {
                       </Text>
                       <Text className="text-xs text-foreground-muted" numberOfLines={1}>
                         {entry.accountLabel}
+                        {entry.accountPlanLabel ? ` · ${entry.accountPlanLabel}` : ""}
                         {entry.sharedAcrossEnvironments ? " · Shared account" : ""}
                       </Text>
                     </View>

@@ -66,6 +66,7 @@ describe("collectProviderUsageLimits", () => {
                 {
                   id: "auth-one",
                   email: "one@example.com",
+                  planLabel: "Max",
                   status: "available",
                   support: "experimental",
                   source: "cliproxyapi-management",
@@ -92,6 +93,7 @@ describe("collectProviderUsageLimits", () => {
       "one@example.com",
       "two@example.com",
     ]);
+    expect(result[0]?.entries.map((entry) => entry.accountPlanLabel)).toEqual(["Max", undefined]);
     expect(result[0]?.entries.map((entry) => entry.limits?.windows[0]?.remainingPercent)).toEqual([
       80, 20,
     ]);

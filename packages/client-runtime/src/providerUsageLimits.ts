@@ -16,6 +16,7 @@ export interface ProviderUsageLimitsEntry {
   readonly entryId: string;
   readonly accountLabel: string;
   readonly accountEmail?: string | undefined;
+  readonly accountPlanLabel?: string | undefined;
   readonly limits?: ServerProviderUsageLimits | ServerProviderUsageLimitsAccount | undefined;
   readonly accountKey: string | null;
   readonly sharedAcrossEnvironments: boolean;
@@ -42,6 +43,7 @@ function providerEntries(
       entryId: `${provider.instanceId}:${account.id}`,
       accountLabel: account.email ?? account.label ?? account.id,
       ...(account.email ? { accountEmail: account.email } : {}),
+      ...(account.planLabel ? { accountPlanLabel: account.planLabel } : {}),
       limits: account,
       accountKey: reliableAccountKey(provider, account.email),
     }));

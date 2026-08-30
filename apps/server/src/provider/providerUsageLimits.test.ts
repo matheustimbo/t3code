@@ -11,6 +11,7 @@ import {
   makePooledUsageLimitsSnapshot,
   makeUnavailableUsageLimitsAccount,
   parseCliProxyCodexUsageWindows,
+  parseClaudePlanLabel,
   parseClaudeUsageWindows,
   parseCursorUsageWindows,
   parseGrokUsageWindows,
@@ -47,6 +48,57 @@ it("normalizes Claude windows", () => {
       { id: "seven_day_oauth_apps", remaining: 25 },
       { id: "extra_usage", remaining: 90 },
     ],
+  );
+});
+
+it("normalizes nullable Claude windows and the modern Fable limit", () => {
+  const windows = parseClaudeUsageWindows({
+    five_hour: { utilization: 0, resets_at: null },
+    seven_day: { utilization: 75, resets_at: "2026-09-01T23:59:00.000Z" },
+    seven_day_oauth_apps: null,
+    seven_day_opus: null,
+    seven_day_sonnet: null,
+    seven_day_cowork: null,
+    iguana_necktie: null,
+    limits: [
+      { kind: "session", percent: 0, resets_at: null, is_active: false },
+      {
+        kind: "weekly_scoped",
+        percent: 56,
+        resets_at: "2026-09-01T23:59:00.000Z",
+        is_active: true,
+        scope: { model: { display_name: "Fable" } },
+      },
+    ],
+  });
+
+  assert.deepStrictEqual(
+    windows.map((window) => ({
+      id: window.id,
+      label: window.label,
+      remaining: window.remainingPercent,
+    })),
+    [
+      { id: "five_hour", label: "5 hours", remaining: 100 },
+      { id: "seven_day", label: "7 days", remaining: 25 },
+      { id: "seven_day_fable", label: "7 days · Fable 5", remaining: 44 },
+    ],
+  );
+});
+
+it("reads Claude plan labels from account profiles", () => {
+  assert.strictEqual(parseClaudePlanLabel({ account: { has_claude_max: true } }), "Max");
+  assert.strictEqual(parseClaudePlanLabel({ account: { has_claude_pro: "true" } }), "Pro");
+  assert.strictEqual(
+    parseClaudePlanLabel({
+      account: { has_claude_max: false, has_claude_pro: false },
+      organization: { organization_type: "claude_team", subscription_status: "active" },
+    }),
+    "Team",
+  );
+  assert.strictEqual(
+    parseClaudePlanLabel({ account: { has_claude_max: false, has_claude_pro: false } }),
+    "Free",
   );
 });
 
@@ -275,7 +327,7 @@ it("marks a CLIProxyAPI pool partial without aggregating account windows", () =>
 
 it.effect("reads every CLIProxyAPI Claude account through its stable auth index", () =>
   Effect.gen(function* () {
-    const requestedAuthIndexes: Array<string> = [];
+    const requestedCalls: Array<{ authIndex: string; url: string }> = [];
     const client = HttpClient.make((request) =>
       Effect.sync(() => {
         if (request.url.endsWith("/auth-files")) {
@@ -301,18 +353,29 @@ it.effect("reads every CLIProxyAPI Claude account through its stable auth index"
         }
         const bodyText =
           request.body._tag === "Uint8Array" ? new TextDecoder().decode(request.body.body) : "{}";
-        const authIndex = decodeCliProxyRequestBody(bodyText).auth_index;
-        requestedAuthIndexes.push(authIndex);
+        const requestBody = decodeCliProxyRequestBody(bodyText);
+        const authIndex = requestBody.auth_index;
+        requestedCalls.push({ authIndex, url: requestBody.url ?? "" });
         return HttpClientResponse.fromWeb(
           request,
           Response.json({
             status_code: 200,
-            body: encodeUnknownJson({
-              five_hour: {
-                utilization: authIndex === "auth-one" ? 20 : 70,
-                resets_at: "2026-08-29T17:00:00.000Z",
-              },
-            }),
+            body: encodeUnknownJson(
+              requestBody.url?.endsWith("/profile")
+                ? {
+                    account: {
+                      has_claude_max: authIndex === "auth-one",
+                      has_claude_pro: authIndex === "auth-two",
+                    },
+                  }
+                : {
+                    five_hour: {
+                      utilization: authIndex === "auth-one" ? 20 : 70,
+                      resets_at: "2026-08-29T17:00:00.000Z",
+                    },
+                    seven_day_oauth_apps: null,
+                  },
+            ),
           }),
         );
       }),
@@ -334,10 +397,25 @@ it.effect("reads every CLIProxyAPI Claude account through its stable auth index"
       ),
     );
 
-    assert.deepStrictEqual(requestedAuthIndexes.toSorted(), ["auth-one", "auth-two"]);
+    assert.deepStrictEqual(requestedCalls.map((call) => call.authIndex).toSorted(), [
+      "auth-one",
+      "auth-one",
+      "auth-two",
+      "auth-two",
+    ]);
+    assert.deepStrictEqual([...new Set(requestedCalls.map((call) => call.url))].toSorted(), [
+      "https://api.anthropic.com/api/oauth/profile",
+      "https://api.anthropic.com/api/oauth/usage",
+    ]);
     assert.deepStrictEqual(
-      limits.accounts?.map((account) => account.windows[0]?.remainingPercent),
-      [80, 30],
+      limits.accounts?.map((account) => ({
+        plan: account.planLabel,
+        remaining: account.windows[0]?.remainingPercent,
+      })),
+      [
+        { plan: "Max", remaining: 80 },
+        { plan: "Pro", remaining: 30 },
+      ],
     );
     assert.deepStrictEqual(limits.windows, []);
   }),
