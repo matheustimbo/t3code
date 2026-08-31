@@ -589,6 +589,113 @@ export function filterSidebarProjectScopeItems<TItem extends { readonly value: s
   return input.activeScopeKey === null ? projectItems : input.items;
 }
 
+export type SidebarProjectScopeDirection = "previous" | "next";
+
+export function resolveAdjacentProjectScopeValue<TItem extends { readonly value: string }>(input: {
+  items: readonly TItem[];
+  currentValue: string;
+  direction: SidebarProjectScopeDirection;
+}): string | null {
+  if (input.items.length === 0) return null;
+  const currentIndex = Math.max(
+    0,
+    input.items.findIndex((item) => item.value === input.currentValue),
+  );
+  const offset = input.direction === "next" ? 1 : -1;
+  const nextIndex = Math.min(input.items.length - 1, Math.max(0, currentIndex + offset));
+  return input.items[nextIndex]?.value ?? null;
+}
+
+export interface SidebarProjectScopeWheelState {
+  readonly accumulatedDeltaX: number;
+  readonly lastEventAt: number;
+  readonly locked: boolean;
+  readonly reversalDeltaX: number;
+}
+
+export interface SidebarProjectScopeWheelResult {
+  readonly state: SidebarProjectScopeWheelState;
+  readonly direction: SidebarProjectScopeDirection | null;
+  readonly shouldConsume: boolean;
+}
+
+const PROJECT_SCOPE_WHEEL_IDLE_MS = 200;
+const PROJECT_SCOPE_WHEEL_THRESHOLD_PX = 48;
+
+/**
+ * Turns a trackpad's noisy wheel stream into one project change per swipe.
+ * Inertial events stay locked until the stream pauses, and diagonal/vertical
+ * scrolling is left alone so the thread list keeps its native behavior.
+ */
+export function reduceSidebarProjectScopeWheel(
+  state: SidebarProjectScopeWheelState,
+  input: { readonly deltaX: number; readonly deltaY: number; readonly eventAt: number },
+): SidebarProjectScopeWheelResult {
+  const streamExpired = input.eventAt - state.lastEventAt > PROJECT_SCOPE_WHEEL_IDLE_MS;
+  const baseState = streamExpired
+    ? { accumulatedDeltaX: 0, lastEventAt: input.eventAt, locked: false, reversalDeltaX: 0 }
+    : state;
+
+  if (Math.abs(input.deltaX) <= Math.abs(input.deltaY) || input.deltaX === 0) {
+    return {
+      state: baseState,
+      direction: null,
+      shouldConsume: false,
+    };
+  }
+
+  if (baseState.locked) {
+    const reversesDirection = Math.sign(input.deltaX) !== Math.sign(baseState.accumulatedDeltaX);
+    if (reversesDirection) {
+      const reversalDeltaX = baseState.reversalDeltaX + input.deltaX;
+      if (Math.abs(reversalDeltaX) >= PROJECT_SCOPE_WHEEL_THRESHOLD_PX) {
+        return {
+          state: {
+            accumulatedDeltaX: reversalDeltaX,
+            lastEventAt: input.eventAt,
+            locked: true,
+            reversalDeltaX: 0,
+          },
+          direction: reversalDeltaX > 0 ? "next" : "previous",
+          shouldConsume: true,
+        };
+      }
+      return {
+        state: { ...baseState, lastEventAt: input.eventAt, reversalDeltaX },
+        direction: null,
+        shouldConsume: true,
+      };
+    }
+    return {
+      state: { ...baseState, lastEventAt: input.eventAt, reversalDeltaX: 0 },
+      direction: null,
+      shouldConsume: true,
+    };
+  }
+
+  const continuesDirection =
+    baseState.accumulatedDeltaX === 0 ||
+    Math.sign(baseState.accumulatedDeltaX) === Math.sign(input.deltaX);
+  const accumulatedDeltaX = continuesDirection
+    ? baseState.accumulatedDeltaX + input.deltaX
+    : input.deltaX;
+  const nextState = {
+    accumulatedDeltaX,
+    lastEventAt: input.eventAt,
+    locked: false,
+    reversalDeltaX: 0,
+  };
+  if (Math.abs(accumulatedDeltaX) < PROJECT_SCOPE_WHEEL_THRESHOLD_PX) {
+    return { state: nextState, direction: null, shouldConsume: true };
+  }
+
+  return {
+    state: { ...nextState, locked: true },
+    direction: accumulatedDeltaX > 0 ? "next" : "previous",
+    shouldConsume: true,
+  };
+}
+
 export interface SidebarProjectScopeMenuState {
   readonly open: boolean;
   readonly query: string;

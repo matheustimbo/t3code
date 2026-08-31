@@ -1,5 +1,10 @@
 # Organizing threads
 
+Use the project picker above the thread list to show one project's threads or all projects. On web
+and desktop, swipe horizontally over the sidebar with a trackpad to move to the previous or next
+project filter. Open the picker and drag a project's handle to reorder the filters; the first drag
+switches project sorting to **Manual** so the chosen order is preserved.
+
 Pin a thread from its context menu to keep it in the pinned section above your active work.
 `mod+shift+p` pins or unpins the thread you have open. Pinned threads are shown independently of
 their project, including when you connect to more than one environment.

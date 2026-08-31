@@ -11,6 +11,8 @@ import {
   getVisibleSidebarThreadIds,
   resolveAdjacentThreadId,
   reduceSidebarProjectScopeMenuState,
+  reduceSidebarProjectScopeWheel,
+  resolveAdjacentProjectScopeValue,
   getFallbackThreadIdAfterDelete,
   getVisibleThreadsForProject,
   getProjectSortTimestamp,
@@ -776,6 +778,129 @@ describe("filterSidebarProjectScopeItems", () => {
   it("returns matching projects in source order and supports no-match results", () => {
     expect(filter(null, "WORK")).toEqual([items[1]]);
     expect(filter(null, "missing")).toEqual([]);
+  });
+});
+
+describe("resolveAdjacentProjectScopeValue", () => {
+  const items = [{ value: "all" }, { value: "alpha" }, { value: "beta" }] as const;
+
+  it("moves through project scopes in their displayed order", () => {
+    expect(
+      resolveAdjacentProjectScopeValue({ items, currentValue: "all", direction: "next" }),
+    ).toBe("alpha");
+    expect(
+      resolveAdjacentProjectScopeValue({ items, currentValue: "beta", direction: "previous" }),
+    ).toBe("alpha");
+  });
+
+  it("stops at the first and last scopes instead of wrapping", () => {
+    expect(
+      resolveAdjacentProjectScopeValue({ items, currentValue: "all", direction: "previous" }),
+    ).toBe("all");
+    expect(
+      resolveAdjacentProjectScopeValue({ items, currentValue: "beta", direction: "next" }),
+    ).toBe("beta");
+  });
+});
+
+describe("reduceSidebarProjectScopeWheel", () => {
+  const initialState = {
+    accumulatedDeltaX: 0,
+    lastEventAt: Number.NEGATIVE_INFINITY,
+    locked: false,
+    reversalDeltaX: 0,
+  } as const;
+
+  it("accumulates horizontal movement until it becomes an intentional swipe", () => {
+    const first = reduceSidebarProjectScopeWheel(initialState, {
+      deltaX: 20,
+      deltaY: 2,
+      eventAt: 10,
+    });
+    expect(first.direction).toBeNull();
+    expect(first.shouldConsume).toBe(true);
+
+    const second = reduceSidebarProjectScopeWheel(first.state, {
+      deltaX: 30,
+      deltaY: 3,
+      eventAt: 20,
+    });
+    expect(second.direction).toBe("next");
+  });
+
+  it("leaves vertical scrolling untouched", () => {
+    const result = reduceSidebarProjectScopeWheel(initialState, {
+      deltaX: 12,
+      deltaY: 30,
+      eventAt: 10,
+    });
+    expect(result.direction).toBeNull();
+    expect(result.shouldConsume).toBe(false);
+  });
+
+  it("emits only once through trackpad inertia and unlocks after an idle gap", () => {
+    const triggered = reduceSidebarProjectScopeWheel(initialState, {
+      deltaX: -60,
+      deltaY: 1,
+      eventAt: 10,
+    });
+    expect(triggered.direction).toBe("previous");
+
+    const inertial = reduceSidebarProjectScopeWheel(triggered.state, {
+      deltaX: -90,
+      deltaY: 1,
+      eventAt: 30,
+    });
+    expect(inertial.direction).toBeNull();
+
+    const nextGesture = reduceSidebarProjectScopeWheel(inertial.state, {
+      deltaX: 60,
+      deltaY: 1,
+      eventAt: 250,
+    });
+    expect(nextGesture.direction).toBe("next");
+  });
+
+  it("accepts an intentional reversal before the previous swipe's inertia expires", () => {
+    const triggered = reduceSidebarProjectScopeWheel(initialState, {
+      deltaX: 60,
+      deltaY: 1,
+      eventAt: 10,
+    });
+    const beginningReverse = reduceSidebarProjectScopeWheel(triggered.state, {
+      deltaX: -24,
+      deltaY: 1,
+      eventAt: 30,
+    });
+    expect(beginningReverse.direction).toBeNull();
+
+    const committedReverse = reduceSidebarProjectScopeWheel(beginningReverse.state, {
+      deltaX: -26,
+      deltaY: 1,
+      eventAt: 45,
+    });
+    expect(committedReverse.direction).toBe("previous");
+  });
+
+  it("ignores a small inertial bounce that returns to the locked direction", () => {
+    const triggered = reduceSidebarProjectScopeWheel(initialState, {
+      deltaX: 60,
+      deltaY: 1,
+      eventAt: 10,
+    });
+    const bounce = reduceSidebarProjectScopeWheel(triggered.state, {
+      deltaX: -10,
+      deltaY: 1,
+      eventAt: 20,
+    });
+    const continuedInertia = reduceSidebarProjectScopeWheel(bounce.state, {
+      deltaX: 20,
+      deltaY: 1,
+      eventAt: 30,
+    });
+    expect(continuedInertia.direction).toBeNull();
+    expect(continuedInertia.state.locked).toBe(true);
+    expect(continuedInertia.state.reversalDeltaX).toBe(0);
   });
 });
 
