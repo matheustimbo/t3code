@@ -7,6 +7,7 @@ import type {
   ServerProviderSlashCommand,
   ServerProviderModel,
   ServerProviderState,
+  ServerProviderUsageLimits,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as PlatformError from "effect/PlatformError";
@@ -222,6 +223,7 @@ export function buildServerProvider(input: {
   slashCommands?: ReadonlyArray<ServerProviderSlashCommand>;
   skills?: ReadonlyArray<ServerProviderSkill>;
   probe: ProviderProbeResult;
+  usageLimits?: ServerProviderUsageLimits;
 }): ServerProviderDraft {
   const versionAdvisory = input.driver
     ? createProviderVersionAdvisory({
@@ -250,6 +252,7 @@ export function buildServerProvider(input: {
     slashCommands: [...(input.slashCommands ?? [])],
     skills: [...(input.skills ?? [])],
     ...(versionAdvisory ? { versionAdvisory } : {}),
+    ...(input.usageLimits ? { usageLimits: input.usageLimits } : {}),
   };
 }
 

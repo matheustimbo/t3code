@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 
+import { NonNegativeInt } from "./baseSchemas.ts";
 import { ExternalLauncherError, LaunchEditorInput } from "./editor.ts";
 import {
   AuthAccessStreamError,
@@ -80,6 +81,7 @@ import {
   ProviderUploadFeedbackResult,
 } from "./provider.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
+import { TicketProviderInstanceId, TicketProviderProbeResult } from "./ticketProvider.ts";
 import {
   PullRequestActionInput,
   PullRequestActivity,
@@ -280,6 +282,7 @@ export const WS_METHODS = {
   serverRemoveKeybinding: "server.removeKeybinding",
   serverGetSettings: "server.getSettings",
   serverUpdateSettings: "server.updateSettings",
+  serverProbeTicketProvider: "server.probeTicketProvider",
   serverDiscoverSourceControl: "server.discoverSourceControl",
   serverGetTraceDiagnostics: "server.getTraceDiagnostics",
   serverGetProcessDiagnostics: "server.getProcessDiagnostics",
@@ -400,8 +403,17 @@ export const WsServerGetSettingsRpc = Rpc.make(WS_METHODS.serverGetSettings, {
 });
 
 export const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSettings, {
-  payload: Schema.Struct({ patch: ServerSettingsPatch }),
+  payload: Schema.Struct({
+    patch: ServerSettingsPatch,
+    expectedTicketProviderInstancesRevision: Schema.optionalKey(NonNegativeInt),
+  }),
   success: ServerSettings,
+  error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+});
+
+export const WsServerProbeTicketProviderRpc = Rpc.make(WS_METHODS.serverProbeTicketProvider, {
+  payload: Schema.Struct({ instanceId: TicketProviderInstanceId }),
+  success: TicketProviderProbeResult,
   error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
 });
 
@@ -1037,6 +1049,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerRemoveKeybindingRpc,
   WsServerGetSettingsRpc,
   WsServerUpdateSettingsRpc,
+  WsServerProbeTicketProviderRpc,
   WsServerDiscoverSourceControlRpc,
   WsServerGetTraceDiagnosticsRpc,
   WsServerGetProcessDiagnosticsRpc,

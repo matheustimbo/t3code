@@ -188,6 +188,12 @@ export function applyServerSettingsPatch(
     ...(patch.providerInstances !== undefined
       ? { providerInstances: patch.providerInstances }
       : {}),
+    ...(patch.ticketProviderInstances !== undefined
+      ? {
+          ticketProviderInstances: patch.ticketProviderInstances,
+          ticketProviderInstancesRevision: current.ticketProviderInstancesRevision + 1,
+        }
+      : {}),
     ...(patch.sourceControlWriterModelSelection !== undefined
       ? { sourceControlWriterModelSelection: patch.sourceControlWriterModelSelection }
       : {}),

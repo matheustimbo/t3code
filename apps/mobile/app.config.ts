@@ -13,9 +13,15 @@ const isIosPersonalTeamBuild = repoEnv.T3CODE_IOS_PERSONAL_TEAM === "1";
 const runtimeVersionPolicy =
   process.env.MOBILE_VERSION_POLICY ??
   (APP_VARIANT === "development" ? "appVersion" : "fingerprint");
+const easProjectId = repoEnv.T3CODE_EAS_PROJECT_ID?.trim();
+const easOwner = repoEnv.T3CODE_EAS_OWNER?.trim();
 
 const personalTeamBundleIdentifier = repoEnv.T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID?.trim();
+const iosTeamId = repoEnv.T3CODE_IOS_TEAM_ID?.trim() || "ARK85ZXQ4Z";
+const androidPackageOverride = repoEnv.T3CODE_ANDROID_PACKAGE?.trim() || undefined;
 const IOS_BUNDLE_IDENTIFIER_PATTERN = /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/;
+const APPLE_TEAM_ID_PATTERN = /^[A-Z0-9]{10}$/;
+const ANDROID_PACKAGE_PATTERN = /^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$/;
 
 const fromRepoRoot = (relativePath: string) => `../../${relativePath}`;
 // Universal exports already contain their own rounded-square silhouette. Using one as an adaptive
@@ -29,6 +35,16 @@ if (
 ) {
   throw new Error(
     "T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID must be a reverse-DNS identifier such as com.example.t3code when T3CODE_IOS_PERSONAL_TEAM=1.",
+  );
+}
+
+if (!APPLE_TEAM_ID_PATTERN.test(iosTeamId)) {
+  throw new Error("T3CODE_IOS_TEAM_ID must be a 10-character Apple team identifier.");
+}
+
+if (androidPackageOverride && !ANDROID_PACKAGE_PATTERN.test(androidPackageOverride)) {
+  throw new Error(
+    "T3CODE_ANDROID_PACKAGE must be a Java-style package name such as com.example.t3code.",
   );
 }
 
@@ -107,6 +123,7 @@ const variant = VARIANT_CONFIG[APP_VARIANT];
 const iosBundleIdentifier = isIosPersonalTeamBuild
   ? personalTeamBundleIdentifier!
   : variant.iosBundleIdentifier;
+const androidPackage = androidPackageOverride ?? variant.androidPackage;
 
 const dmSansFonts = {
   regular: "@expo-google-fonts/dm-sans/400Regular/DMSans_400Regular.ttf",
@@ -178,12 +195,14 @@ const config: ExpoConfig = {
   orientation: "portrait",
   icon: variant.assets.appIcon,
   userInterfaceStyle: "automatic",
-  updates: {
-    enabled: true,
-    url: "https://u.expo.dev/d763fcb8-d37c-41ea-a773-b54a0ab4a454",
-    checkAutomatically: "ON_LOAD",
-    fallbackToCacheTimeout: 0,
-  },
+  updates: easProjectId
+    ? {
+        enabled: true,
+        url: `https://u.expo.dev/${easProjectId}`,
+        checkAutomatically: "ON_LOAD",
+        fallbackToCacheTimeout: 0,
+      }
+    : { enabled: false },
   ios: {
     icon: variant.assets.iosIcon,
     supportsTablet: true,
@@ -194,7 +213,7 @@ const config: ExpoConfig = {
     // Pin code signing to the T3 Tools team so non-interactive `expo run:ios`
     // does not fall back to a personal team (which cannot sign app groups,
     // Sign in with Apple, or push notification entitlements).
-    appleTeamId: "ARK85ZXQ4Z",
+    appleTeamId: iosTeamId,
     associatedDomains: [
       `applinks:${variant.relyingParty}`,
       `webcredentials:${variant.relyingParty}`,
@@ -225,7 +244,7 @@ const config: ExpoConfig = {
   },
   android: {
     icon: variant.assets.appIcon,
-    package: variant.androidPackage,
+    package: androidPackage,
     adaptiveIcon: {
       backgroundColor: variant.assets.androidAdaptiveBackgroundColor,
       foregroundImage: variant.assets.androidAdaptiveForeground,
@@ -240,6 +259,9 @@ const config: ExpoConfig = {
     favicon: variant.assets.appIcon,
   },
   plugins: [
+    // Same-type config mods execute in reverse registration order. Register this first so it
+    // removes capabilities added by every later plugin from reduced Personal Team builds.
+    ...(isIosPersonalTeamBuild ? ["./plugins/withoutIosPersonalTeamCapabilities.cjs"] : []),
     "expo-asset",
     [
       "expo-font",
@@ -278,8 +300,7 @@ const config: ExpoConfig = {
         mode: APP_VARIANT === "development" ? "development" : "production",
       },
     ],
-    // appleSignIn must be gated here: withoutIosPersonalTeamCapabilities.cjs runs before
-    // plugins earlier in this array, so it cannot strip the entitlement Clerk would add.
+    // Gating this also keeps Clerk from adding Sign in with Apple project capabilities.
     ["@clerk/expo", { theme: "./clerk-theme.json", appleSignIn: !isIosPersonalTeamBuild }],
     "expo-web-browser",
     [
@@ -354,7 +375,6 @@ const config: ExpoConfig = {
     "./plugins/withAndroidModernAlertDialog.cjs",
     "./plugins/withAndroidPredictiveBackCompat.cjs",
     "./plugins/withAndroidTabletOrientation.cjs",
-    ...(isIosPersonalTeamBuild ? ["./plugins/withoutIosPersonalTeamCapabilities.cjs"] : []),
   ],
   extra: {
     appVariant: APP_VARIANT,
@@ -380,11 +400,9 @@ const config: ExpoConfig = {
       tracesDataset: repoEnv.EXPO_PUBLIC_OTLP_TRACES_DATASET ?? null,
       tracesToken: repoEnv.EXPO_PUBLIC_OTLP_TRACES_TOKEN ?? null,
     },
-    eas: {
-      projectId: "d763fcb8-d37c-41ea-a773-b54a0ab4a454",
-    },
+    ...(easProjectId ? { eas: { projectId: easProjectId } } : {}),
   },
-  owner: "pingdotgg",
+  ...(easOwner ? { owner: easOwner } : {}),
 };
 
 export default config;

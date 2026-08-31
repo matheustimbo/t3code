@@ -298,6 +298,16 @@ describe("serverSettings helpers", () => {
     });
   });
 
+  it("increments the ticket provider instance revision on whole-map replacement", () => {
+    const next = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      ticketProviderInstances: {},
+    });
+
+    expect(next.ticketProviderInstancesRevision).toBe(
+      DEFAULT_SERVER_SETTINGS.ticketProviderInstancesRevision + 1,
+    );
+  });
+
   it("stores background activity profiles as a versioned object and syncs legacy aliases", () => {
     const next = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
       backgroundActivity: {

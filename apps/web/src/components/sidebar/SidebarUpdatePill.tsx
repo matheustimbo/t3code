@@ -15,6 +15,7 @@ import {
   isDesktopUpdateButtonDisabled,
   resolveDesktopUpdateButtonAction,
   shouldShowArm64IntelBuildWarning,
+  shouldShowDesktopUpdateReleaseNotes,
   shouldToastDesktopUpdateActionResult,
 } from "../desktopUpdate.logic";
 import { showDesktopUpdateDownloadedToast } from "../desktopUpdate.toast";
@@ -71,7 +72,7 @@ function SidebarUpdateReleaseNotesTooltip({
   readonly state: NonNullable<ReturnType<typeof useDesktopUpdateState>>;
   readonly tooltip: string;
 }) {
-  if (state.channel !== "nightly" || state.releaseNotes.length === 0) {
+  if (!shouldShowDesktopUpdateReleaseNotes(state)) {
     return <>{tooltip}</>;
   }
 
@@ -344,7 +345,7 @@ function SidebarUpdateControl() {
         <TooltipPopup
           align="center"
           className={
-            showUpdateDetails && state?.channel === "nightly" && state.releaseNotes.length > 0
+            showUpdateDetails && state && shouldShowDesktopUpdateReleaseNotes(state)
               ? // pointer-events-auto overrides the positioner's pointer-events-none so the
                 // release notes stay open (and scrollable) when the cursor moves into them.
                 "pointer-events-auto max-w-none text-balance"

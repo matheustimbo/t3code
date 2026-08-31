@@ -1,0 +1,122 @@
+name: Sync upstream fork
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: sync-upstream-fork
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: github.repository == 'matheustimbo/t3code'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Sync upstream mirror
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh repo sync "$GITHUB_REPOSITORY" --source pingdotgg/t3code --branch main
+
+      - name: Checkout fork integration branch
+        uses: actions/checkout@v6
+        with:
+          ref: fork-main
+          fetch-depth: 0
+
+      - id: integrate
+        name: Integrate upstream when conflict-free
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin \
+            +refs/heads/main:refs/remotes/origin/main \
+            +refs/heads/fork-main:refs/remotes/origin/fork-main
+
+          if git merge-base --is-ancestor origin/main HEAD; then
+            echo "fork-main already contains the current upstream main."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "conflict=false" >> "$GITHUB_OUTPUT"
+            echo "mobile_changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          mobile_changed=false
+          if ! git diff --quiet HEAD...origin/main -- \
+            apps/mobile \
+            packages/client-runtime \
+            packages/contracts \
+            packages/shared \
+            assets \
+            patches \
+            pnpm-lock.yaml \
+            pnpm-workspace.yaml; then
+            mobile_changed=true
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git merge --no-ff --no-edit -m "chore: sync upstream main" origin/main; then
+            git push origin HEAD:fork-main
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "conflict=false" >> "$GITHUB_OUTPUT"
+            echo "mobile_changed=$mobile_changed" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git merge --abort
+          echo "changed=false" >> "$GITHUB_OUTPUT"
+          echo "conflict=true" >> "$GITHUB_OUTPUT"
+          echo "mobile_changed=false" >> "$GITHUB_OUTPUT"
+
+      - name: Dispatch fork builds
+        if: steps.integrate.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MOBILE_CHANGED: ${{ steps.integrate.outputs.mobile_changed }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh workflow run fork-release.yml --repo "$GITHUB_REPOSITORY" --ref fork-main
+          if [[ "$MOBILE_CHANGED" == "true" ]]; then
+            gh workflow run fork-mobile-builds.yml \
+              --repo "$GITHUB_REPOSITORY" \
+              --ref fork-main \
+              -f platform=all
+          fi
+
+      - name: Open integration pull request for conflicts
+        if: steps.integrate.outputs.conflict == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          existing="$(
+            gh pr list \
+              --repo "$GITHUB_REPOSITORY" \
+              --base fork-main \
+              --head main \
+              --state open \
+              --json number \
+              --jq '.[0].number // empty'
+          )"
+          if [[ -n "$existing" ]]; then
+            echo "Sync PR #$existing is already open."
+            exit 0
+          fi
+
+          gh pr create \
+            --repo "$GITHUB_REPOSITORY" \
+            --base fork-main \
+            --head main \
+            --title "chore: sync upstream main" \
+            --body "The automated daily sync from \`pingdotgg/t3code:main\` found merge conflicts. Resolve them while preserving the fork-only ticket-title and release behavior."

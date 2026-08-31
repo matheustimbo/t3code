@@ -40,3 +40,20 @@ pill** fallback because their colors are not controlled by T3 Code.
 To generate a fresh title from the conversation, open a thread's context menu and choose
 **Regenerate title**. While T3 Code is generating it, the action reads **Regenerating…** and cannot
 be selected again. The option is hidden when the connected environment needs a server update.
+
+## Titles from linked tickets
+
+When the first message in a new thread contains one supported ticket link, T3 Code can replace the
+generated thread title with the ticket's title. The generated title appears immediately while the
+ticket is read in the background. If you rename the thread before that finishes, your title is kept.
+
+Configure the title format and ticket accounts in **Settings → Integrations → Ticket providers**.
+When more than one environment is connected, select the server that owns the project before adding
+or testing an account; credentials and global title defaults are stored by that server.
+You can use the ticket title, its identifier and title, or a custom template with `{title}`,
+`{identifier}`, `{provider}`, and `{project}`. Project settings can override the global format and
+bind a provider and host to a particular configured account.
+
+GitHub Issues, GitLab Issues, Azure DevOps work items, Bitbucket Cloud issues, Jira issues, and
+ClickUp tasks are supported. T3 Code uses local provider CLIs where available. A failed or ambiguous
+lookup is silent and leaves the generated title unchanged.

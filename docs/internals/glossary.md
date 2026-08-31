@@ -97,6 +97,14 @@ The live backend agent implementation and its event stream. The main service is 
 
 The backend agent runtime that actually performs work. Five drivers ship built in: Codex, Claude, Cursor, Grok, and OpenCode. See [ProviderService.ts][14], [ProviderAdapter.ts][15], and [CodexAdapter.ts][17] as a representative adapter.
 
+#### Ticket provider
+
+An external issue tracker used only to resolve metadata for a linked ticket, distinct from an agent
+provider. Ticket provider instances are environment settings; project bindings select an instance
+for a driver and host. Resolution runs as a side effect in
+[ProviderCommandReactor.ts][12], while title replacement remains a compare-and-set orchestration
+command so a manual rename always wins.
+
 #### Session
 
 The live provider-backed runtime attached to a thread. Session shape is in [the orchestration contracts][1], and lifecycle is managed in [ProviderService.ts][14].

@@ -2,6 +2,7 @@ import type {
   DesktopSshEnvironmentBootstrap,
   DesktopSshEnvironmentTarget,
 } from "@t3tools/contracts";
+import { latestForkServerPackageSpec } from "@t3tools/shared/distribution";
 import {
   describeReadinessCause,
   waitForHttpReady as waitForHttpReadyShared,
@@ -423,9 +424,6 @@ if [ -n "$T3_NODE_SCRIPT_PATH" ]; then
   fi
   exec node "$T3_NODE_SCRIPT_PATH" "$@"
 fi
-if command -v t3 >/dev/null 2>&1; then
-  exec t3 "$@"
-fi
 # npm extracts a package before it runs the native builds of its dependencies,
 # so a failed build (t3 depends on node-pty, which needs a C toolchain) leaves
 # the npx cache without a t3 executable. \`npx --yes\` then exits 0 without
@@ -652,7 +650,7 @@ fi
 `;
 
 export function buildRemoteT3RunnerScript(input?: RemoteT3RunnerOptions): string {
-  const packageSpec = shellSingleQuote(input?.packageSpec?.trim() || "t3@latest");
+  const packageSpec = shellSingleQuote(input?.packageSpec?.trim() || latestForkServerPackageSpec());
   const nodeScriptPath = input?.nodeScriptPath?.trim() || "";
   return stripTrailingNewlines(
     applyScriptPlaceholders(REMOTE_RUNNER_SCRIPT, {

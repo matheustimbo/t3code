@@ -8,25 +8,25 @@ keeping a terminal open.
 Install it with the latest T3 Code release:
 
 ```sh
-npx t3@latest service install
+npx --yes --package=https://github.com/matheustimbo/t3code/releases/latest/download/t3-latest.tgz t3 service install
 ```
 
 Check whether it is installed:
 
 ```sh
-npx t3@latest service status
+npx --yes --package=https://github.com/matheustimbo/t3code/releases/latest/download/t3-latest.tgz t3 service status
 ```
 
 Update or repair it:
 
 ```sh
-npx t3@latest service update
+npx --yes --package=https://github.com/matheustimbo/t3code/releases/latest/download/t3-latest.tgz t3 service update
 ```
 
 Stop it and remove it from startup:
 
 ```sh
-npx t3@latest service uninstall
+npx --yes --package=https://github.com/matheustimbo/t3code/releases/latest/download/t3-latest.tgz t3 service uninstall
 ```
 
 Updating restarts T3 Code briefly. Let active agent work and terminal commands finish first.

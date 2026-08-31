@@ -1,5 +1,6 @@
 import { GrokSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -27,6 +28,15 @@ import {
 } from "../ProviderDriver.ts";
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
+import { makeGrokAcpRuntime } from "../acp/GrokAcpSupport.ts";
+import {
+  makeUnavailableUsageLimits,
+  makeUsageLimitsSnapshot,
+  parseGrokUsageWindows,
+  pollProviderUsageLimits,
+  ProviderUsageLimitsReadError,
+} from "../providerUsageLimits.ts";
+import { readCliProxyGrokUsageLimits } from "../providerUsageLimitReaders.ts";
 import {
   makeManualOnlyProviderMaintenanceCapabilities,
   makeStaticProviderMaintenanceResolver,
@@ -129,13 +139,95 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
         initialSnapshot: (settings) =>
           buildInitialGrokProviderSnapshot(settings.provider).pipe(Effect.map(stampIdentity)),
         checkProvider,
-        enrichSnapshot: ({ settings, snapshot: currentSnapshot, publishSnapshot }) =>
-          enrichGrokSnapshot({
-            snapshot: currentSnapshot,
-            maintenanceCapabilities,
-            enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
-            publishSnapshot,
-            httpClient,
+        enrichSnapshot: ({
+          settings,
+          snapshot: currentSnapshot,
+          getSnapshot,
+          publishSnapshot,
+          backgroundPolicy,
+        }) =>
+          Effect.gen(function* () {
+            yield* enrichGrokSnapshot({
+              snapshot: currentSnapshot,
+              maintenanceCapabilities,
+              enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
+              publishSnapshot,
+              httpClient,
+            });
+            if (!settings.provider.usageLimitsEnabled) {
+              const current = yield* getSnapshot;
+              yield* publishSnapshot({
+                ...current,
+                usageLimits: makeUnavailableUsageLimits({
+                  source: "grok-xai-billing",
+                  support: "experimental",
+                  checkedAt: DateTime.formatIso(yield* DateTime.now),
+                  status: "disabled",
+                  message: "Experimental Grok plan limits are disabled in provider settings.",
+                  dashboardUrl: "https://grok.com/",
+                }),
+              });
+              return;
+            }
+            const read = processEnv.CLIPROXYAPI_MANAGEMENT_KEY?.trim()
+              ? readCliProxyGrokUsageLimits(processEnv).pipe(
+                  Effect.provideService(HttpClient.HttpClient, httpClient),
+                )
+              : Effect.scoped(
+                  Effect.gen(function* () {
+                    const runtime = yield* makeGrokAcpRuntime({
+                      grokSettings: settings.provider,
+                      environment: processEnv,
+                      childProcessSpawner: spawner,
+                      cwd,
+                      clientInfo: { name: "t3-code-usage-limits", version: "0.0.0" },
+                    }).pipe(
+                      Effect.provideService(Crypto.Crypto, crypto),
+                      Effect.mapError(
+                        () =>
+                          new ProviderUsageLimitsReadError({
+                            message: "Grok billing capability could not be started.",
+                          }),
+                      ),
+                    );
+                    yield* runtime.start().pipe(
+                      Effect.mapError(
+                        () =>
+                          new ProviderUsageLimitsReadError({
+                            message: "Grok billing capability could not be started.",
+                          }),
+                      ),
+                    );
+                    const payload = yield* runtime.request("x.ai/billing", {}).pipe(
+                      Effect.mapError(
+                        () =>
+                          new ProviderUsageLimitsReadError({
+                            message: "This Grok CLI does not expose the x.ai billing capability.",
+                          }),
+                      ),
+                    );
+                    const windows = parseGrokUsageWindows(payload);
+                    if (windows.length === 0) {
+                      return yield* new ProviderUsageLimitsReadError({
+                        message: "Grok returned no subscription billing window.",
+                      });
+                    }
+                    return makeUsageLimitsSnapshot({
+                      source: "grok-xai-billing",
+                      support: "experimental",
+                      checkedAt: DateTime.formatIso(yield* DateTime.now),
+                      windows,
+                      dashboardUrl: "https://grok.com/",
+                    });
+                  }),
+                );
+            return yield* pollProviderUsageLimits({
+              instanceId,
+              getSnapshot,
+              publishSnapshot,
+              read,
+              backgroundPolicy,
+            });
           }),
       }).pipe(
         Effect.mapError(

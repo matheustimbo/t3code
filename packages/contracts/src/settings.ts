@@ -2,7 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
-import { TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
+import { NonNegativeInt, TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
 import { ThreadEnvMode } from "./environment.ts";
 import {
   DEFAULT_TEXT_GENERATION_MODEL,
@@ -23,6 +23,12 @@ import {
   ProviderInstanceId,
   type ProviderDriverKind,
 } from "./providerInstance.ts";
+import {
+  TicketProviderInstanceConfig,
+  TicketProviderInstanceId,
+  TicketTitleMode,
+  TicketTitlePolicy,
+} from "./ticketProvider.ts";
 
 // ── Client Settings (local-only) ───────────────────────────────
 
@@ -443,9 +449,17 @@ export const ClaudeSettings = makeProviderSettingsSchema(
         },
       }),
     ),
+    usageLimitsEnabled: Schema.optionalKey(Schema.Boolean).pipe(
+      Schema.annotateKey({
+        title: "Experimental plan limits",
+        description:
+          "Read Claude limits from local OAuth or CLIProxyAPI management credentials and fall back to /usage. Tokens stay on this machine.",
+        providerSettingsForm: { control: "switch", clearWhenEmpty: "omit" },
+      }),
+    ),
   },
   {
-    order: ["binaryPath", "homePath", "autoCompactWindow", "launchArgs"],
+    order: ["binaryPath", "homePath", "autoCompactWindow", "launchArgs", "usageLimitsEnabled"],
   },
 );
 export type ClaudeSettings = typeof ClaudeSettings.Type;
@@ -479,9 +493,17 @@ export const CursorSettings = makeProviderSettingsSchema(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
+    usageLimitsEnabled: Schema.optionalKey(Schema.Boolean).pipe(
+      Schema.annotateKey({
+        title: "Experimental plan limits",
+        description:
+          "Read Cursor plan limits with the existing local CLI session. Credentials are never persisted by T3 Code.",
+        providerSettingsForm: { control: "switch", clearWhenEmpty: "omit" },
+      }),
+    ),
   },
   {
-    order: ["binaryPath", "apiEndpoint"],
+    order: ["binaryPath", "apiEndpoint", "usageLimitsEnabled"],
   },
 );
 export type CursorSettings = typeof CursorSettings.Type;
@@ -505,9 +527,16 @@ export const GrokSettings = makeProviderSettingsSchema(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
+    usageLimitsEnabled: Schema.optionalKey(Schema.Boolean).pipe(
+      Schema.annotateKey({
+        title: "Experimental plan limits",
+        description: "Read Grok subscription limits through the optional x.ai billing capability.",
+        providerSettingsForm: { control: "switch", clearWhenEmpty: "omit" },
+      }),
+    ),
   },
   {
-    order: ["binaryPath"],
+    order: ["binaryPath", "usageLimitsEnabled"],
   },
 );
 export type GrokSettings = typeof GrokSettings.Type;
@@ -557,9 +586,17 @@ export const OpenCodeSettings = makeProviderSettingsSchema(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
+    usageLimitsEnabled: Schema.optionalKey(Schema.Boolean).pipe(
+      Schema.annotateKey({
+        title: "Experimental OpenCode Go limits",
+        description:
+          "Read rolling, weekly, and monthly limits when this instance uses an OpenCode Go subscription.",
+        providerSettingsForm: { control: "switch", clearWhenEmpty: "omit" },
+      }),
+    ),
   },
   {
-    order: ["binaryPath", "serverUrl", "serverPassword"],
+    order: ["binaryPath", "serverUrl", "serverPassword", "usageLimitsEnabled"],
   },
 );
 export type OpenCodeSettings = typeof OpenCodeSettings.Type;
@@ -704,6 +741,14 @@ export const ServerSettings = Schema.Struct({
   sourceControlWriterModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  ticketTitlePolicy: TicketTitlePolicy.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  ticketProviderInstances: Schema.Record(
+    TicketProviderInstanceId,
+    TicketProviderInstanceConfig,
+  ).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  ticketProviderInstancesRevision: NonNegativeInt.pipe(
+    Schema.withDecodingDefault(Effect.succeed(0)),
+  ),
 
   // Legacy single-instance-per-driver settings. Continues to be the source
   // of truth until `providerInstances` (below) lands per-driver migration
@@ -778,10 +823,12 @@ export const resolveProviderInstanceEnabled = (
 
 export const ServerSettingsOperation = Schema.Literals([
   "normalize",
+  "compare-and-set",
   "check-exists",
   "read-file",
   "read-provider-history",
   "read-secret",
+  "read-secret-snapshot",
   "remove-secret",
   "remove-stale-secret",
   "write-secret",
@@ -898,6 +945,15 @@ export const ServerSettingsPatch = Schema.Struct({
     }),
   ),
   sourceControlWriterModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  ticketTitlePolicy: Schema.optionalKey(
+    Schema.Struct({
+      mode: Schema.optionalKey(TicketTitleMode),
+      customTemplate: Schema.optionalKey(TrimmedString),
+    }),
+  ),
+  ticketProviderInstances: Schema.optionalKey(
+    Schema.Record(TicketProviderInstanceId, TicketProviderInstanceConfig),
+  ),
   observability: Schema.optionalKey(
     Schema.Struct({
       otlpTracesUrl: Schema.optionalKey(TrimmedString),

@@ -39,6 +39,36 @@ directory to route session and turn operations for a thread, so callers name a t
 Adding a driver means writing the driver plus adapter and adding it to `BUILT_IN_DRIVERS`. No
 orchestration, contract, or client change is required for the common case.
 
+## Subscription usage limits
+
+`ServerProvider.usageLimits` is an optional provider-neutral snapshot. Drivers normalize upstream
+allowances into ordered windows with remaining/used percentages, reset timestamps, and explicit
+`available`, `partial`, `stale`, `unavailable`, `error`, or `disabled` states. Raw upstream payloads
+and credentials do not cross the server/client contract.
+
+Codex reads its official `account/rateLimits/read` app-server method. Claude, Cursor, Grok, and
+OpenCode integrations are experimental opt-ins at the driver boundary: respectively a local OAuth
+usage request with the structured Claude SDK `/usage` call as fallback, Cursor's dashboard API,
+Grok's optional `x.ai/billing` ACP request, and OpenCode Go's usage API. When a management key is
+configured, the Claude, Codex, and Grok drivers instead use the CLIProxyAPI management API to
+enumerate stable credential indexes and query each account's official usage endpoints. Grok reads
+only the weekly and monthly billing endpoints; it deliberately does not send the model health-probe
+request used by some CLIProxyAPI dashboards. Cursor and OpenCode remain on their native readers
+because CLIProxyAPI does not expose corresponding quota adapters. Credentials are resolved
+ephemerally from the provider instance's local files or environment.
+
+The CLIProxyAPI Claude adapter accepts both named legacy windows and the current nullable payload.
+It reads model-scoped weekly limits from `limits` and fetches the OAuth profile in parallel as a
+best-effort plan label; a profile failure never hides valid usage windows.
+
+The managed provider enrichment loop owns the background policy passed to
+`pollProviderUsageLimits`. A reader runs at most every 45 seconds and only when generic or
+instance-specific provider-status work is allowed. A failure retains the last good windows as
+stale. The client groups snapshots by environment and only links matching accounts when the server
+reports a reliable authenticated email; it never mathematically combines allowances. A pooled
+provider publishes independent account readings under `usageLimits.accounts`; clients expand those
+readings into separate account cards while retaining the configured provider instance for routing.
+
 ## OpenCode server ownership and catalog
 
 Each OpenCode provider instance owns one lazy local server for catalog discovery and

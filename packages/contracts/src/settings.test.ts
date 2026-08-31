@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
+import { TicketProviderInstanceId } from "./ticketProvider.ts";
 import {
   ClientSettingsSchema,
   ClientSettingsPatch,
@@ -415,5 +416,70 @@ describe("ServerSettingsPatch string normalization", () => {
     expect(encoded.addProjectBaseDirectory).toBe("~/Development");
     expect(encoded.providers?.codex?.binaryPath).toBe("/opt/homebrew/bin/codex");
     expect(encoded.providers?.codex?.launchArgs).toBe("--strict-config");
+  });
+});
+
+describe("ServerSettings ticket title configuration", () => {
+  it("enables identifier-and-title naming by default", () => {
+    const settings = decodeServerSettings({});
+    expect(settings.ticketTitlePolicy).toEqual({
+      mode: "identifier_title",
+      customTemplate: "{identifier} — {title}",
+    });
+    expect(settings.ticketProviderInstances).toEqual({});
+    expect(settings.ticketProviderInstancesRevision).toBe(0);
+  });
+
+  it("preserves open ticket driver slugs and whole-map instance patches", () => {
+    const patch = decodeServerSettingsPatch({
+      ticketTitlePolicy: { mode: "custom", customTemplate: "  [{provider}] {title}  " },
+      ticketProviderInstances: {
+        linear_work: {
+          driver: "linear",
+          displayName: "  Linear Work  ",
+          baseUrl: "  https://linear.app/acme  ",
+        },
+      },
+    });
+    const instance = patch.ticketProviderInstances?.[TicketProviderInstanceId.make("linear_work")];
+    expect(patch.ticketTitlePolicy).toEqual({
+      mode: "custom",
+      customTemplate: "[{provider}] {title}",
+    });
+    expect(instance).toMatchObject({
+      driver: "linear",
+      displayName: "Linear Work",
+      baseUrl: "https://linear.app/acme",
+    });
+  });
+
+  it("rejects credentials embedded in ticket provider base URLs", () => {
+    expect(() =>
+      decodeServerSettingsPatch({
+        ticketProviderInstances: {
+          jira_work: {
+            driver: "jira",
+            baseUrl: "https://user:token@jira.example.com",
+          },
+        },
+      }),
+    ).toThrow();
+  });
+
+  it("rejects query strings and fragments in ticket provider base URLs", () => {
+    for (const baseUrl of [
+      "https://jira.example.com/?tenant=acme",
+      "https://jira.example.com/#tickets",
+      "https://jira.example.com/?",
+      "https://jira.example.com/#",
+    ]) {
+      expect(() =>
+        decodeServerSettingsPatch({
+          ticketProviderInstances: {
+            jira_work: { driver: "jira", baseUrl },
+          },
+        }),
+      ).toThrow();
+    }
   });
 });

@@ -23,6 +23,7 @@ import {
   TurnId,
 } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
+import { TicketProviderBindings, TicketTitlePolicy } from "./ticketProvider.ts";
 
 export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
@@ -291,6 +292,8 @@ export const OrchestrationProject = Schema.Struct({
   // Per-project override for where new threads start. Null/absent means
   // "no override": clients fall back to t3.json, then the global setting.
   defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
+  ticketTitlePolicy: Schema.optional(Schema.NullOr(TicketTitlePolicy)),
+  ticketProviderBindings: Schema.optional(TicketProviderBindings),
   // Optional on the wire so cached snapshots from older servers still decode.
   faviconPath: Schema.optional(Schema.NullOr(ProjectFaviconPath)),
   scripts: Schema.Array(ProjectScript),
@@ -438,6 +441,7 @@ export const OrchestrationThread = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
+  titleRevision: Schema.optional(NonNegativeInt),
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode.pipe(
@@ -502,6 +506,8 @@ export const OrchestrationProjectShell = Schema.Struct({
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.NullOr(ModelSelection),
   defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
+  ticketTitlePolicy: Schema.optional(Schema.NullOr(TicketTitlePolicy)),
+  ticketProviderBindings: Schema.optional(TicketProviderBindings),
   // Optional on the wire so cached snapshots from older servers still decode.
   faviconPath: Schema.optional(Schema.NullOr(ProjectFaviconPath)),
   scripts: Schema.Array(ProjectScript),
@@ -721,6 +727,8 @@ const ProjectMetaUpdateCommand = Schema.Struct({
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   // Absent = leave unchanged; null = clear the override.
   defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
+  ticketTitlePolicy: Schema.optional(Schema.NullOr(TicketTitlePolicy)),
+  ticketProviderBindings: Schema.optional(TicketProviderBindings),
   faviconPath: Schema.optional(Schema.NullOr(ProjectFaviconPath)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
 });
@@ -835,6 +843,8 @@ const ThreadMetaUpdateCommand = Schema.Struct({
   commandId: CommandId,
   threadId: ThreadId,
   title: Schema.optional(TrimmedNonEmptyString),
+  expectedTitle: Schema.optional(TrimmedNonEmptyString),
+  expectedTitleRevision: Schema.optional(NonNegativeInt),
   regenerateTitle: Schema.optional(Schema.Literal(true)),
   modelSelection: Schema.optional(ModelSelection),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
@@ -1181,6 +1191,8 @@ export const ProjectMetaUpdatedPayload = Schema.Struct({
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
+  ticketTitlePolicy: Schema.optional(Schema.NullOr(TicketTitlePolicy)),
+  ticketProviderBindings: Schema.optional(TicketProviderBindings),
   faviconPath: Schema.optional(Schema.NullOr(ProjectFaviconPath)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
   updatedAt: IsoDateTime,

@@ -1,0 +1,228 @@
+name: Fork release
+
+on:
+  push:
+    branches:
+      - fork-main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fork-release
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    if: github.repository == 'matheustimbo/t3code'
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - id: version
+        name: Resolve fork version
+        shell: bash
+        run: |
+          version="0.1.${GITHUB_RUN_NUMBER}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+  server:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout fork release
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=t3...
+              - --filter=@t3tools/web...
+              - --filter=@t3tools/scripts...
+
+      - name: Build versioned server package
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ needs.prepare.outputs.version }}"
+          node scripts/update-release-package-versions.ts "$version"
+          vp run --filter t3 build
+          node apps/server/scripts/cli.ts pack \
+            --app-version "$version" \
+            --pack-destination release-server \
+            --verbose
+          test -f "release-server/t3-${version}.tgz"
+          tar -tzf "release-server/t3-${version}.tgz" package/dist/bin.mjs >/dev/null
+          test "$(npx --yes --package="$GITHUB_WORKSPACE/release-server/t3-${version}.tgz" t3 --version)" = "t3 v${version}"
+          cp "release-server/t3-${version}.tgz" release-server/t3-latest.tgz
+
+      - name: Upload server packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: fork-server
+          path: release-server/*.tgz
+          if-no-files-found: error
+          retention-days: 1
+
+  desktop_mac:
+    needs: prepare
+    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            rust_target: aarch64-apple-darwin
+          - arch: x64
+            rust_target: x86_64-apple-darwin
+    steps:
+      - name: Checkout fork release
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: false
+
+      - name: Install desktop dependencies
+        run: vp install --filter=@t3tools/desktop... --filter=t3... --filter=@t3tools/scripts...
+
+      - name: Setup Rust targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - name: Build fork desktop
+        env:
+          T3CODE_DESKTOP_DISTRIBUTION_LABEL: Fork
+          T3CODE_DESKTOP_UPDATE_REPOSITORY: matheustimbo/t3code
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ needs.prepare.outputs.version }}"
+          node scripts/update-release-package-versions.ts "$version"
+          vp run dist:desktop:artifact \
+            --platform mac \
+            --target dmg \
+            --arch "${{ matrix.arch }}" \
+            --build-version "$version" \
+            --adhoc-sign \
+            --verbose
+
+          mkdir -p release-mac
+          shopt -s nullglob
+          for pattern in release/*.dmg release/*.zip release/*.blockmap release/*.yml; do
+            for file in $pattern; do
+              cp "$file" release-mac/
+            done
+          done
+          test -n "$(find release-mac -maxdepth 1 -name '*.dmg' -print -quit)"
+          test -n "$(find release-mac -maxdepth 1 -name '*.zip' -print -quit)"
+          test -f release-mac/latest-mac.yml
+
+          if [[ "${{ matrix.arch }}" == "x64" ]]; then
+            mv release-mac/latest-mac.yml release-mac/latest-mac-x64.yml
+          fi
+
+      - name: Upload desktop packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: fork-desktop-mac-${{ matrix.arch }}
+          path: release-mac/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+
+  release:
+    needs: [prepare, server, desktop_mac]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout release tooling
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@t3tools/scripts...
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: fork-*
+          merge-multiple: true
+          path: release-assets
+
+      - name: Merge macOS updater manifests
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/merge-update-manifests.ts \
+            --platform mac \
+            release-assets/latest-mac.yml \
+            release-assets/latest-mac-x64.yml
+          rm release-assets/latest-mac-x64.yml
+
+      - name: Generate fork release notes
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t release_tags < <(git tag --list 'v0.1.*' --sort=-version:refname)
+          previous_tag="${release_tags[0]:-}"
+          range="${GITHUB_SHA}"
+          if [[ -n "$previous_tag" ]]; then
+            range="${previous_tag}..${GITHUB_SHA}"
+          fi
+
+          {
+            echo "## What's changed"
+            git log --no-merges --format='- %s' "$range"
+            if [[ -n "$previous_tag" ]]; then
+              echo
+              echo "**Full Changelog**: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/compare/${previous_tag}...${RELEASE_TAG}"
+            fi
+          } > fork-release-notes.md
+
+      - name: Publish fork release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: T3 Code Fork ${{ needs.prepare.outputs.version }}
+          body_path: fork-release-notes.md
+          make_latest: true
+          files: release-assets/*
+          fail_on_unmatched_files: true

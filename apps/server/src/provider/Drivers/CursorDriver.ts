@@ -13,6 +13,7 @@
  */
 import { CursorSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -40,6 +41,8 @@ import {
 } from "../ProviderDriver.ts";
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
+import { readCursorUsageLimits } from "../providerUsageLimitReaders.ts";
+import { makeUnavailableUsageLimits, pollProviderUsageLimits } from "../providerUsageLimits.ts";
 import {
   makeProviderMaintenanceCapabilities,
   type ProviderMaintenanceCapabilitiesResolver,
@@ -151,16 +154,50 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         checkProvider,
         // Model catalog and capabilities come exclusively from Cursor's
         // list_available_models extension method during provider checks.
-        enrichSnapshot: ({ settings, snapshot: currentSnapshot, publishSnapshot }) =>
-          enrichCursorSnapshot({
-            settings: settings.provider,
-            snapshot: currentSnapshot,
-            maintenanceCapabilities,
-            enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
-            publishSnapshot,
-            stampIdentity,
-            httpClient,
-          }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner)),
+        enrichSnapshot: ({
+          settings,
+          snapshot: currentSnapshot,
+          getSnapshot,
+          publishSnapshot,
+          backgroundPolicy,
+        }) =>
+          Effect.gen(function* () {
+            yield* enrichCursorSnapshot({
+              settings: settings.provider,
+              snapshot: currentSnapshot,
+              maintenanceCapabilities,
+              enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
+              publishSnapshot,
+              stampIdentity,
+              httpClient,
+            }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+            if (!settings.provider.usageLimitsEnabled) {
+              const current = yield* getSnapshot;
+              yield* publishSnapshot({
+                ...current,
+                usageLimits: makeUnavailableUsageLimits({
+                  source: "cursor-private-api",
+                  support: "experimental",
+                  checkedAt: DateTime.formatIso(yield* DateTime.now),
+                  status: "disabled",
+                  message: "Experimental Cursor plan limits are disabled in provider settings.",
+                  dashboardUrl: "https://cursor.com/dashboard?tab=usage",
+                }),
+              });
+              return;
+            }
+            return yield* pollProviderUsageLimits({
+              instanceId,
+              getSnapshot,
+              publishSnapshot,
+              read: readCursorUsageLimits(settings.provider, processEnv).pipe(
+                Effect.provideService(FileSystem.FileSystem, fileSystem),
+                Effect.provideService(Path.Path, path),
+                Effect.provideService(HttpClient.HttpClient, httpClient),
+              ),
+              backgroundPolicy,
+            });
+          }),
       }).pipe(
         Effect.mapError(
           (cause) =>

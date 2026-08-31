@@ -215,6 +215,8 @@ export function projectEvent(
             workspaceRoot: payload.workspaceRoot,
             defaultModelSelection: payload.defaultModelSelection,
             defaultThreadEnvMode: null,
+            ticketTitlePolicy: null,
+            ticketProviderBindings: [],
             faviconPath: payload.faviconPath ?? null,
             scripts: payload.scripts,
             createdAt: payload.createdAt,
@@ -250,6 +252,12 @@ export function projectEvent(
                     : {}),
                   ...(payload.defaultThreadEnvMode !== undefined
                     ? { defaultThreadEnvMode: payload.defaultThreadEnvMode }
+                    : {}),
+                  ...(payload.ticketTitlePolicy !== undefined
+                    ? { ticketTitlePolicy: payload.ticketTitlePolicy }
+                    : {}),
+                  ...(payload.ticketProviderBindings !== undefined
+                    ? { ticketProviderBindings: payload.ticketProviderBindings }
                     : {}),
                   ...(payload.faviconPath !== undefined
                     ? { faviconPath: payload.faviconPath }
@@ -292,6 +300,7 @@ export function projectEvent(
             id: payload.threadId,
             projectId: payload.projectId,
             title: payload.title,
+            titleRevision: 0,
             modelSelection: payload.modelSelection,
             runtimeMode: payload.runtimeMode,
             interactionMode: payload.interactionMode,
@@ -459,7 +468,14 @@ export function projectEvent(
         Effect.map((payload) => ({
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
-            ...(payload.title !== undefined ? { title: payload.title } : {}),
+            ...(payload.title !== undefined
+              ? {
+                  title: payload.title,
+                  titleRevision:
+                    (nextBase.threads.find((thread) => thread.id === payload.threadId)
+                      ?.titleRevision ?? 0) + 1,
+                }
+              : {}),
             ...(payload.titleRegeneration !== undefined
               ? { titleRegeneration: payload.titleRegeneration }
               : {}),

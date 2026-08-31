@@ -63,6 +63,10 @@ import * as Clock from "effect/Clock";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import * as GitWorkflowService from "../../git/GitWorkflowService.ts";
+import {
+  TicketProviderRegistry,
+  TicketProviderResolveError,
+} from "../../ticket/TicketProviderRegistry.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asApprovalRequestId = (value: string): ApprovalRequestId => ApprovalRequestId.make(value);
@@ -309,6 +313,14 @@ describe("ProviderCommandReactor", () => {
         }),
       ),
     );
+    const resolveTicket = vi.fn<TicketProviderRegistry["Service"]["resolve"]>((input) =>
+      Effect.fail(
+        new TicketProviderResolveError({
+          driver: input.reference.driver,
+          reason: "no-instance",
+        }),
+      ),
+    );
     const providerSnapshots = [
       {
         instanceId: modelSelection.instanceId,
@@ -427,6 +439,13 @@ describe("ProviderCommandReactor", () => {
         }),
       ),
       Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(
+        Layer.succeed(TicketProviderRegistry, {
+          resolve: resolveTicket,
+          probe: (input) =>
+            Effect.succeed({ instanceId: input.instanceId, availability: "unavailable" }),
+        }),
+      ),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
       Layer.provideMerge(NodeServices.layer),
     );
@@ -518,6 +537,7 @@ describe("ProviderCommandReactor", () => {
       refreshStatus,
       generateBranchName,
       generateThreadTitle,
+      resolveTicket,
       runtimeSessions,
       stateDir,
       drain,
@@ -741,6 +761,257 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.title).toBe("Generated title");
     expect(attempts).toBe(2);
   });
+
+  effectIt.effect("replaces the generated first-turn title with the linked ticket title", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() => createHarness());
+      const generatedTitle = yield* Deferred.make<{ readonly title: string }>();
+      const ticket = yield* Deferred.make<{
+        readonly title: string;
+        readonly identifier: string;
+        readonly provider: string;
+        readonly project: string;
+      }>();
+      const seededTitle = "Please investigate https://github.com/acme/widgets/...";
+      harness.generateThreadTitle.mockReturnValue(Deferred.await(generatedTitle));
+      harness.resolveTicket.mockReturnValue(Deferred.await(ticket));
+
+      yield* harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-ticket-title-seed"),
+        threadId: ThreadId.make("thread-1"),
+        title: seededTitle,
+      });
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-ticket-title"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-ticket-title"),
+          role: "user",
+          text: "Please investigate https://github.com/acme/widgets/issues/12",
+          attachments: [],
+        },
+        titleSeed: seededTitle,
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      });
+
+      yield* Effect.promise(() => waitFor(() => harness.resolveTicket.mock.calls.length === 1));
+      yield* Deferred.succeed(generatedTitle, { title: "Generated title" });
+      yield* Effect.promise(() =>
+        waitFor(async () => {
+          const readModel = await harness.readModel();
+          return (
+            readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"))?.title ===
+            "Generated title"
+          );
+        }),
+      );
+      yield* Deferred.succeed(ticket, {
+        title: "Fix reconnect failures",
+        identifier: "acme/widgets#12",
+        provider: "GitHub",
+        project: "acme/widgets",
+      });
+      yield* Effect.promise(() =>
+        waitFor(async () => {
+          const readModel = await harness.readModel();
+          return (
+            readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"))?.title ===
+            "acme/widgets#12 — Fix reconnect failures"
+          );
+        }),
+      );
+
+      const readModel = yield* Effect.promise(() => harness.readModel());
+      expect(readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"))?.title).toBe(
+        "acme/widgets#12 — Fix reconnect failures",
+      );
+    }),
+  );
+
+  effectIt.effect("preserves a manual rename even when it repeats the generated title", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() => createHarness());
+      const ticket = yield* Deferred.make<{
+        readonly title: string;
+        readonly identifier: string;
+        readonly provider: string;
+        readonly project: string;
+      }>();
+      const seededTitle = "Please investigate https://github.com/acme/widgets/...";
+      harness.generateThreadTitle.mockReturnValue(Effect.succeed({ title: "Generated title" }));
+      harness.resolveTicket.mockReturnValue(Deferred.await(ticket));
+
+      yield* harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-ticket-same-title-seed"),
+        threadId: ThreadId.make("thread-1"),
+        title: seededTitle,
+      });
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-ticket-same-title"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-ticket-same-title"),
+          role: "user",
+          text: "Please investigate https://github.com/acme/widgets/issues/12",
+          attachments: [],
+        },
+        titleSeed: seededTitle,
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      });
+
+      yield* Effect.promise(() =>
+        waitFor(async () => {
+          const readModel = await harness.readModel();
+          return (
+            readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"))?.title ===
+            "Generated title"
+          );
+        }),
+      );
+      yield* harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-ticket-same-title-manual"),
+        threadId: ThreadId.make("thread-1"),
+        title: "Generated title",
+      });
+      yield* Deferred.succeed(ticket, {
+        title: "Fix reconnect failures",
+        identifier: "acme/widgets#12",
+        provider: "GitHub",
+        project: "acme/widgets",
+      });
+      yield* Effect.promise(() => harness.drain());
+
+      const readModel = yield* Effect.promise(() => harness.readModel());
+      expect(readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"))?.title).toBe(
+        "Generated title",
+      );
+    }),
+  );
+
+  effectIt.effect("preserves a manual rename while generated and ticket titles are pending", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() => createHarness());
+      const generatedTitle = yield* Deferred.make<{ readonly title: string }>();
+      const ticket = yield* Deferred.make<{
+        readonly title: string;
+        readonly identifier: string;
+        readonly provider: string;
+        readonly project: string;
+      }>();
+      const seededTitle = "Please investigate https://github.com/acme/widgets/...";
+      harness.generateThreadTitle.mockReturnValue(Deferred.await(generatedTitle));
+      harness.resolveTicket.mockReturnValue(Deferred.await(ticket));
+
+      yield* harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-ticket-pending-seed"),
+        threadId: ThreadId.make("thread-1"),
+        title: seededTitle,
+      });
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-ticket-pending"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-ticket-pending"),
+          role: "user",
+          text: "Please investigate https://github.com/acme/widgets/issues/12",
+          attachments: [],
+        },
+        titleSeed: seededTitle,
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      });
+
+      yield* Effect.promise(() => waitFor(() => harness.resolveTicket.mock.calls.length === 1));
+      yield* harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-ticket-pending-manual"),
+        threadId: ThreadId.make("thread-1"),
+        title: seededTitle,
+      });
+      yield* Deferred.succeed(generatedTitle, { title: "Generated title" });
+      yield* Deferred.succeed(ticket, {
+        title: "Fix reconnect failures",
+        identifier: "acme/widgets#12",
+        provider: "GitHub",
+        project: "acme/widgets",
+      });
+      yield* Effect.promise(() => harness.drain());
+
+      const readModel = yield* Effect.promise(() => harness.readModel());
+      expect(readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"))?.title).toBe(
+        seededTitle,
+      );
+    }),
+  );
+
+  effectIt.effect("does not replace a manual rename while the ticket lookup is running", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() => createHarness());
+      const ticket = yield* Deferred.make<{
+        readonly title: string;
+        readonly identifier: string;
+        readonly provider: string;
+        readonly project: string;
+      }>();
+      const seededTitle = "Please investigate https://github.com/acme/widgets/...";
+      harness.generateThreadTitle.mockReturnValue(Effect.succeed({ title: "Generated title" }));
+      harness.resolveTicket.mockReturnValue(Deferred.await(ticket));
+
+      yield* harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-ticket-race-seed"),
+        threadId: ThreadId.make("thread-1"),
+        title: seededTitle,
+      });
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-ticket-race"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-ticket-race"),
+          role: "user",
+          text: "Please investigate https://github.com/acme/widgets/issues/12",
+          attachments: [],
+        },
+        titleSeed: seededTitle,
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      });
+
+      yield* Effect.promise(() => waitFor(() => harness.resolveTicket.mock.calls.length === 1));
+      yield* harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-ticket-race-manual"),
+        threadId: ThreadId.make("thread-1"),
+        title: "Keep manual rename",
+      });
+      yield* Deferred.succeed(ticket, {
+        title: "Fix reconnect failures",
+        identifier: "acme/widgets#12",
+        provider: "GitHub",
+        project: "acme/widgets",
+      });
+      yield* Effect.promise(() => harness.drain());
+
+      const readModel = yield* Effect.promise(() => harness.readModel());
+      expect(readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"))?.title).toBe(
+        "Keep manual rename",
+      );
+    }),
+  );
 
   it("regenerates a thread title from the current conversation", async () => {
     const harness = await createHarness();

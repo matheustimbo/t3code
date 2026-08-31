@@ -1,4 +1,11 @@
-import { CommandId, EventId, ProjectId, type OrchestrationEvent } from "@t3tools/contracts";
+import {
+  CommandId,
+  EventId,
+  ProjectId,
+  TicketProviderDriverKind,
+  TicketProviderInstanceId,
+  type OrchestrationEvent,
+} from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -98,6 +105,45 @@ it.layer(NodeServices.layer)("decider project defaultThreadEnvMode", (it) => {
       const clearEvent = Array.isArray(clear) ? clear[0] : clear;
       const afterClear = yield* projectEvent(afterSet, { ...clearEvent, sequence: 3 });
       expect(afterClear.projects[0]?.defaultThreadEnvMode).toBeNull();
+    }),
+  );
+
+  it.effect("propagates ticket title policy and account bindings atomically", () =>
+    Effect.gen(function* () {
+      const readModel = yield* projectEvent(createEmptyReadModel(now), seedProjectCreated(1));
+      const result = yield* decideOrchestrationCommand({
+        command: {
+          type: "project.meta.update",
+          commandId: CommandId.make("cmd-project-ticket-titles"),
+          projectId,
+          ticketTitlePolicy: {
+            mode: "custom",
+            customTemplate: "[{identifier}] {title}",
+          },
+          ticketProviderBindings: [
+            {
+              driver: TicketProviderDriverKind.make("github"),
+              host: "github.com",
+              instanceId: TicketProviderInstanceId.make("github_work"),
+            },
+          ],
+        },
+        readModel,
+      });
+      const event = Array.isArray(result) ? result[0] : result;
+      const updated = yield* projectEvent(readModel, { ...event, sequence: 2 });
+
+      expect(updated.projects[0]?.ticketTitlePolicy).toEqual({
+        mode: "custom",
+        customTemplate: "[{identifier}] {title}",
+      });
+      expect(updated.projects[0]?.ticketProviderBindings).toEqual([
+        {
+          driver: "github",
+          host: "github.com",
+          instanceId: "github_work",
+        },
+      ]);
     }),
   );
 });

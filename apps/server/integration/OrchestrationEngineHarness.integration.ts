@@ -83,6 +83,10 @@ import { VcsStatusBroadcaster } from "../src/vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../src/git/GitWorkflowService.ts";
 import * as VcsProcess from "../src/vcs/VcsProcess.ts";
 import * as AgentAwarenessRelay from "../src/relay/AgentAwarenessRelay.ts";
+import {
+  TicketProviderRegistry,
+  TicketProviderResolveError,
+} from "../src/ticket/TicketProviderRegistry.ts";
 
 const decodeCodexSettings = Schema.decodeEffect(CodexSettings);
 
@@ -337,6 +341,19 @@ export const makeOrchestrationIntegrationHarness = (
       Layer.provideMerge(gitWorkflowLayer),
       Layer.provideMerge(textGenerationLayer),
       Layer.provideMerge(serverSettingsLayer),
+      Layer.provideMerge(
+        Layer.succeed(TicketProviderRegistry, {
+          resolve: (input) =>
+            Effect.fail(
+              new TicketProviderResolveError({
+                driver: input.reference.driver,
+                reason: "no-instance",
+              }),
+            ),
+          probe: (input) =>
+            Effect.succeed({ instanceId: input.instanceId, availability: "unavailable" }),
+        }),
+      ),
     );
     const checkpointReactorLayer = CheckpointReactorLive.pipe(
       Layer.provideMerge(runtimeServicesLayer),

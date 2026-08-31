@@ -42,6 +42,8 @@ export interface Preferences {
   readonly legacyThreadListEnabled?: boolean;
   /** Device-local counterpart of desktop's `planModeEnabled` legacy flag. */
   readonly planModeEnabled?: boolean;
+  /** Last selected Usage screen tab. Undefined starts with plan limits. */
+  readonly usageTab?: "limits" | "local";
   /** Undefined preserves the default expanded Settled shelf. */
   readonly threadListV2SettledShelfExpanded?: boolean;
   /** Undefined preserves the default collapsed Snoozed shelf. */
@@ -104,6 +106,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     autoSettleOnMerge?: boolean;
     legacyThreadListEnabled?: boolean;
     planModeEnabled?: boolean;
+    usageTab?: "limits" | "local";
     threadListV2SettledShelfExpanded?: boolean;
     threadListV2SnoozedShelfExpanded?: boolean;
   } = {};
@@ -175,6 +178,9 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (typeof parsed.planModeEnabled === "boolean") {
     preferences.planModeEnabled = parsed.planModeEnabled;
+  }
+  if (parsed.usageTab === "limits" || parsed.usageTab === "local") {
+    preferences.usageTab = parsed.usageTab;
   }
   if (typeof parsed.threadListV2SettledShelfExpanded === "boolean") {
     preferences.threadListV2SettledShelfExpanded = parsed.threadListV2SettledShelfExpanded;

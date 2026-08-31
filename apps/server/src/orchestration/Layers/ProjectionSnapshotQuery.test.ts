@@ -278,6 +278,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             model: "gpt-5-codex",
           },
           faviconPath: null,
+          ticketTitlePolicy: null,
+          ticketProviderBindings: [],
           scripts: [
             {
               id: "script-1",
@@ -298,6 +300,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           id: ThreadId.make("thread-1"),
           projectId: asProjectId("project-1"),
           title: "Thread 1",
+          titleRevision: 0,
           modelSelection: {
             instanceId: ProviderInstanceId.make("codex"),
             model: "gpt-5-codex",
@@ -405,6 +408,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             model: "gpt-5-codex",
           },
           faviconPath: null,
+          ticketTitlePolicy: null,
+          ticketProviderBindings: [],
           scripts: [
             {
               id: "script-1",

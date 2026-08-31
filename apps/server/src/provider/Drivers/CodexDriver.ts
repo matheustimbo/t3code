@@ -36,13 +36,20 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeCodexAdapter } from "../Layers/CodexAdapter.ts";
-import { checkCodexProviderStatus, makePendingCodexProvider } from "../Layers/CodexProvider.ts";
+import {
+  checkCodexProviderStatus,
+  makePendingCodexProvider,
+  readCodexUsageLimits,
+} from "../Layers/CodexProvider.ts";
+import { resolveCodexLaunchArgs } from "../Layers/codexLaunchArgs.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import * as ModelManifest from "../ModelManifest.ts";
 import type { ProviderDriver, ProviderInstance } from "../ProviderDriver.ts";
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
+import { pollProviderUsageLimits } from "../providerUsageLimits.ts";
+import { readCliProxyCodexUsageLimits } from "../providerUsageLimitReaders.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
   makePackageManagedProviderMaintenanceResolver,
@@ -198,13 +205,32 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
               stampIdentity(ModelManifest.applyModelManifest(draft, manifest, DRIVER_KIND)),
           ),
         checkProvider,
-        enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
-          enrichProviderSnapshotWithVersionAdvisory(snapshot, maintenanceCapabilities, {
-            enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
-          }).pipe(
-            Effect.provideService(HttpClient.HttpClient, httpClient),
-            Effect.flatMap((enrichedSnapshot) => publishSnapshot(enrichedSnapshot)),
-          ),
+        enrichSnapshot: ({ settings, snapshot, getSnapshot, publishSnapshot, backgroundPolicy }) =>
+          Effect.gen(function* () {
+            const enrichedSnapshot = yield* enrichProviderSnapshotWithVersionAdvisory(
+              snapshot,
+              maintenanceCapabilities,
+              { enableProviderUpdateChecks: settings.enableProviderUpdateChecks },
+            ).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
+            yield* publishSnapshot(enrichedSnapshot);
+            return yield* pollProviderUsageLimits({
+              instanceId,
+              getSnapshot,
+              publishSnapshot,
+              read: processEnv.CLIPROXYAPI_MANAGEMENT_KEY?.trim()
+                ? readCliProxyCodexUsageLimits(processEnv).pipe(
+                    Effect.provideService(HttpClient.HttpClient, httpClient),
+                  )
+                : readCodexUsageLimits({
+                    binaryPath: settings.provider.binaryPath,
+                    homePath: settings.provider.homePath,
+                    launchArgs: resolveCodexLaunchArgs(settings.provider.launchArgs, processEnv),
+                    cwd: process.cwd(),
+                    environment: processEnv,
+                  }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner)),
+              backgroundPolicy,
+            });
+          }),
       }).pipe(
         Effect.mapError(
           (cause) =>

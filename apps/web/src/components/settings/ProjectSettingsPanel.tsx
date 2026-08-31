@@ -12,12 +12,16 @@ import {
   deriveProjectGroupingOverrideKey,
   selectProjectGroupingSettings,
 } from "../../logicalProject";
+import { TicketProviderDriverKind, TicketProviderInstanceId } from "@t3tools/contracts";
 import type {
   ContextMenuItem,
   ModelSelection,
   ProviderDriverKind,
   SidebarProjectGroupingMode,
   T3ProjectFileScript,
+  TicketProviderBindings,
+  TicketProviderInstanceConfig,
+  TicketTitlePolicy,
   ThreadEnvMode,
 } from "@t3tools/contracts";
 import { resolveEnvModeLabel } from "../BranchToolbar.logic";
@@ -39,6 +43,7 @@ import { useComposerDraftStore } from "../../composerDraftStore";
 import { isElectron } from "../../env";
 import {
   useClientSettings,
+  useEnvironmentSettings,
   useUpdateClientSettings,
   usePrimarySettings,
 } from "../../hooks/useSettings";
@@ -114,6 +119,11 @@ import {
   ProjectFaviconPickerDialog,
 } from "./ProjectFaviconPickerDialog";
 import { projectGroupTitleNeedsUpdate } from "./ProjectSettingsPanel.logic";
+import { TicketTitlePolicySettings } from "./TicketProviderSettings";
+
+function ticketProviderBasePath(value: string): string {
+  return new URL(value).pathname.replace(/\/+$/u, "");
+}
 
 export const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> = {
   repository: "Group by repository",
@@ -364,6 +374,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
         title: string;
         defaultModelSelection: ModelSelection | null;
         defaultThreadEnvMode: ThreadEnvMode | null;
+        ticketTitlePolicy: TicketTitlePolicy | null;
         faviconPath: string | null;
       }>,
       failureTitle: string,
@@ -448,6 +459,80 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
       ),
     [updateAllMembers],
   );
+  const storedTicketTitlePolicy = representative.ticketTitlePolicy ?? null;
+  const ticketTitlePolicyMutationQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const pendingTicketTitlePolicyMutationsRef = useRef(0);
+  const ticketTitlePolicyByProjectRef = useRef(
+    new Map(
+      group.memberProjects.map((member) => [member.id, member.ticketTitlePolicy ?? null] as const),
+    ),
+  );
+  useEffect(() => {
+    if (pendingTicketTitlePolicyMutationsRef.current === 0) {
+      ticketTitlePolicyByProjectRef.current = new Map(
+        group.memberProjects.map(
+          (member) => [member.id, member.ticketTitlePolicy ?? null] as const,
+        ),
+      );
+    }
+  }, [group.memberProjects]);
+  const setTicketTitlePolicy = useCallback(
+    (ticketTitlePolicy: TicketTitlePolicy | null) => {
+      pendingTicketTitlePolicyMutationsRef.current += 1;
+      const operation = ticketTitlePolicyMutationQueueRef.current.then(async () => {
+        const previousPolicies = new Map(ticketTitlePolicyByProjectRef.current);
+        const updatedMembers: Array<(typeof group.memberProjects)[number]> = [];
+        for (const member of group.memberProjects) {
+          const result = mapAtomCommandResult(
+            await updateProject({
+              environmentId: member.environmentId,
+              input: { projectId: member.id, ticketTitlePolicy },
+            }),
+            () => undefined,
+          );
+          if (result._tag === "Success") {
+            updatedMembers.push(member);
+            continue;
+          }
+
+          for (const updatedMember of updatedMembers.toReversed()) {
+            const rollback = mapAtomCommandResult(
+              await updateProject({
+                environmentId: updatedMember.environmentId,
+                input: {
+                  projectId: updatedMember.id,
+                  ticketTitlePolicy: previousPolicies.get(updatedMember.id) ?? null,
+                },
+              }),
+              () => undefined,
+            );
+            if (rollback._tag === "Failure") {
+              reportFailure("Failed to roll back ticket title settings", rollback);
+            }
+          }
+          reportFailure(
+            group.memberProjects.length > 1
+              ? `Failed to update ticket title settings on ${member.environmentLabel ?? "the current environment"}`
+              : "Failed to update ticket title settings",
+            result,
+          );
+          return;
+        }
+        ticketTitlePolicyByProjectRef.current = new Map(
+          group.memberProjects.map((member) => [member.id, ticketTitlePolicy] as const),
+        );
+      });
+      ticketTitlePolicyMutationQueueRef.current = operation.then(
+        () => {
+          pendingTicketTitlePolicyMutationsRef.current -= 1;
+        },
+        () => {
+          pendingTicketTitlePolicyMutationsRef.current -= 1;
+        },
+      );
+    },
+    [group.memberProjects, reportFailure, updateProject],
+  );
 
   // ----- favicon -----
   const [faviconPickerOpen, setFaviconPickerOpen] = useState(false);
@@ -473,6 +558,139 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
   const selectedCheckout =
     group.memberProjects.find((member) => member.physicalProjectKey === selectedCheckoutKey) ??
     representative;
+  const selectedCheckoutSettings = useEnvironmentSettings(selectedCheckout.environmentId);
+  const ticketProviderGroups = useMemo(() => {
+    const groups = new Map<
+      string,
+      {
+        readonly driver: string;
+        readonly host: string;
+        readonly basePath: string;
+        readonly instances: ReadonlyArray<readonly [string, TicketProviderInstanceConfig]>;
+      }
+    >();
+    for (const [instanceId, instance] of Object.entries(
+      selectedCheckoutSettings.ticketProviderInstances,
+    )) {
+      if (instance.enabled === false) continue;
+      let host: string;
+      let basePath: string;
+      try {
+        const url = new URL(instance.baseUrl);
+        host = url.host.toLowerCase();
+        basePath = ticketProviderBasePath(instance.baseUrl);
+      } catch {
+        continue;
+      }
+      const key = `${instance.driver}:${host}:${basePath}`;
+      const existing = groups.get(key);
+      groups.set(key, {
+        driver: instance.driver,
+        host,
+        basePath,
+        instances: [...(existing?.instances ?? []), [instanceId, instance]],
+      });
+    }
+    for (const binding of selectedCheckout.ticketProviderBindings ?? []) {
+      const host = binding.host.toLowerCase();
+      const basePath = binding.basePath ?? "";
+      const key = `${binding.driver}:${host}:${basePath}`;
+      if (!groups.has(key)) {
+        groups.set(key, { driver: binding.driver, host, basePath, instances: [] });
+      }
+    }
+    return [...groups.values()];
+  }, [selectedCheckout.ticketProviderBindings, selectedCheckoutSettings.ticketProviderInstances]);
+  const selectedTicketProviderBindings = selectedCheckout.ticketProviderBindings ?? [];
+  const ticketProviderBindingsRef = useRef({
+    projectId: selectedCheckout.id,
+    bindings: selectedTicketProviderBindings,
+  });
+  const confirmedTicketProviderBindingsRef = useRef(
+    new Map([[selectedCheckout.id, selectedTicketProviderBindings] as const]),
+  );
+  const ticketProviderBindingMutationQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const pendingTicketProviderBindingMutationsRef = useRef(0);
+  useEffect(() => {
+    if (pendingTicketProviderBindingMutationsRef.current === 0) {
+      const snapshot = {
+        projectId: selectedCheckout.id,
+        bindings: selectedTicketProviderBindings,
+      };
+      ticketProviderBindingsRef.current = snapshot;
+      confirmedTicketProviderBindingsRef.current.set(
+        selectedCheckout.id,
+        selectedTicketProviderBindings,
+      );
+    }
+  }, [selectedCheckout.id, selectedTicketProviderBindings]);
+  const setTicketProviderBinding = useCallback(
+    (driver: string, host: string, basePath: string, instanceId: string | null) => {
+      const current =
+        ticketProviderBindingsRef.current.projectId === selectedCheckout.id
+          ? ticketProviderBindingsRef.current.bindings
+          : selectedTicketProviderBindings;
+      const withoutBinding = current.filter(
+        (binding) =>
+          !(
+            binding.driver === driver &&
+            binding.host.toLowerCase() === host &&
+            (binding.basePath ?? "") === basePath
+          ),
+      );
+      const next: TicketProviderBindings = instanceId
+        ? [
+            ...withoutBinding,
+            {
+              driver: TicketProviderDriverKind.make(driver),
+              host,
+              ...(basePath ? { basePath } : {}),
+              instanceId: TicketProviderInstanceId.make(instanceId),
+            },
+          ]
+        : withoutBinding;
+      ticketProviderBindingsRef.current = { projectId: selectedCheckout.id, bindings: next };
+      pendingTicketProviderBindingMutationsRef.current += 1;
+      const operation = ticketProviderBindingMutationQueueRef.current.then(async () => {
+        const mapped = mapAtomCommandResult(
+          await updateProject({
+            environmentId: selectedCheckout.environmentId,
+            input: { projectId: selectedCheckout.id, ticketProviderBindings: next },
+          }),
+          () => undefined,
+        );
+        if (mapped._tag === "Success") {
+          confirmedTicketProviderBindingsRef.current.set(selectedCheckout.id, next);
+        } else if (
+          ticketProviderBindingsRef.current.projectId === selectedCheckout.id &&
+          ticketProviderBindingsRef.current.bindings === next
+        ) {
+          ticketProviderBindingsRef.current = {
+            projectId: selectedCheckout.id,
+            bindings:
+              confirmedTicketProviderBindingsRef.current.get(selectedCheckout.id) ??
+              selectedTicketProviderBindings,
+          };
+        }
+        reportFailure("Failed to update ticket provider binding", mapped);
+      });
+      ticketProviderBindingMutationQueueRef.current = operation.then(
+        () => {
+          pendingTicketProviderBindingMutationsRef.current -= 1;
+        },
+        () => {
+          pendingTicketProviderBindingMutationsRef.current -= 1;
+        },
+      );
+    },
+    [
+      reportFailure,
+      selectedCheckout.environmentId,
+      selectedCheckout.id,
+      selectedTicketProviderBindings,
+      updateProject,
+    ],
+  );
   const selectedServerConfig = useAtomValue(
     serverEnvironment.configValueAtom(selectedCheckout.environmentId),
   );
@@ -926,6 +1144,14 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
               </Select>
             }
           />
+          <TicketTitlePolicySettings
+            policy={storedTicketTitlePolicy}
+            {...(group.memberProjects.length === 1
+              ? { inheritedPolicy: selectedCheckoutSettings.ticketTitlePolicy }
+              : { inheritedLabel: "Default (per checkout)" })}
+            allowInherit
+            onChange={setTicketTitlePolicy}
+          />
         </SettingsSection>
 
         <SettingsSection
@@ -1024,6 +1250,71 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
               </Select>
             }
           />
+          {ticketProviderGroups.map((providerGroup) => {
+            const binding = selectedTicketProviderBindings.find(
+              (candidate) =>
+                candidate.driver === providerGroup.driver &&
+                candidate.host.toLowerCase() === providerGroup.host &&
+                (candidate.basePath ?? "") === providerGroup.basePath,
+            );
+            const providerLocation = `${providerGroup.host}${providerGroup.basePath}`;
+            return (
+              <SettingsRow
+                key={`${providerGroup.driver}:${providerLocation}`}
+                title={`${providerLocation} ticket account`}
+                description="Choose the exact account this checkout uses for ticket links, or use the environment default."
+                resetAction={
+                  binding ? (
+                    <SettingResetButton
+                      label={`${providerLocation} ticket account`}
+                      onClick={() =>
+                        setTicketProviderBinding(
+                          providerGroup.driver,
+                          providerGroup.host,
+                          providerGroup.basePath,
+                          null,
+                        )
+                      }
+                    />
+                  ) : null
+                }
+                control={
+                  <Select
+                    value={binding?.instanceId ?? "automatic"}
+                    onValueChange={(value) =>
+                      setTicketProviderBinding(
+                        providerGroup.driver,
+                        providerGroup.host,
+                        providerGroup.basePath,
+                        value === "automatic" ? null : String(value),
+                      )
+                    }
+                  >
+                    <SelectTrigger
+                      className="w-full sm:w-56"
+                      aria-label={`${providerLocation} ticket account`}
+                    >
+                      <SelectValue>
+                        {binding
+                          ? (providerGroup.instances.find(
+                              ([instanceId]) => instanceId === binding.instanceId,
+                            )?.[1].displayName ?? binding.instanceId)
+                          : "Environment default"}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectPopup align="end" alignItemWithTrigger={false}>
+                      <SelectItem value="automatic">Environment default</SelectItem>
+                      {providerGroup.instances.map(([instanceId, instance]) => (
+                        <SelectItem key={instanceId} value={instanceId}>
+                          {instance.displayName ?? instanceId}
+                        </SelectItem>
+                      ))}
+                    </SelectPopup>
+                  </Select>
+                }
+              />
+            );
+          })}
           {group.memberProjects.length > 1 ? (
             <SettingsRow
               title="Remove checkout"

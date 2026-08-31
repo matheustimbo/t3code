@@ -1,8 +1,9 @@
 import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/contracts";
+import { T3CODE_DISTRIBUTION_URLS } from "@t3tools/shared/distribution";
 
 export type DesktopUpdateButtonAction = "download" | "install" | "none";
 
-const DESKTOP_RELEASE_TAG_URL = "https://github.com/pingdotgg/t3code/releases/tag";
+const DESKTOP_RELEASE_TAG_URL = T3CODE_DISTRIBUTION_URLS.releaseTags;
 
 /**
  * The main process fills `downloadedVersion` from the updater's `update-downloaded`
@@ -50,6 +51,12 @@ export function shouldShowDesktopUpdateButton(state: DesktopUpdateState | null):
     return true;
   }
   return resolveDesktopUpdateButtonAction(state) !== "none";
+}
+
+export function shouldShowDesktopUpdateReleaseNotes(
+  state: Pick<DesktopUpdateState, "releaseNotes">,
+): boolean {
+  return state.releaseNotes.length > 0;
 }
 
 export function shouldShowArm64IntelBuildWarning(state: DesktopUpdateState | null): boolean {

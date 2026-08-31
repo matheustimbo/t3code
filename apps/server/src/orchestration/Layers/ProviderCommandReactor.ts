@@ -10,13 +10,19 @@ import {
   ThreadId,
   type ProviderSession,
   type RuntimeMode,
+  type TicketTitlePolicy,
   type TurnId,
 } from "@t3tools/contracts";
 import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
+import {
+  extractUniqueTicketReference,
+  renderTicketThreadTitle,
+} from "@t3tools/shared/ticketTitles";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as FileSystem from "effect/FileSystem";
@@ -48,6 +54,7 @@ import {
 } from "../../serverSettings.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
+import { TicketProviderRegistry } from "../../ticket/TicketProviderRegistry.ts";
 const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
 
@@ -313,6 +320,7 @@ const make = Effect.gen(function* () {
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
   const textGeneration = yield* TextGeneration;
   const serverSettingsService = yield* ServerSettingsService;
+  const ticketProviderRegistry = yield* TicketProviderRegistry;
   const serverCommandId = (tag: string) =>
     crypto.randomUUIDv4.pipe(Effect.map((uuid) => CommandId.make(`server:${tag}:${uuid}`)));
   const serverEventId = () => crypto.randomUUIDv4.pipe(Effect.map(EventId.make));
@@ -900,9 +908,12 @@ const make = Effect.gen(function* () {
       readonly messageText: string;
       readonly attachments?: ReadonlyArray<ChatAttachment>;
       readonly titleSeed?: string;
+      readonly generatedTitle: Deferred.Deferred<CommandId | undefined>;
+      readonly expectedTitle: string;
+      readonly expectedTitleRevision: number;
     }) {
       const attachments = input.attachments ?? [];
-      yield* Effect.gen(function* () {
+      return yield* Effect.gen(function* () {
         const { textGenerationModelSelection: modelSelection } =
           yield* serverSettingsService.getSettings;
 
@@ -919,30 +930,151 @@ const make = Effect.gen(function* () {
               schedule: Schedule.exponential("2 seconds"),
             }),
           );
-        if (!generated) return;
-
-        const thread = yield* resolveThread(input.threadId);
-        if (!thread) return;
-        if (!canReplaceThreadTitle(thread.title, input.titleSeed)) {
-          return;
+        if (!generated) {
+          yield* Deferred.succeed(input.generatedTitle, undefined);
+          return undefined;
         }
 
+        const thread = yield* resolveThread(input.threadId);
+        if (!thread || !canReplaceThreadTitle(thread.title, input.titleSeed)) {
+          yield* Deferred.succeed(input.generatedTitle, undefined);
+          return undefined;
+        }
+
+        const commandId = yield* serverCommandId("thread-title-rename");
         yield* orchestrationEngine.dispatch({
           type: "thread.meta.update",
-          commandId: yield* serverCommandId("thread-title-rename"),
+          commandId,
           threadId: input.threadId,
           title: generated.title,
+          expectedTitle: input.expectedTitle,
+          expectedTitleRevision: input.expectedTitleRevision,
         });
+        yield* Deferred.succeed(input.generatedTitle, commandId);
+        return generated.title;
       }).pipe(
         Effect.catchCause((cause) =>
-          Effect.logWarning("provider command reactor failed to generate or rename thread title", {
-            threadId: input.threadId,
-            cwd: input.cwd,
-            cause: Cause.pretty(cause),
-          }),
+          Deferred.succeed(input.generatedTitle, undefined).pipe(
+            Effect.andThen(
+              Effect.logWarning(
+                "provider command reactor failed to generate or rename thread title",
+                {
+                  threadId: input.threadId,
+                  cwd: input.cwd,
+                  cause: Cause.pretty(cause),
+                },
+              ),
+            ),
+            Effect.as(undefined),
+          ),
         ),
       );
     },
+  );
+
+  const effectiveTicketTitlePolicy = (
+    projectPolicy: TicketTitlePolicy | null | undefined,
+    globalPolicy: TicketTitlePolicy,
+  ): TicketTitlePolicy => projectPolicy ?? globalPolicy;
+
+  const maybeResolveTicketTitleForFirstTurn = Effect.fn("maybeResolveTicketTitleForFirstTurn")(
+    function* (input: {
+      readonly threadId: ThreadId;
+      readonly cwd: string;
+      readonly messageText: string;
+      readonly titleSeed?: string;
+      readonly generatedTitle: Deferred.Deferred<CommandId | undefined>;
+      readonly initialSequence: number;
+    }) {
+      const initialThread = yield* resolveThread(input.threadId);
+      if (!initialThread) return;
+      const initialProject = yield* resolveProject(initialThread.projectId);
+      const initialSettings = yield* serverSettingsService.getSettings;
+      const initialPolicy = effectiveTicketTitlePolicy(
+        initialProject?.ticketTitlePolicy,
+        initialSettings.ticketTitlePolicy,
+      );
+      if (initialPolicy.mode === "disabled") return;
+
+      const reference = extractUniqueTicketReference(
+        input.messageText,
+        Object.values(initialSettings.ticketProviderInstances).map((instance) => ({
+          driver: instance.driver,
+          baseUrl: instance.baseUrl,
+        })),
+      );
+      if (!reference) return;
+
+      const metadata = yield* ticketProviderRegistry.resolve({
+        cwd: input.cwd,
+        reference,
+        instances: initialSettings.ticketProviderInstances,
+        bindings: initialProject?.ticketProviderBindings ?? [],
+      });
+      const ticketTitle = renderTicketThreadTitle(initialPolicy, metadata);
+      if (!ticketTitle) return;
+
+      const currentSettings = yield* serverSettingsService.getSettings;
+      const currentProject = yield* resolveProject(initialThread.projectId);
+      const currentPolicy = effectiveTicketTitlePolicy(
+        currentProject?.ticketTitlePolicy,
+        currentSettings.ticketTitlePolicy,
+      );
+      if (
+        !Equal.equals(initialPolicy, currentPolicy) ||
+        !Equal.equals(
+          initialSettings.ticketProviderInstances,
+          currentSettings.ticketProviderInstances,
+        ) ||
+        !Equal.equals(
+          initialProject?.ticketProviderBindings ?? [],
+          currentProject?.ticketProviderBindings ?? [],
+        )
+      ) {
+        return;
+      }
+
+      const generatedTitleCommandId = yield* Deferred.await(input.generatedTitle);
+      const thread = yield* resolveThread(input.threadId);
+      if (!thread || thread.title === ticketTitle) return;
+      const auditedThrough = yield* orchestrationEngine.latestSequence;
+      const titleEvents = yield* orchestrationEngine
+        .readEvents(input.initialSequence, auditedThrough - input.initialSequence)
+        .pipe(
+          Stream.filter(
+            (event) =>
+              event.type === "thread.meta-updated" &&
+              event.payload.threadId === input.threadId &&
+              event.payload.title !== undefined,
+          ),
+          Stream.runCollect,
+        );
+      if (
+        Array.from(titleEvents).some(
+          (event) =>
+            generatedTitleCommandId === undefined || event.commandId !== generatedTitleCommandId,
+        )
+      ) {
+        return;
+      }
+      yield* orchestrationEngine.dispatch({
+        type: "thread.meta.update",
+        commandId: yield* serverCommandId("thread-ticket-title"),
+        threadId: input.threadId,
+        title: ticketTitle,
+        expectedTitle: thread.title,
+        expectedTitleRevision: thread.titleRevision ?? 0,
+      });
+    },
+    (effect, input) =>
+      effect.pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("ticket title lookup failed; keeping generated thread title", {
+            threadId: input.threadId,
+            cause: Cause.pretty(cause),
+          }),
+        ),
+      ),
   );
 
   const regenerateThreadTitle = Effect.fn("regenerateThreadTitle")(function* (
@@ -1166,10 +1298,23 @@ const make = Effect.gen(function* () {
       }).pipe(Effect.forkScoped);
 
       if (canReplaceThreadTitle(thread.title, event.payload.titleSeed)) {
+        const initialSequence = yield* orchestrationEngine.latestSequence;
+        const generatedTitle = yield* Deferred.make<CommandId | undefined>();
         yield* maybeGenerateThreadTitleForFirstTurn({
           threadId: event.payload.threadId,
           cwd: generationCwd,
+          generatedTitle,
+          expectedTitle: thread.title,
+          expectedTitleRevision: thread.titleRevision ?? 0,
           ...generationInput,
+        }).pipe(Effect.forkScoped);
+        yield* maybeResolveTicketTitleForFirstTurn({
+          threadId: event.payload.threadId,
+          cwd: generationCwd,
+          messageText: message.text,
+          ...(event.payload.titleSeed !== undefined ? { titleSeed: event.payload.titleSeed } : {}),
+          generatedTitle,
+          initialSequence,
         }).pipe(Effect.forkScoped);
       }
     }

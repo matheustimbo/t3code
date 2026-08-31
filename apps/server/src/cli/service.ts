@@ -1,3 +1,4 @@
+import { latestForkServerCommand } from "@t3tools/shared/distribution";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
@@ -59,7 +60,7 @@ export function formatServiceStatus(
     `  Status: ${status.current ? `installed · t3@${cliVersion}` : "needs an update or repair"}`,
     `  Unit: ${status.unitPath}`,
     `  Logs: ${status.logPath}`,
-    ...(status.current ? [] : ["  Next: Run `npx t3@latest service update`."]),
+    ...(status.current ? [] : [`  Next: Run \`${latestForkServerCommand("service update")}\`.`]),
   ].join("\n");
 }
 
@@ -95,7 +96,7 @@ const serviceInstallCommand = Command.make("install", projectLocationFlags).pipe
 
 const serviceUpdateCommand = Command.make("update", projectLocationFlags).pipe(
   Command.withDescription(
-    "Update or repair the background service using this CLI version. Use `npx t3@latest service update` for the latest release.",
+    `Update or repair the background service using this CLI version. Use \`${latestForkServerCommand("service update")}\` for the latest fork release.`,
   ),
   Command.withHandler((flags) =>
     runServiceCommand(

@@ -103,6 +103,10 @@
       "types": "./src/threadEnvMode.ts",
       "import": "./src/threadEnvMode.ts"
     },
+    "./ticketTitles": {
+      "types": "./src/ticketTitles.ts",
+      "import": "./src/ticketTitles.ts"
+    },
     "./t3ProjectFile": {
       "types": "./src/t3ProjectFile.ts",
       "import": "./src/t3ProjectFile.ts"
@@ -219,6 +223,10 @@
       "types": "./src/devProxy.ts",
       "import": "./src/devProxy.ts"
     },
+    "./distribution": {
+      "types": "./src/distribution.ts",
+      "import": "./src/distribution.ts"
+    },
     "./usageMerge": {
       "types": "./src/usageMerge.ts",
       "import": "./src/usageMerge.ts"
@@ -226,6 +234,10 @@
     "./usageFormat": {
       "types": "./src/usageFormat.ts",
       "import": "./src/usageFormat.ts"
+    },
+    "./providerUsageLimits": {
+      "types": "./src/providerUsageLimits.ts",
+      "import": "./src/providerUsageLimits.ts"
     },
     "./claudeCompaction": {
       "types": "./src/claudeCompaction.ts",

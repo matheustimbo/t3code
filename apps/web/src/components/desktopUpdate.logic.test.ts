@@ -12,6 +12,7 @@ import {
   resolveDesktopUpdateButtonAction,
   shouldShowArm64IntelBuildWarning,
   shouldShowDesktopUpdateButton,
+  shouldShowDesktopUpdateReleaseNotes,
   shouldToastDesktopUpdateActionResult,
 } from "./desktopUpdate.logic";
 
@@ -34,6 +35,15 @@ const baseState: DesktopUpdateState = {
 };
 
 describe("desktop update button state", () => {
+  it("shows available release notes on the stable channel", () => {
+    expect(
+      shouldShowDesktopUpdateReleaseNotes({
+        releaseNotes: [{ version: "1.1.0", items: ["feat: show stable release notes"] }],
+      }),
+    ).toBe(true);
+    expect(shouldShowDesktopUpdateReleaseNotes({ releaseNotes: [] })).toBe(false);
+  });
+
   it("shows a download action when an update is available", () => {
     const state: DesktopUpdateState = {
       ...baseState,
@@ -187,13 +197,13 @@ describe("getDesktopUpdateActionError", () => {
 describe("desktop update UI helpers", () => {
   it("builds the stable release URL for a downloaded version", () => {
     expect(getDesktopUpdateReleaseUrl("0.0.30")).toBe(
-      "https://github.com/pingdotgg/t3code/releases/tag/v0.0.30",
+      "https://github.com/matheustimbo/t3code/releases/tag/v0.0.30",
     );
   });
 
   it("builds the nightly release URL without dropping its version suffix", () => {
     expect(getDesktopUpdateReleaseUrl("0.0.30-nightly.20260728.931")).toBe(
-      "https://github.com/pingdotgg/t3code/releases/tag/v0.0.30-nightly.20260728.931",
+      "https://github.com/matheustimbo/t3code/releases/tag/v0.0.30-nightly.20260728.931",
     );
   });
 

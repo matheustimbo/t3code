@@ -244,6 +244,17 @@ export const SETTINGS_SEARCH_ITEMS = [
     targetId: "browser",
   },
   {
+    id: "ticket-thread-titles",
+    title: "Ticket thread titles",
+    to: "/settings/integrations",
+    targetId: "ticket-providers",
+  },
+  {
+    id: "ticket-providers",
+    title: "Ticket providers",
+    to: "/settings/integrations",
+  },
+  {
     id: "source-control",
     title: "Source control",
     to: "/settings/source-control",

@@ -7,6 +7,7 @@ import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgro
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
+import type * as Context from "effect/Context";
 import * as Fiber from "effect/Fiber";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
@@ -38,6 +39,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     readonly snapshot: ServerProvider;
     readonly getSnapshot: Effect.Effect<ServerProvider>;
     readonly publishSnapshot: (snapshot: ServerProvider) => Effect.Effect<void>;
+    readonly backgroundPolicy: Context.Service.Shape<typeof BackgroundPolicy.BackgroundPolicy>;
   }) => Effect.Effect<void>;
   readonly refreshInterval?: Duration.Input;
   readonly refreshOnInterval?: boolean;
@@ -106,6 +108,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         snapshot,
         getSnapshot: Ref.get(snapshotStateRef).pipe(Effect.map((state) => state.snapshot)),
         publishSnapshot: (nextSnapshot) => publishEnrichedSnapshot(generation, nextSnapshot),
+        backgroundPolicy,
       })
       .pipe(Effect.ignoreCause({ log: true }), Effect.forkIn(scope));
 

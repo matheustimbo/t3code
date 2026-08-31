@@ -14,6 +14,7 @@ import {
 } from "@electron/asar";
 
 import { fromYaml } from "@t3tools/shared/schemaYaml";
+import { T3CODE_DISTRIBUTION } from "@t3tools/shared/distribution";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { clerkFrontendApiHostnameFromPublishableKey } from "@t3tools/shared/relayAuth";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
@@ -159,6 +160,7 @@ interface BuildCliInput {
   readonly skipBuild: Option.Option<boolean>;
   readonly keepStage: Option.Option<boolean>;
   readonly signed: Option.Option<boolean>;
+  readonly adhocSign: Option.Option<boolean>;
   readonly verbose: Option.Option<boolean>;
   readonly mockUpdates: Option.Option<boolean>;
   readonly mockUpdateServerPort: Option.Option<number>;
@@ -769,6 +771,7 @@ interface ResolvedBuildOptions {
   readonly skipBuild: boolean;
   readonly keepStage: boolean;
   readonly signed: boolean;
+  readonly adhocSign: boolean;
   readonly verbose: boolean;
   readonly mockUpdates: boolean;
   readonly mockUpdateServerPort: number | undefined;
@@ -1322,6 +1325,7 @@ const BuildEnvConfig = Config.all({
   skipBuild: Config.boolean("T3CODE_DESKTOP_SKIP_BUILD").pipe(Config.withDefault(false)),
   keepStage: Config.boolean("T3CODE_DESKTOP_KEEP_STAGE").pipe(Config.withDefault(false)),
   signed: Config.boolean("T3CODE_DESKTOP_SIGNED").pipe(Config.withDefault(false)),
+  adhocSign: Config.boolean("T3CODE_DESKTOP_ADHOC_SIGN").pipe(Config.withDefault(false)),
   verbose: Config.boolean("T3CODE_DESKTOP_VERBOSE").pipe(Config.withDefault(false)),
   mockUpdates: Config.boolean("T3CODE_DESKTOP_MOCK_UPDATES").pipe(Config.withDefault(false)),
   mockUpdateServerPort: Config.string("T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT").pipe(Config.option),
@@ -1407,6 +1411,7 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
   const skipBuild = resolveBooleanFlag(input.skipBuild, env.skipBuild);
   const keepStage = resolveBooleanFlag(input.keepStage, env.keepStage);
   const signed = resolveBooleanFlag(input.signed, env.signed);
+  const adhocSign = resolveBooleanFlag(input.adhocSign, env.adhocSign);
   const verbose = resolveBooleanFlag(input.verbose, env.verbose);
 
   const mockUpdates = resolveBooleanFlag(input.mockUpdates, env.mockUpdates);
@@ -1433,6 +1438,7 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
     skipBuild,
     keepStage,
     signed,
+    adhocSign,
     verbose,
     mockUpdates,
     mockUpdateServerPort,
@@ -2055,7 +2061,7 @@ export const resolveGitHubPublishConfig = Effect.fn("resolveGitHubPublishConfig"
   const rawRepo = (
     Option.getOrUndefined(env.updateRepository)?.trim() ||
     Option.getOrUndefined(env.githubRepository)?.trim() ||
-    ""
+    T3CODE_DISTRIBUTION.githubRepository
   ).trim();
   if (!rawRepo) return undefined;
 
@@ -2139,6 +2145,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   // sidecar staging skips the archive in that case, and listing a resource
   // whose source file was never written fails the electron-builder step.
   wslRuntimeBundled = false,
+  macAdhocSigned = false,
 ) {
   const buildConfig: Record<string, unknown> = {
     appId: DESKTOP_APP_ID,
@@ -2188,6 +2195,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         },
       ],
       ...(signed ? { sign: path.join(repoRoot, "scripts/sign-macos.ts") } : {}),
+      ...(!signed && macAdhocSigned ? { identity: "-", hardenedRuntime: false } : {}),
       ...(macPasskeySigning
         ? {
             entitlements: macPasskeySigning.entitlementsPath,
@@ -3198,6 +3206,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
           }
         : undefined,
       bundlesWslRuntime({ arch: options.arch, prebuildPath: options.wslPrebuild }),
+      options.adhocSign,
     ),
     dependencies: stageDependencies,
     devDependencies: {
@@ -3427,6 +3436,12 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
   signed: Flag.boolean("signed").pipe(
     Flag.withDescription(
       "Enable signing/notarization discovery; Windows uses Azure Trusted Signing (env: T3CODE_DESKTOP_SIGNED).",
+    ),
+    Flag.optional,
+  ),
+  adhocSign: Flag.boolean("adhoc-sign").pipe(
+    Flag.withDescription(
+      "Ad-hoc sign macOS artifacts for fork updates when Developer ID credentials are unavailable (env: T3CODE_DESKTOP_ADHOC_SIGN).",
     ),
     Flag.optional,
   ),

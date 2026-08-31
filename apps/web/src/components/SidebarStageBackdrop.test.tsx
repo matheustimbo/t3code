@@ -5,6 +5,7 @@ import {
   resolveEnvironmentIdentificationPillLabel,
   resolveSidebarStageBackdropVariant,
   resolveSidebarStageFocusRingOffsetClass,
+  shouldShowEnvironmentIdentificationPill,
   StageBackdropArt,
   StageBackdropButtonArt,
 } from "./SidebarStageBackdrop";
@@ -19,9 +20,26 @@ describe("SidebarStageBackdrop", () => {
 
   it("resolves supported environment pill labels", () => {
     expect(resolveEnvironmentIdentificationPillLabel("Dev")).toBe("Dev");
+    expect(resolveEnvironmentIdentificationPillLabel(" fork ")).toBe("Fork");
     expect(resolveEnvironmentIdentificationPillLabel("nightly")).toBe("Nightly");
+    expect(resolveEnvironmentIdentificationPillLabel("Fork", false)).toBeNull();
     expect(resolveEnvironmentIdentificationPillLabel("Latest")).toBeNull();
     expect(resolveEnvironmentIdentificationPillLabel("Alpha")).toBeNull();
+  });
+
+  it("falls back to a pill when a stage has no artwork", () => {
+    expect(
+      shouldShowEnvironmentIdentificationPill({ mode: "artwork", backdropVariant: null }),
+    ).toBe(true);
+    expect(
+      shouldShowEnvironmentIdentificationPill({ mode: "artwork", backdropVariant: "nightly" }),
+    ).toBe(false);
+    expect(shouldShowEnvironmentIdentificationPill({ mode: "pill", backdropVariant: "dev" })).toBe(
+      true,
+    );
+    expect(shouldShowEnvironmentIdentificationPill({ mode: "none", backdropVariant: null })).toBe(
+      false,
+    );
   });
 
   it("matches the focus-ring offset to each artwork palette", () => {

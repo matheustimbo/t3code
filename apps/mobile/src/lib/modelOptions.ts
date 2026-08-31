@@ -2,6 +2,7 @@ import type {
   ModelCapabilities,
   ModelSelection,
   ServerConfig as T3ServerConfig,
+  ServerProviderUsageLimits,
 } from "@t3tools/contracts";
 import {
   buildProviderOptionSelectionsFromDescriptors,
@@ -19,12 +20,14 @@ export type ModelOption = {
   readonly isLegacy: boolean;
   readonly capabilities: ModelCapabilities | null;
   readonly selection: ModelSelection;
+  readonly usageLimits?: ServerProviderUsageLimits | undefined;
 };
 
 export type ProviderGroup = {
   readonly providerKey: string;
   readonly providerLabel: string;
   readonly models: ReadonlyArray<ModelOption>;
+  readonly usageLimits?: ServerProviderUsageLimits | undefined;
 };
 
 function providerDisplayLabel(provider: {
@@ -151,6 +154,7 @@ export function buildModelOptions(
           },
           model.capabilities,
         ),
+        ...(provider.usageLimits ? { usageLimits: provider.usageLimits } : {}),
       });
     }
   }
@@ -201,5 +205,6 @@ export function groupByProvider(options: ReadonlyArray<ModelOption>): ReadonlyAr
     providerKey,
     providerLabel: group.providerLabel,
     models: group.models,
+    ...(group.models[0]?.usageLimits ? { usageLimits: group.models[0].usageLimits } : {}),
   }));
 }

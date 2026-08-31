@@ -16,6 +16,7 @@ import {
   resolveSidebarStageBackdropVariant,
   resolveSidebarStageFocusRingOffsetClass,
   SidebarStageBackdrop,
+  shouldShowEnvironmentIdentificationPill,
   useEnvironmentStageLabel,
 } from "../SidebarStageBackdrop";
 import { Badge } from "../ui/badge";
@@ -43,10 +44,13 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
     stageLabel,
     environmentIdentificationMode === "artwork",
   );
-  const pillLabel =
-    environmentIdentificationMode === "pill"
-      ? resolveEnvironmentIdentificationPillLabel(stageLabel)
-      : null;
+  const pillLabel = resolveEnvironmentIdentificationPillLabel(
+    stageLabel,
+    shouldShowEnvironmentIdentificationPill({
+      mode: environmentIdentificationMode,
+      backdropVariant,
+    }),
+  );
 
   return (
     <SidebarHeader
