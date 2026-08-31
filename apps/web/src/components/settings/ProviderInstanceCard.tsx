@@ -26,7 +26,8 @@ import {
   displayRemainingPercent,
   formatLimitReset,
   formatRemainingPercent,
-  providerUsageLimitDisplayWindows,
+  providerUsageLimitDisplayGroups,
+  providerUsageLimitMostRestrictiveWindowId,
   usageLimitsStatusLabel,
 } from "@t3tools/shared/providerUsageLimits";
 
@@ -487,9 +488,12 @@ export function ProviderInstanceCard({
     ? instance.driver
     : null;
   const visibleTab = driverOption === undefined ? "configuration" : activeTab;
-  const usageLimitWindows = liveProvider?.usageLimits
-    ? providerUsageLimitDisplayWindows(liveProvider.usageLimits)
+  const usageLimitGroups = liveProvider?.usageLimits
+    ? providerUsageLimitDisplayGroups(liveProvider.usageLimits)
     : [];
+  const mostRestrictiveUsageLimitWindowId = liveProvider?.usageLimits
+    ? providerUsageLimitMostRestrictiveWindowId(liveProvider.usageLimits)
+    : null;
 
   const customModels = readConfigStringArray(instance.config, "customModels");
   // Server-returned models may lag behind settings writes. Treat probe
@@ -878,21 +882,69 @@ export function ProviderInstanceCard({
                     {usageLimitsStatusLabel(liveProvider.usageLimits)}
                   </Badge>
                 </div>
-                {usageLimitWindows.length > 0 ? (
-                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                    {usageLimitWindows.map((entry) => (
-                      <div key={entry.id} className="rounded-md bg-background/60 px-2.5 py-2">
-                        <div className="flex items-center justify-between gap-2 text-xs">
-                          <span className="truncate text-foreground">{entry.label}</span>
-                          <span className="shrink-0 font-medium text-foreground tabular-nums">
-                            {formatRemainingPercent(
-                              displayRemainingPercent(entry.limits, entry.window),
-                            )}
-                          </span>
-                        </div>
-                        <div className="mt-1 text-[11px] text-muted-foreground">
-                          {formatLimitReset(entry.window.resetsAt)}
-                        </div>
+                {usageLimitGroups.some(
+                  (group) => group.label !== undefined || group.windows.length > 0,
+                ) ? (
+                  <div className="mt-3 flex flex-col gap-2">
+                    {usageLimitGroups.map((group) => (
+                      <div
+                        key={group.id}
+                        className={cn(
+                          group.label && "rounded-md border border-border/60 bg-background/35 p-2",
+                        )}
+                      >
+                        {group.label ? (
+                          <div className="mb-1.5 flex min-w-0 items-center justify-between gap-2">
+                            <Tooltip>
+                              <TooltipTrigger
+                                render={
+                                  <span className="truncate text-[11px] font-medium text-foreground" />
+                                }
+                              >
+                                {group.label}
+                              </TooltipTrigger>
+                              <TooltipPopup side="top">{group.label}</TooltipPopup>
+                            </Tooltip>
+                            {usageLimitsStatusLabel(group.limits) !== "Live" ? (
+                              <span className="shrink-0 text-[10px] text-muted-foreground">
+                                {usageLimitsStatusLabel(group.limits)}
+                              </span>
+                            ) : null}
+                          </div>
+                        ) : null}
+                        {group.windows.length > 0 ? (
+                          <div className="grid gap-2 sm:grid-cols-2">
+                            {group.windows.map((entry) => {
+                              const remaining = displayRemainingPercent(entry.limits, entry.window);
+                              return (
+                                <div
+                                  key={entry.id}
+                                  className={cn(
+                                    "rounded-md bg-background/60 px-2.5 py-2",
+                                    remaining === 0 && "ring-1 ring-destructive/60",
+                                    remaining !== 0 &&
+                                      entry.id === mostRestrictiveUsageLimitWindowId &&
+                                      "ring-1 ring-warning/50",
+                                  )}
+                                >
+                                  <div className="flex items-center justify-between gap-2 text-xs">
+                                    <span className="truncate text-foreground">{entry.label}</span>
+                                    <span className="shrink-0 font-medium text-foreground tabular-nums">
+                                      {formatRemainingPercent(remaining)}
+                                    </span>
+                                  </div>
+                                  <div className="mt-1 text-[11px] text-muted-foreground">
+                                    {formatLimitReset(entry.window.resetsAt)}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <p className="text-[11px] text-muted-foreground">
+                            {group.limits.message ?? "No subscription windows reported."}
+                          </p>
+                        )}
                       </div>
                     ))}
                   </div>

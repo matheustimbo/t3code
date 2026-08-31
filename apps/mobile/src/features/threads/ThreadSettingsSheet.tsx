@@ -15,9 +15,11 @@ import {
 } from "@t3tools/shared/model";
 import {
   displayRemainingPercent,
-  formatLimitReset,
-  formatRemainingPercent,
-  providerUsageLimitDisplayWindows,
+  formatCompactLimitReset,
+  formatCompactRemainingPercent,
+  providerUsageLimitDisplayGroups,
+  providerUsageLimitMostRestrictiveWindowId,
+  usageLimitsStatusLabel,
 } from "@t3tools/shared/providerUsageLimits";
 import type { ServerProviderUsageLimits } from "@t3tools/contracts";
 import { useNavigation, useRoute, type RouteProp } from "@react-navigation/native";
@@ -165,9 +167,12 @@ function ProviderHeader(props: {
   readonly usageLimits?: ServerProviderUsageLimits | undefined;
   readonly onToggle: () => void;
 }) {
-  const usageLimitWindows = props.usageLimits
-    ? providerUsageLimitDisplayWindows(props.usageLimits)
+  const usageLimitGroups = props.usageLimits
+    ? providerUsageLimitDisplayGroups(props.usageLimits)
     : [];
+  const mostRestrictiveWindowId = props.usageLimits
+    ? providerUsageLimitMostRestrictiveWindowId(props.usageLimits)
+    : null;
   const titleRow = (
     <View className="flex-row items-center gap-2">
       <ProviderIcon provider={props.driver} size={15} />
@@ -191,26 +196,59 @@ function ProviderHeader(props: {
     </View>
   );
   const limitsRow = props.usageLimits ? (
-    <View className="flex-row flex-wrap gap-1.5 pb-1 pl-6">
-      {usageLimitWindows.length > 0 ? (
-        usageLimitWindows.map((entry) => {
-          const remaining = displayRemainingPercent(entry.limits, entry.window);
-          return (
-            <View
-              key={entry.id}
-              className="flex-row items-center gap-1 rounded-lg border border-border-subtle bg-card px-2 py-1"
-              style={remaining === 0 ? { borderColor: "#dc2626" } : undefined}
-            >
-              <Text className="text-3xs text-foreground-muted">{entry.label}</Text>
-              <Text className="text-3xs font-t3-bold text-foreground">
-                {formatRemainingPercent(remaining)}
-              </Text>
-              <Text className="text-3xs text-foreground-muted">
-                · {formatLimitReset(entry.window.resetsAt)}
-              </Text>
+    <View className="gap-1.5 pb-1 pl-6">
+      {usageLimitGroups.some((group) => group.label !== undefined || group.windows.length > 0) ? (
+        usageLimitGroups.map((group) => (
+          <View key={group.id} className="gap-1">
+            {group.label ? (
+              <View className="flex-row items-center gap-2">
+                <Text
+                  className="min-w-0 flex-1 text-3xs font-t3-medium text-foreground"
+                  numberOfLines={1}
+                >
+                  {group.label}
+                </Text>
+                {usageLimitsStatusLabel(group.limits) !== "Live" ? (
+                  <Text className="text-3xs text-foreground-muted">
+                    {usageLimitsStatusLabel(group.limits)}
+                  </Text>
+                ) : null}
+              </View>
+            ) : null}
+            <View className="flex-row flex-wrap gap-1.5">
+              {group.windows.length > 0 ? (
+                group.windows.map((entry) => {
+                  const remaining = displayRemainingPercent(entry.limits, entry.window);
+                  return (
+                    <View
+                      key={entry.id}
+                      className="flex-row items-center gap-1 rounded-lg border border-border-subtle bg-card px-2 py-1"
+                      style={
+                        remaining === 0
+                          ? { borderColor: "#dc2626" }
+                          : entry.id === mostRestrictiveWindowId
+                            ? { borderColor: "#d97706" }
+                            : undefined
+                      }
+                    >
+                      <Text className="text-3xs text-foreground-muted">{entry.label}</Text>
+                      <Text className="text-3xs font-t3-bold text-foreground">
+                        {formatCompactRemainingPercent(remaining)}
+                      </Text>
+                      <Text className="text-3xs text-foreground-muted">
+                        · {formatCompactLimitReset(entry.window.resetsAt)}
+                      </Text>
+                    </View>
+                  );
+                })
+              ) : (
+                <Text className="text-3xs text-foreground-muted" numberOfLines={1}>
+                  {group.limits.message ?? "Plan limits unavailable"}
+                </Text>
+              )}
             </View>
-          );
-        })
+          </View>
+        ))
       ) : (
         <Text className="text-3xs text-foreground-muted">
           {props.usageLimits.message ?? "Plan limits unavailable"}

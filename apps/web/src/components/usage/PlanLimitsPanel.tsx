@@ -6,6 +6,8 @@ import {
   formatLimitReset,
   formatRemainingPercent,
   providerLimitColor,
+  providerUsageLimitDisplayGroups,
+  providerUsageLimitMostRestrictiveWindowId,
   usageLimitsStatusLabel,
 } from "@t3tools/shared/providerUsageLimits";
 import { ExternalLinkIcon, RefreshCwIcon } from "lucide-react";
@@ -18,6 +20,7 @@ import { cn } from "../../lib/utils";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 function providerColor(provider: ServerProvider): string {
   return providerLimitColor(provider.driver, provider.accentColor);
@@ -98,7 +101,13 @@ function ProviderLimitCard(props: { readonly entry: ProviderUsageLimitsEntry }) 
   const { entry } = props;
   const limits = entry.limits;
   const color = providerColor(entry.provider);
-  const exhausted = limits?.windows.some((window) => displayRemainingPercent(limits, window) === 0);
+  const limitGroups = limits ? providerUsageLimitDisplayGroups(limits) : [];
+  const mostRestrictiveWindowId = limits ? providerUsageLimitMostRestrictiveWindowId(limits) : null;
+  const exhausted = limitGroups.some((group) =>
+    group.windows.some(
+      ({ limits: windowLimits, window }) => displayRemainingPercent(windowLimits, window) === 0,
+    ),
+  );
   const providerName =
     entry.provider.displayName?.trim() ||
     PROVIDER_DISPLAY_NAMES[entry.provider.driver] ||
@@ -150,35 +159,77 @@ function ProviderLimitCard(props: { readonly entry: ProviderUsageLimitsEntry }) 
         ) : null}
       </header>
 
-      {limits && limits.windows.length > 0 ? (
-        <div className="grid gap-2 sm:grid-cols-2">
-          {limits.windows.map((window) => {
-            const remaining = displayRemainingPercent(limits, window);
-            return (
-              <div key={window.id} className="rounded-lg bg-muted/50 px-3 py-2.5">
-                <div className="flex items-baseline justify-between gap-3">
-                  <span className="truncate text-xs font-medium text-foreground">
-                    {window.label}
-                  </span>
-                  <span className="shrink-0 text-xs font-semibold text-foreground tabular-nums">
-                    {formatRemainingPercent(remaining)}
-                  </span>
+      {limits &&
+      limitGroups.some((group) => group.label !== undefined || group.windows.length > 0) ? (
+        <div className="flex flex-col gap-2">
+          {limitGroups.map((group) => (
+            <section
+              key={group.id}
+              className={cn(group.label && "rounded-lg border border-border/60 bg-muted/20 p-2.5")}
+            >
+              {group.label ? (
+                <div className="mb-2 flex min-w-0 items-center justify-between gap-2">
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={<span className="truncate text-xs font-medium text-foreground" />}
+                    >
+                      {group.label}
+                    </TooltipTrigger>
+                    <TooltipPopup side="top">{group.label}</TooltipPopup>
+                  </Tooltip>
+                  {usageLimitsStatusLabel(group.limits) !== "Live" ? (
+                    <Badge variant="outline" size="sm">
+                      {usageLimitsStatusLabel(group.limits)}
+                    </Badge>
+                  ) : null}
                 </div>
-                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
-                  <div
-                    className="h-full rounded-full transition-[width]"
-                    style={{
-                      backgroundColor: color,
-                      width: `${remaining ?? 0}%`,
-                    }}
-                  />
+              ) : null}
+              {group.windows.length > 0 ? (
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {group.windows.map(({ id, limits: windowLimits, window }) => {
+                    const remaining = displayRemainingPercent(windowLimits, window);
+                    return (
+                      <div
+                        key={id}
+                        className={cn(
+                          "rounded-lg bg-muted/50 px-3 py-2.5",
+                          remaining === 0 && "ring-1 ring-destructive/60",
+                          remaining !== 0 &&
+                            id === mostRestrictiveWindowId &&
+                            "ring-1 ring-warning/50",
+                        )}
+                      >
+                        <div className="flex items-baseline justify-between gap-3">
+                          <span className="truncate text-xs font-medium text-foreground">
+                            {window.label}
+                          </span>
+                          <span className="shrink-0 text-xs font-semibold text-foreground tabular-nums">
+                            {formatRemainingPercent(remaining)}
+                          </span>
+                        </div>
+                        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
+                          <div
+                            className="h-full rounded-full transition-[width]"
+                            style={{
+                              backgroundColor: color,
+                              width: `${remaining ?? 0}%`,
+                            }}
+                          />
+                        </div>
+                        <div className="mt-1.5 text-[11px] text-muted-foreground">
+                          {formatLimitReset(window.resetsAt)}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
-                <div className="mt-1.5 text-[11px] text-muted-foreground">
-                  {formatLimitReset(window.resetsAt)}
-                </div>
-              </div>
-            );
-          })}
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  {group.limits.message ?? "This account has not reported plan-limit data yet."}
+                </p>
+              )}
+            </section>
+          ))}
         </div>
       ) : (
         <p className="text-sm text-muted-foreground">
