@@ -659,7 +659,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   return (
     <TooltipProvider delay={0}>
       <div
-        className="relative flex h-screen max-h-86.5 w-screen max-w-90 flex-row overflow-hidden"
+        className="relative flex h-screen max-h-[min(42rem,calc(100vh-2rem))] w-screen max-w-90 flex-row overflow-hidden"
         data-model-picker-content="true"
       >
         {/* Sidebar */}
@@ -771,8 +771,9 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
             </div>
 
             {selectedLimitsEntry?.snapshot.usageLimits ? (
-              <div className="max-h-44 overflow-y-auto overscroll-contain border-b border-border/70">
-                {selectedLimitsStatus !== "Live" ? (
+              <div className="max-h-80 overflow-y-auto overscroll-contain border-b border-border/70">
+                {selectedLimitsStatus !== "Live" &&
+                !selectedLimitGroups.some((group) => group.label !== undefined) ? (
                   <div className="px-2 pt-2">
                     <span className="inline-flex rounded-md border border-border/70 px-2 py-1 text-[10px] text-muted-foreground">
                       {selectedLimitsStatus}
@@ -784,23 +785,27 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                 ) ? (
                   <div className="divide-y divide-border/55 py-1">
                     {selectedLimitGroups.map((group) => (
-                      <div key={group.id} className="flex min-w-0 gap-2 px-2 py-1.5">
+                      <div key={group.id} className="min-w-0 px-2 py-1.5">
                         {group.label ? (
-                          <div className="w-32 shrink-0 pt-1 text-[10px] font-medium text-foreground">
+                          <div className="flex min-w-0 items-center gap-1 text-[10px]">
                             <Tooltip>
-                              <TooltipTrigger render={<div className="truncate" />}>
+                              <TooltipTrigger
+                                render={
+                                  <div className="min-w-0 truncate font-medium text-foreground" />
+                                }
+                              >
                                 {group.label}
                               </TooltipTrigger>
                               <TooltipPopup side="top">{group.label}</TooltipPopup>
                             </Tooltip>
                             {usageLimitsStatusLabel(group.limits) !== "Live" ? (
-                              <div className="truncate font-normal text-muted-foreground">
+                              <span className="shrink-0 text-muted-foreground">
                                 {usageLimitsStatusLabel(group.limits)}
-                              </div>
+                              </span>
                             ) : null}
                           </div>
                         ) : null}
-                        <div className="flex min-w-0 flex-1 flex-wrap gap-1">
+                        <div className={cn("flex min-w-0 flex-wrap gap-1", group.label && "pt-1")}>
                           {group.windows.length > 0 ? (
                             group.windows.map((entry) => {
                               const remaining = displayRemainingPercent(entry.limits, entry.window);
