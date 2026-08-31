@@ -44,7 +44,6 @@ import {
   FolderIcon,
   FolderPlusIcon,
   GitBranchIcon,
-  GripVerticalIcon,
   MessageSquareIcon,
   PinIcon,
   PlusIcon,
@@ -60,12 +59,10 @@ import {
   memo,
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useReducer,
   useRef,
   useState,
-  type DragEvent as ReactDragEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
@@ -106,7 +103,7 @@ import { useThreadActions } from "../hooks/useThreadActions";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { openCommandPalette } from "../commandPaletteBus";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
-import { useClientSettings, useUpdateClientSettings } from "../hooks/useSettings";
+import { useClientSettings } from "../hooks/useSettings";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useNowMinute } from "../hooks/useNowMinute";
@@ -138,8 +135,6 @@ import {
   orderItemsByPreferredIds,
   planPinnedReorder,
   reduceSidebarProjectScopeMenuState,
-  reduceSidebarProjectScopeWheel,
-  resolveAdjacentProjectScopeValue,
   resolveAdjacentThreadId,
   resolveSettledTimestamp,
   resolveSidebarThreadStatus,
@@ -474,34 +469,6 @@ function SortablePinnedThreadRow(props: {
     animateLayoutChanges: animatePinnedLayoutChanges,
   });
   return props.children({ listeners, setNodeRef, transform, transition, isDragging });
-}
-
-function DraggableProjectScopeItem(props: {
-  item: { value: string; label: string };
-  children: ReactNode;
-  isDragging: boolean;
-  isDropTarget: boolean;
-  onDragEnter: (event: ReactDragEvent<HTMLElement>) => void;
-  onDragOver: (event: ReactDragEvent<HTMLElement>) => void;
-  onDrop: (event: ReactDragEvent<HTMLElement>) => void;
-}) {
-  return (
-    <ComboboxItem
-      hideIndicator
-      value={props.item}
-      className={cn(
-        "h-8 min-h-8 py-0 font-medium",
-        props.isDragging && "opacity-60",
-        props.isDropTarget && !props.isDragging && "ring-1 ring-primary/40",
-      )}
-      contentClassName="flex min-w-0 items-center gap-2"
-      onDragEnter={props.onDragEnter}
-      onDragOver={props.onDragOver}
-      onDrop={props.onDrop}
-    >
-      {props.children}
-    </ComboboxItem>
-  );
 }
 
 // One unsent draft session the user has invested content in. Two lines,
@@ -1769,7 +1736,6 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
 export default function Sidebar() {
   const projects = useProjects();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
-  const reorderProjects = useUiStateStore((store) => store.reorderProjects);
   const threads = useThreadShells();
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
@@ -1781,7 +1747,6 @@ export default function Sidebar() {
   const sidebarProjectSortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
-  const updateClientSettings = useUpdateClientSettings();
   const {
     settleThread,
     unsettleThread,
@@ -2056,162 +2021,6 @@ export default function Sidebar() {
       setProjectScopeKey(null);
     }
   }, [projectScopeKey, scopedProjectGroup]);
-  const projectScopeGestureContentRef = useRef<HTMLDivElement | null>(null);
-  const projectScopeFilterLabelRef = useRef<HTMLSpanElement | null>(null);
-  const projectScopeTransitionDirectionRef = useRef<"previous" | "next" | null>(null);
-  const projectScopeWheelStateRef = useRef({
-    accumulatedDeltaX: 0,
-    lastEventAt: Number.NEGATIVE_INFINITY,
-    locked: false,
-    reversalDeltaX: 0,
-  });
-  const selectProjectScopeValue = useCallback(
-    (nextValue: string, direction?: "previous" | "next") => {
-      const currentValue = projectScopeKey ?? "all";
-      if (nextValue === currentValue) return;
-      const currentIndex = projectScopeItems.findIndex((item) => item.value === currentValue);
-      const nextIndex = projectScopeItems.findIndex((item) => item.value === nextValue);
-      projectScopeTransitionDirectionRef.current =
-        direction ?? (nextIndex >= currentIndex ? "next" : "previous");
-      dispatchProjectScopeMenu({ type: "open-changed", open: false });
-      setProjectScopeKey(nextValue === "all" ? null : nextValue);
-    },
-    [projectScopeItems, projectScopeKey],
-  );
-  useLayoutEffect(() => {
-    const direction = projectScopeTransitionDirectionRef.current;
-    projectScopeTransitionDirectionRef.current = null;
-    if (direction === null || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      return;
-    }
-
-    const content = projectScopeGestureContentRef.current;
-    const label = projectScopeFilterLabelRef.current;
-    const contentOffset = direction === "next" ? "22%" : "-22%";
-    const labelOffset = direction === "next" ? "10px" : "-10px";
-    content?.getAnimations().forEach((animation) => animation.cancel());
-    label?.getAnimations().forEach((animation) => animation.cancel());
-    content?.animate(
-      [
-        { opacity: 0.25, transform: `translate3d(${contentOffset}, 0, 0)` },
-        { opacity: 1, transform: "translate3d(0, 0, 0)" },
-      ],
-      { duration: 240, easing: "cubic-bezier(0.22, 1, 0.36, 1)" },
-    );
-    label?.animate(
-      [
-        { opacity: 0, transform: `translateX(${labelOffset})` },
-        { opacity: 1, transform: "translateX(0)" },
-      ],
-      { duration: 200, easing: "cubic-bezier(0.22, 1, 0.36, 1)" },
-    );
-  }, [projectScopeKey]);
-  useEffect(() => {
-    if (isMobile || projectScopeItems.length < 2) return;
-    const sidebarRoot =
-      projectScopeGestureContentRef.current?.closest<HTMLElement>("[data-slot='sidebar']");
-    if (!sidebarRoot) return;
-
-    const handleProjectScopeWheel = (event: WheelEvent) => {
-      if (event.defaultPrevented || event.ctrlKey) return;
-      const deltaScale =
-        event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? sidebarRoot.clientWidth : 1;
-      const result = reduceSidebarProjectScopeWheel(projectScopeWheelStateRef.current, {
-        deltaX: event.deltaX * deltaScale,
-        deltaY: event.deltaY * deltaScale,
-        eventAt: event.timeStamp,
-      });
-      projectScopeWheelStateRef.current = result.state;
-      if (!result.shouldConsume) return;
-
-      // Dominant horizontal movement belongs to project navigation. Keeping
-      // it local also prevents the browser/Electron shell from interpreting
-      // the same gesture as back/forward navigation.
-      event.preventDefault();
-      if (result.direction === null) return;
-      const currentValue = projectScopeKey ?? "all";
-      const nextValue = resolveAdjacentProjectScopeValue({
-        items: projectScopeItems,
-        currentValue,
-        direction: result.direction,
-      });
-      if (nextValue === null || nextValue === currentValue) return;
-      selectProjectScopeValue(nextValue, result.direction);
-    };
-
-    sidebarRoot.addEventListener("wheel", handleProjectScopeWheel, { passive: false });
-    return () => sidebarRoot.removeEventListener("wheel", handleProjectScopeWheel);
-  }, [isMobile, projectScopeItems, projectScopeKey, selectProjectScopeValue]);
-  const reorderProjectScopes = useCallback(
-    (activeProjectKey: string, overProjectKey: string) => {
-      if (activeProjectKey === overProjectKey) return;
-      const activeProject = projectGroups.find(
-        (project) => project.projectKey === activeProjectKey,
-      );
-      const overProject = projectGroups.find((project) => project.projectKey === overProjectKey);
-      if (!activeProject || !overProject) return;
-
-      // Seed from the order currently on screen before switching an automatic
-      // sort to manual, so the drop changes exactly one relationship instead
-      // of making every other project jump back to an older saved order.
-      const visiblePhysicalOrder = projectGroups.flatMap((project) =>
-        project.memberProjects.map((member) => member.physicalProjectKey),
-      );
-      reorderProjects(
-        visiblePhysicalOrder,
-        activeProject.memberProjects.map((member) => member.physicalProjectKey),
-        overProject.memberProjects.map((member) => member.physicalProjectKey),
-      );
-      if (sidebarProjectSortOrder !== "manual") {
-        updateClientSettings({ sidebarProjectSortOrder: "manual" });
-      }
-    },
-    [projectGroups, reorderProjects, sidebarProjectSortOrder, updateClientSettings],
-  );
-  const projectScopeDraggedKeyRef = useRef<string | null>(null);
-  const [projectScopeDragState, setProjectScopeDragState] = useState<{
-    activeKey: string;
-    overKey: string;
-  } | null>(null);
-  const handleProjectScopeDragStart = useCallback(
-    (event: ReactDragEvent<HTMLButtonElement>, projectKey: string) => {
-      event.stopPropagation();
-      projectScopeDraggedKeyRef.current = projectKey;
-      setProjectScopeDragState({ activeKey: projectKey, overKey: projectKey });
-      event.dataTransfer.effectAllowed = "move";
-      event.dataTransfer.setData("application/x-t3-project-scope", projectKey);
-    },
-    [],
-  );
-  const handleProjectScopeDragOver = useCallback(
-    (event: ReactDragEvent<HTMLElement>, overKey: string) => {
-      event.preventDefault();
-      event.stopPropagation();
-      event.dataTransfer.dropEffect = "move";
-      setProjectScopeDragState((state) =>
-        state === null || state.overKey === overKey ? state : { ...state, overKey },
-      );
-    },
-    [],
-  );
-  const handleProjectScopeDrop = useCallback(
-    (event: ReactDragEvent<HTMLElement>, overKey: string) => {
-      event.preventDefault();
-      event.stopPropagation();
-      const activeKey =
-        projectScopeDraggedKeyRef.current ??
-        event.dataTransfer.getData("application/x-t3-project-scope");
-      projectScopeDraggedKeyRef.current = null;
-      setProjectScopeDragState(null);
-      const resolvedOverKey = overKey === "all" ? (projectGroups[0]?.projectKey ?? null) : overKey;
-      if (activeKey && resolvedOverKey) reorderProjectScopes(activeKey, resolvedOverKey);
-    },
-    [projectGroups, reorderProjectScopes],
-  );
-  const handleProjectScopeDragEnd = useCallback(() => {
-    projectScopeDraggedKeyRef.current = null;
-    setProjectScopeDragState(null);
-  }, []);
   // Count-only subscription: the parent needs "are there draft rows" for the
   // empty state, while SidebarDraftBlock owns the per-keystroke content
   // subscription. Selecting a number keeps typing in a draft composer from
@@ -3640,7 +3449,6 @@ export default function Sidebar() {
     <>
       <SidebarChromeHeader isElectron={isElectron} />
       <SidebarContent
-        ref={projectScopeGestureContentRef}
         className="gap-0"
         fixedHeader={
           // Lifted above the stage backdrop, whose fade bleeds below the
@@ -3752,7 +3560,7 @@ export default function Sidebar() {
                   value={selectedProjectScopeItem}
                   onValueChange={(item) => {
                     if (!item) return;
-                    selectProjectScopeValue(item.value);
+                    setProjectScopeKey(item.value === "all" ? null : item.value);
                   }}
                 >
                   <ComboboxTrigger
@@ -3773,7 +3581,7 @@ export default function Sidebar() {
                     ) : (
                       <FolderIcon className="size-4 shrink-0" />
                     )}
-                    <span ref={projectScopeFilterLabelRef} className="min-w-0 flex-1 truncate">
+                    <span className="min-w-0 flex-1 truncate">
                       {scopedProjectGroup?.displayName ?? "All projects"}
                     </span>
                     <ChevronDownIcon className="-mr-px size-4 shrink-0" />
@@ -3810,75 +3618,41 @@ export default function Sidebar() {
                     <ComboboxList>
                       {(item: (typeof projectScopeItems)[number]) => {
                         const project = projectGroupByScopeKey.get(item.value) ?? null;
-                        if (!project) {
-                          return (
-                            <ComboboxItem
-                              key={item.value}
-                              hideIndicator
-                              value={item}
-                              className={cn(
-                                "h-8 min-h-8 py-0 font-medium",
-                                projectScopeDragState?.overKey === "all" &&
-                                  "ring-1 ring-primary/40",
-                              )}
-                              contentClassName="flex min-w-0 items-center gap-2"
-                              onDragOver={(event) => handleProjectScopeDragOver(event, "all")}
-                              onDrop={(event) => handleProjectScopeDrop(event, "all")}
-                            >
-                              <FolderIcon className="size-4 shrink-0" />
-                              <span className="min-w-0 flex-1 truncate text-sm">{item.label}</span>
-                            </ComboboxItem>
-                          );
-                        }
                         return (
-                          <DraggableProjectScopeItem
+                          <ComboboxItem
                             key={item.value}
-                            item={item}
-                            isDragging={projectScopeDragState?.activeKey === item.value}
-                            isDropTarget={projectScopeDragState?.overKey === item.value}
-                            onDragEnter={(event) => handleProjectScopeDragOver(event, item.value)}
-                            onDragOver={(event) => handleProjectScopeDragOver(event, item.value)}
-                            onDrop={(event) => handleProjectScopeDrop(event, item.value)}
+                            hideIndicator
+                            value={item}
+                            className="h-8 min-h-8 py-0 font-medium"
+                            contentClassName="flex min-w-0 items-center gap-2"
                           >
-                            <ProjectFavicon
-                              environmentId={project.environmentId}
-                              cwd={project.workspaceRoot}
-                              faviconPath={project.faviconPath}
-                              className="size-4 shrink-0"
-                            />
+                            {project ? (
+                              <ProjectFavicon
+                                environmentId={project.environmentId}
+                                cwd={project.workspaceRoot}
+                                faviconPath={project.faviconPath}
+                                className="size-4 shrink-0"
+                              />
+                            ) : (
+                              <FolderIcon className="size-4 shrink-0" />
+                            )}
                             <span className="min-w-0 flex-1 truncate text-sm">{item.label}</span>
-                            <button
-                              type="button"
-                              draggable
-                              className="size-6 shrink-0 cursor-grab rounded-md text-icon-muted/70 outline-none hover:bg-accent hover:text-foreground active:cursor-grabbing focus-visible:ring-2 focus-visible:ring-ring/70"
-                              aria-label={`Reorder ${project.displayName}`}
-                              onDragStart={(event) =>
-                                handleProjectScopeDragStart(event, item.value)
-                              }
-                              onDragEnd={handleProjectScopeDragEnd}
-                              onPointerDown={(event) => event.stopPropagation()}
-                              onPointerUp={(event) => event.stopPropagation()}
-                              onClick={(event) => {
-                                event.preventDefault();
-                                event.stopPropagation();
-                              }}
-                            >
-                              <GripVerticalIcon className="mx-auto size-3.5" />
-                            </button>
-                            <Button
-                              size="icon-xs"
-                              variant="ghost-muted"
-                              aria-label={`Project settings for ${project.displayName}`}
-                              title={`Project settings for ${project.displayName}`}
-                              className="size-6 [--control-icon-color:currentColor] text-icon-muted focus-visible:bg-accent focus-visible:text-foreground"
-                              onPointerDown={(event) => event.stopPropagation()}
-                              onClick={(event) => {
-                                void handleProjectSettings(event, project);
-                              }}
-                            >
-                              <SettingsIcon className="size-3.5" />
-                            </Button>
-                          </DraggableProjectScopeItem>
+                            {project ? (
+                              <Button
+                                size="icon-xs"
+                                variant="ghost-muted"
+                                aria-label={`Project settings for ${project.displayName}`}
+                                title={`Project settings for ${project.displayName}`}
+                                className="ml-auto size-6 [--control-icon-color:currentColor] text-icon-muted focus-visible:bg-accent focus-visible:text-foreground"
+                                onPointerDown={(event) => event.stopPropagation()}
+                                onClick={(event) => {
+                                  void handleProjectSettings(event, project);
+                                }}
+                              >
+                                <SettingsIcon className="size-3.5" />
+                              </Button>
+                            ) : null}
+                          </ComboboxItem>
                         );
                       }}
                     </ComboboxList>
