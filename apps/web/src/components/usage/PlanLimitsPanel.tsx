@@ -1,6 +1,7 @@
 import { PROVIDER_DISPLAY_NAMES, type ServerProvider } from "@t3tools/contracts";
 import type { ProviderUsageLimitsEntry } from "@t3tools/client-runtime/providerUsageLimits";
 import {
+  areProviderUsageLimitsOutOfDate,
   displayRemainingPercent,
   formatLimitReset,
   formatRemainingPercent,
@@ -107,7 +108,7 @@ function ProviderLimitCard(props: { readonly entry: ProviderUsageLimitsEntry }) 
     <article
       className={cn(
         "flex min-w-0 flex-col gap-4 rounded-xl border border-border bg-card p-4",
-        limits?.status === "stale" && "opacity-75",
+        limits && areProviderUsageLimitsOutOfDate(limits) && "opacity-75",
         exhausted && "border-destructive/70",
       )}
     >

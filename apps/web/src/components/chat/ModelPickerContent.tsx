@@ -10,6 +10,7 @@ import {
   formatRemainingPercent,
   providerLimitColor,
   providerUsageLimitDisplayWindows,
+  usageLimitsStatusLabel,
 } from "@t3tools/shared/providerUsageLimits";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { memo, useMemo, useState, useCallback, useEffect, useLayoutEffect, useRef } from "react";
@@ -162,6 +163,9 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   const selectedLimitWindows = selectedLimitsEntry?.snapshot.usageLimits
     ? providerUsageLimitDisplayWindows(selectedLimitsEntry.snapshot.usageLimits)
     : [];
+  const selectedLimitsStatus = selectedLimitsEntry?.snapshot.usageLimits
+    ? usageLimitsStatusLabel(selectedLimitsEntry.snapshot.usageLimits)
+    : null;
   const [expandedLegacyInstances, setExpandedLegacyInstances] = useState(
     () =>
       new Set<ProviderInstanceId>(
@@ -761,7 +765,12 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
             </div>
 
             {selectedLimitsEntry?.snapshot.usageLimits ? (
-              <div className="flex flex-wrap gap-1.5 border-b border-border/70 px-2 py-2">
+              <div className="flex flex-wrap items-center gap-1.5 border-b border-border/70 px-2 py-2">
+                {selectedLimitsStatus !== "Live" ? (
+                  <span className="shrink-0 rounded-md border border-border/70 px-2 py-1 text-[10px] text-muted-foreground">
+                    {selectedLimitsStatus}
+                  </span>
+                ) : null}
                 {selectedLimitWindows.length > 0 ? (
                   selectedLimitWindows.map((entry) => {
                     const remaining = displayRemainingPercent(entry.limits, entry.window);

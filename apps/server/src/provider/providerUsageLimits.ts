@@ -180,8 +180,10 @@ export function makeUnavailableUsageLimits(input: {
 
 /**
  * Runs one lightweight limits reader per provider instance. BackgroundPolicy
- * keeps it dormant when no client or turn needs provider status. Failures keep
- * the last good windows, visibly marked stale, instead of erasing useful data.
+ * keeps it dormant when no client needs provider status. Usage limits remain
+ * current for connected clients even when foreground or power-saving policy
+ * pauses broader provider health checks. Failures keep the last good windows,
+ * visibly marked stale, instead of erasing useful data.
  */
 export const pollProviderUsageLimits = Effect.fn("pollProviderUsageLimits")(function* (input: {
   readonly instanceId: ProviderInstanceId;
@@ -193,8 +195,8 @@ export const pollProviderUsageLimits = Effect.fn("pollProviderUsageLimits")(func
   return yield* Effect.forever(
     Effect.gen(function* () {
       const [genericDemand, instanceDemand] = yield* Effect.all([
-        input.backgroundPolicy.shouldRunScopeWork({ type: "provider-status" }),
-        input.backgroundPolicy.shouldRunScopeWork({
+        input.backgroundPolicy.hasDemand({ type: "provider-status" }),
+        input.backgroundPolicy.hasDemand({
           type: "provider-status",
           instanceId: input.instanceId,
         }),

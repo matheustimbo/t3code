@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  areProviderUsageLimitsOutOfDate,
   displayRemainingPercent,
   formatLimitReset,
   formatRemainingPercent,
   providerUsageLimitDisplayWindows,
+  usageLimitsStatusLabel,
 } from "./providerUsageLimits.ts";
 
 describe("provider usage-limit formatting", () => {
@@ -27,6 +29,29 @@ describe("provider usage-limit formatting", () => {
         Date.parse("2026-08-29T14:00:00.000Z"),
       ),
     ).toBeUndefined();
+  });
+
+  it("treats an available snapshot older than two minutes as out of date", () => {
+    const limits = {
+      status: "available",
+      support: "supported",
+      source: "test",
+      checkedAt: "2026-08-29T12:00:00.000Z",
+      windows: [],
+    } as const;
+
+    expect(areProviderUsageLimitsOutOfDate(limits, Date.parse("2026-08-29T12:02:01.000Z"))).toBe(
+      true,
+    );
+    expect(usageLimitsStatusLabel(limits, Date.parse("2026-08-29T12:02:01.000Z"))).toBe(
+      "Out of date",
+    );
+    expect(
+      usageLimitsStatusLabel(
+        { ...limits, status: "disabled" },
+        Date.parse("2026-08-29T12:02:01.000Z"),
+      ),
+    ).toBe("Disabled");
   });
 
   it("formats compact reset and remaining labels", () => {

@@ -1,14 +1,21 @@
 import { assert, it } from "@effect/vitest";
+import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import {
   makePooledUsageLimitsSnapshot,
+  makeUsageLimitsSnapshot,
   makeUnavailableUsageLimitsAccount,
   parseCliProxyCodexUsageWindows,
   parseClaudePlanLabel,
@@ -16,7 +23,9 @@ import {
   parseCursorUsageWindows,
   parseGrokUsageWindows,
   parseOpenCodeUsageWindows,
+  pollProviderUsageLimits,
 } from "./providerUsageLimits.ts";
+import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import {
   parseCliProxyAuthFiles,
   parseCliProxyClaudeAuthFiles,
@@ -32,6 +41,85 @@ const decodeCliProxyRequestBody = Schema.decodeUnknownSync(
   ),
 );
 const encodeUnknownJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+
+it.effect("polls usage limits while a client has demand even if foreground work is paused", () =>
+  Effect.gen(function* () {
+    const instanceId = ProviderInstanceId.make("codex");
+    const checkedAt = "2026-08-30T12:00:00.000Z";
+    const initialSnapshot: ServerProvider = {
+      instanceId,
+      driver: ProviderDriverKind.make("codex"),
+      enabled: true,
+      installed: true,
+      version: "1.0.0",
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt,
+      models: [],
+      slashCommands: [],
+      skills: [],
+    };
+    const snapshotRef = yield* Ref.make(initialSnapshot);
+    const published = yield* Deferred.make<ServerProvider>();
+    const now = DateTime.makeUnsafe(checkedAt);
+    const policySnapshot = {
+      hostPower: {
+        source: "unknown",
+        idle: "unknown",
+        idleSeconds: null,
+        locked: "unknown",
+        suspended: false,
+        onBattery: "unknown",
+        lowPowerMode: "unknown",
+        thermalState: "unknown",
+        stale: true,
+        updatedAt: now,
+      },
+      leases: [],
+      activeForegroundLeaseCount: 0,
+      activeScopeKeys: ["provider-status"],
+      shouldRunOpportunisticWork: false,
+      updatedAt: now,
+    } as const;
+    const backgroundPolicy = BackgroundPolicy.BackgroundPolicy.of({
+      reportClientActivity: () => Effect.void,
+      removeRpcClient: () => Effect.void,
+      reportHostPowerState: () => Effect.void,
+      snapshot: Effect.succeed(policySnapshot),
+      streamChanges: Stream.empty,
+      subscribe: Effect.succeed({
+        latest: policySnapshot,
+        changes: Stream.empty,
+      }),
+      hasDemand: () => Effect.succeed(true),
+      shouldRunScopeWork: () => Effect.succeed(false),
+      shouldRunOpportunisticWork: Effect.succeed(false),
+    });
+
+    const fiber = yield* pollProviderUsageLimits({
+      instanceId,
+      getSnapshot: Ref.get(snapshotRef),
+      publishSnapshot: (snapshot) =>
+        Ref.set(snapshotRef, snapshot).pipe(
+          Effect.andThen(Deferred.succeed(published, snapshot)),
+          Effect.asVoid,
+        ),
+      read: Effect.succeed(
+        makeUsageLimitsSnapshot({
+          source: "codex-app-server",
+          support: "supported",
+          checkedAt,
+          windows: [{ id: "weekly", label: "7 days", remainingPercent: 75 }],
+        }),
+      ),
+      backgroundPolicy,
+    }).pipe(Effect.forkChild);
+
+    const next = yield* Deferred.await(published);
+    assert.strictEqual(next.usageLimits?.windows[0]?.remainingPercent, 75);
+    yield* Fiber.interrupt(fiber);
+  }),
+);
 
 it("normalizes Claude windows", () => {
   const windows = parseClaudeUsageWindows({

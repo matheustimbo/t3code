@@ -13,6 +13,18 @@ const PROVIDER_LIMIT_COLORS: Readonly<Record<string, string>> = {
   opencode: "#2563eb",
 };
 
+export const PROVIDER_USAGE_LIMITS_STALE_AFTER_MS = 2 * 60_000;
+
+export function areProviderUsageLimitsOutOfDate(
+  limits: ServerProviderUsageLimits,
+  nowMs = new Date().getTime(),
+): boolean {
+  if (limits.status === "stale") return true;
+  if (limits.status !== "available" && limits.status !== "partial") return false;
+  const checkedAtMs = Date.parse(limits.checkedAt);
+  return Number.isFinite(checkedAtMs) && nowMs - checkedAtMs > PROVIDER_USAGE_LIMITS_STALE_AFTER_MS;
+}
+
 export function providerLimitColor(
   driver: ProviderDriverKind,
   customAccent?: string | undefined,
@@ -56,7 +68,7 @@ export function displayRemainingPercent(
   nowMs = new Date().getTime(),
 ): number | undefined {
   if (
-    limits.status === "stale" &&
+    areProviderUsageLimitsOutOfDate(limits, nowMs) &&
     window.resetsAt !== undefined &&
     Date.parse(window.resetsAt) <= nowMs
   ) {
@@ -85,7 +97,11 @@ export function formatLimitReset(
   return `Resets in ${Math.ceil(hours / 24)}d`;
 }
 
-export function usageLimitsStatusLabel(limits: ServerProviderUsageLimits): string {
+export function usageLimitsStatusLabel(
+  limits: ServerProviderUsageLimits,
+  nowMs = new Date().getTime(),
+): string {
+  if (areProviderUsageLimitsOutOfDate(limits, nowMs)) return "Out of date";
   switch (limits.status) {
     case "available":
       return "Live";
