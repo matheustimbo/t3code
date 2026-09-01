@@ -169,8 +169,27 @@ it("normalizes nullable Claude windows and the modern Fable limit", () => {
     [
       { id: "five_hour", label: "5 hours", remaining: 100 },
       { id: "seven_day", label: "7 days", remaining: 25 },
-      { id: "seven_day_fable", label: "7 days · Fable 5", remaining: 44 },
+      { id: "seven_day_fable", label: "7 days · Fable", remaining: 44 },
     ],
+  );
+});
+
+it("recognizes a versioned Fable scope such as Fable 5.1", () => {
+  const windows = parseClaudeUsageWindows({
+    limits: [
+      {
+        kind: "weekly_scoped",
+        percent: 20,
+        resets_at: "2026-09-01T23:59:00.000Z",
+        is_active: true,
+        scope: { model: { display_name: "Fable 5.1" } },
+      },
+    ],
+  });
+
+  assert.deepStrictEqual(
+    windows.map((window) => ({ id: window.id, remaining: window.remainingPercent })),
+    [{ id: "seven_day_fable", remaining: 80 }],
   );
 });
 

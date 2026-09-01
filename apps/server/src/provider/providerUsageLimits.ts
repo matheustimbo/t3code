@@ -346,7 +346,7 @@ export function parseClaudeUsageWindows(
     const model = limit?.scope?.model?.display_name?.trim().toLowerCase();
     return (
       limit?.kind?.trim().toLowerCase() === "weekly_scoped" &&
-      (model === "fable" || model === "fable 5") &&
+      (model === "fable" || model?.startsWith("fable ") === true) &&
       numericValue(limit.percent) !== undefined
     );
   });
@@ -359,9 +359,7 @@ export function parseClaudeUsageWindows(
     ["seven_day_sonnet", "7 days · Sonnet", payload.seven_day_sonnet],
     ["seven_day_opus", "7 days · Opus", payload.seven_day_opus],
     ["seven_day_cowork", "7 days · Cowork", payload.seven_day_cowork],
-    ...(fableLimit
-      ? []
-      : [["iguana_necktie", "7 days · Fable 5", payload.iguana_necktie] as const]),
+    ...(fableLimit ? [] : [["iguana_necktie", "7 days · Fable", payload.iguana_necktie] as const]),
     ["extra_usage", "Extra usage", payload.extra_usage],
   ] as const;
   const windows = entries.flatMap(([id, label, window]) =>
@@ -380,7 +378,7 @@ export function parseClaudeUsageWindows(
     windows.push(
       normalizedWindow({
         id: "seven_day_fable",
-        label: "7 days · Fable 5",
+        label: "7 days · Fable",
         usedPercent: numericValue(fableLimit.percent),
         resetsAt: fableLimit.resets_at,
       }),

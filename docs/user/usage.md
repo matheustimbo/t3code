@@ -40,7 +40,7 @@ Claude and Grok still require **Experimental plan limits** to be enabled. Codex 
 single app-server reading to the CLIProxyAPI account pool whenever the management key is configured.
 Each credential is shown separately; percentages are never added across the pool. Disabled and
 failed credentials remain visible with their own status. Claude accounts also show the plan
-reported by the account profile and include modern model-scoped weekly windows such as Fable 5.
+reported by the account profile and include modern model-scoped weekly windows such as Fable.
 
 The management URL can be omitted when the provider already has a CLIProxyAPI base URL in
 `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, `CODEX_BASE_URL`, `XAI_BASE_URL`, or `GROK_BASE_URL`.
