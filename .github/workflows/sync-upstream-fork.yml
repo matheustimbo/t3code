@@ -2,7 +2,8 @@ name: Sync upstream fork
 
 on:
   schedule:
-    - cron: "17 6 * * *"
+    # Every three hours, so an upstream nightly release is picked up the same day.
+    - cron: "17 */3 * * *"
   workflow_dispatch:
 
 permissions:
@@ -23,7 +24,10 @@ jobs:
       - name: Sync upstream mirror
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh repo sync "$GITHUB_REPOSITORY" --source pingdotgg/t3code --branch main
+        # `main` is a pure mirror of upstream; fork work lives on `fork-main`.
+        # Without --force a diverged `main` fails this step and the whole sync
+        # never reaches the merge, silently leaving the fork behind.
+        run: gh repo sync "$GITHUB_REPOSITORY" --source pingdotgg/t3code --branch main --force
 
       - name: Checkout fork integration branch
         uses: actions/checkout@v6

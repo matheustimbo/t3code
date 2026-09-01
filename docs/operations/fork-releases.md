@@ -48,9 +48,11 @@ that identity independently from the stable update channel and `0.1.x` release v
 
 ## Upstream synchronization
 
-The **Sync upstream fork** workflow runs daily and can also be dispatched manually. It first mirrors
+The **Sync upstream fork** workflow runs every three hours and can also be dispatched manually, so
+an upstream nightly release reaches the fork the same day. It first force-mirrors
 `pingdotgg/t3code:main` into the fork's `main` branch, then merges that branch into `fork-main` when
-Git reports no conflicts. A successful integration explicitly dispatches the fork release because
+Git reports no conflicts. `main` is only a mirror: commits landed there are discarded by the next
+sync, and fork work belongs on `fork-main`. A successful integration explicitly dispatches the fork release because
 GitHub does not start additional workflows for ordinary pushes made with `GITHUB_TOKEN`; mobile
 builds are dispatched only when mobile or shared runtime paths changed.
 
