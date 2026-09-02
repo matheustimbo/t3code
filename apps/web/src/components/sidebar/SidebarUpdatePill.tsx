@@ -85,7 +85,7 @@ function SidebarUpdateReleaseNotesTooltip({
               Update ready to download
             </div>
             {state.availableVersion ? (
-              <div className="mt-0.5 text-xs leading-4 text-update-foreground">
+              <div className="mt-0.5 text-xs leading-4 text-muted-foreground">
                 {state.availableVersion}
               </div>
             ) : null}
@@ -320,8 +320,8 @@ function SidebarUpdateControl() {
                 isInteractionDisabled ? "cursor-not-allowed" : "cursor-pointer",
                 showUpdateIconState
                   ? cn(
-                      "bg-update-surface text-update-foreground",
-                      !isInteractionDisabled && "hover:bg-update/12",
+                      "bg-sidebar-control-surface text-sidebar-foreground",
+                      !isInteractionDisabled && "hover:bg-sidebar-row-hover",
                     )
                   : cn(
                       "text-[var(--sidebar-icon-color)]",
@@ -352,15 +352,6 @@ function SidebarUpdateControl() {
               : undefined
           }
           side="top"
-          style={
-            showUpdateDetails
-              ? {
-                  background:
-                    "color-mix(in srgb, var(--update) 18%, color-mix(in srgb, var(--popover) var(--glass-opacity), transparent))",
-                  borderColor: "var(--update-foreground)",
-                }
-              : undefined
-          }
           variant={showUpdateDetails ? "glass" : "default"}
         >
           {showUpdateDetails && state ? (
