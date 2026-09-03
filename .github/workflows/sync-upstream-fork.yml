@@ -19,32 +19,37 @@ jobs:
   sync:
     if: github.repository == 'matheustimbo/t3code'
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
-      - name: Sync upstream mirror
-        env:
-          GH_TOKEN: ${{ github.token }}
-        # `main` is a pure mirror of upstream; fork work lives on `fork-main`.
-        # Without --force a diverged `main` fails this step and the whole sync
-        # never reaches the merge, silently leaving the fork behind.
-        run: gh repo sync "$GITHUB_REPOSITORY" --source pingdotgg/t3code --branch main --force
-
       - name: Checkout fork integration branch
         uses: actions/checkout@v6
         with:
           ref: fork-main
           fetch-depth: 0
+          # A deploy key, not GITHUB_TOKEN. GitHub refuses any push carrying
+          # `.github/workflows` changes from the job token, so every upstream
+          # release that touched a workflow file stalled this sync until
+          # someone ran it by hand. An SSH deploy key is not subject to that,
+          # and it reaches only this repository.
+          ssh-key: ${{ secrets.FORK_SYNC_SSH_KEY }}
 
       - id: integrate
         name: Integrate upstream when conflict-free
         shell: bash
         run: |
           set -euo pipefail
-          git fetch --no-tags origin \
-            +refs/heads/main:refs/remotes/origin/main \
-            +refs/heads/fork-main:refs/remotes/origin/fork-main
+          # Read upstream directly. The `main` mirror below is a convenience
+          # for humans and for the conflict pull request; the integration must
+          # not depend on it having been updated.
+          git fetch --no-tags https://github.com/pingdotgg/t3code.git \
+            +refs/heads/main:refs/remotes/upstream/main
 
-          if git merge-base --is-ancestor origin/main HEAD; then
+          # `main` is a pure mirror of upstream; fork work lives on `fork-main`.
+          # Force, because a diverged mirror must not stop the integration.
+          git push --force origin refs/remotes/upstream/main:refs/heads/main ||
+            echo "Mirror push failed; continuing with the integration."
+
+          if git merge-base --is-ancestor upstream/main HEAD; then
             echo "fork-main already contains the current upstream main."
             echo "changed=false" >> "$GITHUB_OUTPUT"
             echo "conflict=false" >> "$GITHUB_OUTPUT"
@@ -53,7 +58,7 @@ jobs:
           fi
 
           mobile_changed=false
-          if ! git diff --quiet HEAD...origin/main -- \
+          if ! git diff --quiet HEAD...upstream/main -- \
             apps/mobile \
             packages/client-runtime \
             packages/contracts \
@@ -67,11 +72,20 @@ jobs:
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if git merge --no-ff --no-edit -m "chore: sync upstream main" origin/main; then
-            git push origin HEAD:fork-main
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-            echo "conflict=false" >> "$GITHUB_OUTPUT"
-            echo "mobile_changed=$mobile_changed" >> "$GITHUB_OUTPUT"
+          if git merge --no-ff --no-edit -m "chore: sync upstream main" upstream/main; then
+            if git push origin HEAD:fork-main; then
+              echo "changed=true" >> "$GITHUB_OUTPUT"
+              echo "conflict=false" >> "$GITHUB_OUTPUT"
+              echo "mobile_changed=$mobile_changed" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            # A clean merge we cannot land (protection, or a race with a push)
+            # becomes a pull request rather than a red job.
+            echo "Integration push rejected; opening a pull request instead."
+            git merge --abort || git reset --hard "origin/fork-main"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "conflict=true" >> "$GITHUB_OUTPUT"
+            echo "mobile_changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
