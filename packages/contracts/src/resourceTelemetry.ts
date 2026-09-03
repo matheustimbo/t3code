@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 
-import { NonNegativeInt, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { NonNegativeInt, PositiveInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { HostPowerSnapshot } from "./background.ts";
 
 export const RESOURCE_MONITOR_PROTOCOL_VERSION = 2 as const;
@@ -428,3 +428,39 @@ export const ResourceTelemetryRetryResult = Schema.Struct({
   snapshot: ResourceTelemetrySnapshot,
 });
 export type ResourceTelemetryRetryResult = typeof ResourceTelemetryRetryResult.Type;
+
+/**
+ * How much of the machine one thread is holding right now.
+ *
+ * `active` carries real numbers; `idle` means the thread owns no live
+ * process (nothing is running for it); `unavailable` means this host has no
+ * working resource monitor, so the client shows nothing rather than zeros.
+ */
+export const ThreadResourceUsageStatus = Schema.Literals(["active", "idle", "unavailable"]);
+export type ThreadResourceUsageStatus = typeof ThreadResourceUsageStatus.Type;
+
+export const ThreadResourceUsage = Schema.Struct({
+  threadId: ThreadId,
+  readAt: Schema.DateTimeUtc,
+  status: ThreadResourceUsageStatus,
+  /** Processes the thread owns outright: its agent runtime plus its terminals. */
+  processCount: NonNegativeInt,
+  agentProcessCount: NonNegativeInt,
+  /** How many of the thread's terminals are alive, not how many processes they hold. */
+  terminalCount: NonNegativeInt,
+  cpuPercent: Schema.Number,
+  /** CPU consumed by the thread's live processes since each one started. */
+  cpuTimeMs: NonNegativeInt,
+  rssBytes: NonNegativeInt,
+  peakRssBytes: NonNegativeInt,
+  ioReadBytesPerSecond: Schema.Number,
+  ioWriteBytesPerSecond: Schema.Number,
+  /** Share of everything T3 is burning on this host, so a raw percent reads in context. */
+  cpuSharePercent: Schema.Number,
+});
+export type ThreadResourceUsage = typeof ThreadResourceUsage.Type;
+
+export const ThreadResourceUsageInput = Schema.Struct({
+  threadId: ThreadId,
+});
+export type ThreadResourceUsageInput = typeof ThreadResourceUsageInput.Type;

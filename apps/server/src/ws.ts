@@ -123,6 +123,8 @@ import { requiredScopeForRpcMethod } from "./auth/RpcAuthorization.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
+import { readThreadProcessClaims } from "./resourceTelemetry/ThreadProcessRegistry.ts";
+import { aggregateThreadResourceUsage } from "./resourceTelemetry/ThreadResourceUsage.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as UsageService from "./usage/UsageService.ts";
 import * as TicketProviderRegistry from "./ticket/TicketProviderRegistry.ts";
@@ -2528,6 +2530,26 @@ const makeWsRpcLayer = (
             Stream.unwrap(
               Effect.map(resourceTelemetry.subscribe, ({ latest, changes }) =>
                 Stream.concat(Stream.make(latest), changes),
+              ),
+            ),
+            { "rpc.aggregate": "server" },
+          ),
+        // Subscribing is what turns sampling on, so this stays a stream the
+        // client holds only while a thread's card is open.
+        [WS_METHODS.subscribeThreadResourceUsage]: (input) =>
+          observeRpcStream(
+            WS_METHODS.subscribeThreadResourceUsage,
+            Stream.unwrap(
+              Effect.map(resourceTelemetry.subscribe, ({ latest, changes }) =>
+                Stream.concat(Stream.make(latest), changes).pipe(
+                  Stream.map((snapshot) =>
+                    aggregateThreadResourceUsage({
+                      threadId: input.threadId,
+                      claims: readThreadProcessClaims(),
+                      snapshot,
+                    }),
+                  ),
+                ),
               ),
             ),
             { "rpc.aggregate": "server" },

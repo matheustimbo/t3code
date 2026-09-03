@@ -83,6 +83,8 @@ const DEFAULT_HOSTNAME = "127.0.0.1";
 const OPENCODE_SKILL_DISCOVERY_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 export interface OpenCodeServerProcess {
   readonly url: string;
+  /** Pid of the server we spawned; absent for servers we did not start. */
+  readonly pid?: number;
   readonly serverPassword?: string;
   readonly version: string;
   readonly isRunning: Effect.Effect<boolean>;
@@ -91,6 +93,8 @@ export interface OpenCodeServerProcess {
 
 export interface OpenCodeServerConnection {
   readonly url: string;
+  /** Pid of the server we spawned; absent when connecting to an external one. */
+  readonly pid?: number;
   readonly serverPassword?: string;
   readonly version: string;
   readonly exitCode: Effect.Effect<number, never> | null;
@@ -780,6 +784,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
 
       return {
         url,
+        pid: Number(child.pid),
         ...(serverPassword !== undefined ? { serverPassword } : {}),
         version,
         isRunning: child.isRunning.pipe(Effect.orElseSucceed(() => false)),
@@ -825,6 +830,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
     }).pipe(
       Effect.map((server) => ({
         url: server.url,
+        ...(server.pid !== undefined ? { pid: server.pid } : {}),
         ...(server.serverPassword !== undefined ? { serverPassword: server.serverPassword } : {}),
         version: server.version,
         exitCode: server.exitCode,

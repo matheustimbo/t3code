@@ -37,6 +37,7 @@ import {
   type AcpSessionModeState,
   type AcpToolCallState,
 } from "./AcpRuntimeModel.ts";
+import { claimAgentProcessScoped } from "../../resourceTelemetry/ThreadProcessRegistry.ts";
 
 interface AcpToolCallTrackedState {
   readonly state: AcpToolCallState;
@@ -67,6 +68,12 @@ export interface AcpSpawnInput {
 
 export interface AcpSessionRuntimeOptions {
   readonly spawn: AcpSpawnInput;
+  /**
+   * Thread this runtime belongs to, when it backs a chat session. Set it so
+   * the agent process counts toward that thread's resource usage; leave it
+   * unset for probes and one-off runtimes, which belong to no thread.
+   */
+  readonly owner?: { readonly threadId: string };
   readonly cwd: string;
   readonly resumeSessionId?: string;
   readonly sessionLoadTimeout?: Duration.Input;
@@ -361,6 +368,14 @@ export const make = (
             }),
         ),
       );
+
+    if (options.owner) {
+      yield* claimAgentProcessScoped({
+        scope: runtimeScope,
+        threadId: options.owner.threadId,
+        pid: Number(child.pid),
+      });
+    }
 
     const acpContext = yield* Layer.build(
       EffectAcpClient.layerChildProcess(child, {

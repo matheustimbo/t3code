@@ -40,6 +40,7 @@ import { buildCodexInitializeParams } from "./CodexProvider.ts";
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import { buildCodexDeveloperInstructions } from "../CodexDeveloperInstructions.ts";
+import { claimAgentProcessScoped } from "../../resourceTelemetry/ThreadProcessRegistry.ts";
 const decodeV2TurnStartResponse = Schema.decodeUnknownEffect(EffectCodexSchema.V2TurnStartResponse);
 
 const PROVIDER = ProviderDriverKind.make("codex");
@@ -1206,6 +1207,14 @@ export const makeCodexSessionRuntime = (
             }),
         ),
       );
+
+    // The app-server is this thread's alone, so its subtree is exactly the
+    // thread's agent-side machine usage.
+    yield* claimAgentProcessScoped({
+      scope: runtimeScope,
+      threadId: options.threadId,
+      pid: Number(child.pid),
+    });
 
     const clientContext = yield* CodexClient.layerChildProcess(child).pipe(
       Layer.build,

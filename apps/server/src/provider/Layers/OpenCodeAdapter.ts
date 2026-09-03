@@ -33,6 +33,7 @@ import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import { claimAgentProcessScoped } from "../../resourceTelemetry/ThreadProcessRegistry.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import {
   ProviderAdapterProcessError,
@@ -2404,6 +2405,14 @@ export function makeOpenCodeAdapter(
                 ...(serverPassword ? { serverPassword } : {}),
                 ...(options?.environment ? { environment: options.environment } : {}),
               });
+              // One server per session, so its subtree is this thread's agent
+              // usage. External servers have no pid we own and stay unclaimed.
+              yield* claimAgentProcessScoped({
+                scope: sessionScope,
+                threadId: input.threadId,
+                pid: server.pid,
+              });
+
               const client = openCodeRuntime.createOpenCodeSdkClient({
                 baseUrl: server.url,
                 directory,

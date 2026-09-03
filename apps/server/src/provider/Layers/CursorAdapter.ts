@@ -534,6 +534,7 @@ export function makeCursorAdapter(
           const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
           const acp = yield* makeCursorAcpRuntime({
             cursorSettings: effectiveCursorSettings,
+            owner: { threadId: input.threadId },
             ...(options?.environment ? { environment: options.environment } : {}),
             childProcessSpawner,
             cwd,

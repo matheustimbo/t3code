@@ -190,6 +190,8 @@ import {
 } from "./ui/combobox";
 import { SidebarContent, SidebarGroup, SidebarMenuButton, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
+import { SidebarThreadResourceUsage } from "./sidebar/SidebarThreadResourceUsage";
+import { terminalProcessLabel } from "./sidebar/threadResourceUsage";
 import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import {
@@ -261,10 +263,6 @@ function WorkingDuration(props: { startedAt: string | null }) {
 }
 
 const EMPTY_PROVIDER_ENTRIES: ReadonlyMap<string, ProviderInstanceEntry> = new Map();
-
-function terminalProcessLabel(count: number): string {
-  return `${count} terminal ${count === 1 ? "process" : "processes"} running`;
-}
 
 function SidebarThreadTooltip({
   thread,
@@ -362,17 +360,12 @@ function SidebarThreadTooltip({
               </div>
             </div>
           ) : null}
-          {terminalStatus ? (
-            <div className="flex min-w-0 items-center gap-2">
-              <TerminalIcon
-                aria-hidden
-                className={cn("size-3 shrink-0", terminalStatus.colorClass)}
-              />
-              <div className="min-w-0 truncate text-foreground/75">
-                {terminalProcessLabel(terminalProcessCount)}
-              </div>
-            </div>
-          ) : null}
+          <SidebarThreadResourceUsage
+            threadId={thread.id}
+            environmentId={thread.environmentId}
+            terminalStatus={terminalStatus}
+            terminalProcessCount={terminalProcessCount}
+          />
           {thread.session?.lastError ? (
             <div className="flex min-w-0 items-center gap-2 text-red-600 dark:text-red-400">
               <CircleAlertIcon className="size-3 shrink-0 stroke-current" />

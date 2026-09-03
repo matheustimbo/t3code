@@ -11,6 +11,7 @@ This is a living glossary for T3 Code. It explains what common terms mean in thi
 - [Orchestration](#orchestration)
 - [Provider runtime](#provider-runtime)
 - [Checkpointing](#checkpointing)
+- [Resource telemetry](#resource-telemetry)
 - [Appearance](#appearance)
 
 ## Concepts
@@ -153,6 +154,12 @@ The patch difference between two checkpoints. Query logic lives in [CheckpointDi
 
 The file patch and changed-file summary for one turn. It is usually computed in [CheckpointDiffQuery.ts][20], represented in [the contracts][1], and recorded into thread state by [projector.ts][4].
 
+### Resource telemetry
+
+#### Thread process claim
+
+A thread's registered ownership of a root process, so a machine-wide telemetry snapshot can be split per thread. A claim names the thread, whether the process is its `agent` runtime or one of its `terminal` sessions, and how to find the root: by pid for runtimes T3 Code spawns, or by a command-line token for Claude, whose CLI the Agent SDK spawns on its own. Usage is summed over the root's whole subtree. Claims live in `ThreadProcessRegistry.ts` and are read by `ThreadResourceUsage.ts`; see the [resource telemetry architecture][27].
+
 ### Appearance
 
 #### Environment theme
@@ -209,3 +216,4 @@ ships T3 Code already matching it.
 [24]: ./overview.md
 [25]: ../../apps/server/src/environmentTheme.ts
 [26]: ../user/environment-theme.md
+[27]: ./resource-telemetry.md

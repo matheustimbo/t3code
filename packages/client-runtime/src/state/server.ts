@@ -677,6 +677,13 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.subscribeResourceTelemetry,
       idleTtlMs: 0,
     }),
+    // Keyed by thread and disposed with its last reader: the stream is what
+    // asks the server to sample at all, so it must not outlive the open card.
+    threadResourceUsage: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:server:thread-resource-usage",
+      tag: WS_METHODS.subscribeThreadResourceUsage,
+      idleTtlMs: 0,
+    }),
     resourceTelemetryHistory: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:resource-telemetry-history",
       tag: WS_METHODS.serverGetResourceTelemetryHistory,

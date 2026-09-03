@@ -313,6 +313,44 @@ The monitor updates its latest timestamp on every Electron sample but only
 publishes semantic state changes. Increasing idle seconds alone does not cause a
 background-policy broadcast every second.
 
+## Per-thread attribution
+
+The sidebar's thread card reports what one thread is costing. The snapshot
+alone cannot answer that: it knows the process tree, not which thread owns
+which branch of it. `ThreadProcessRegistry` supplies the missing link as a
+plain in-memory map of claims, in the shape of `McpProviderSession` — the claim
+sites live in terminal and provider layers that share no Effect context, so a
+service would be plumbing without a payoff.
+
+A claim names a thread, a kind (`agent` or `terminal`), and a way to find the
+root process:
+
+- **by pid**, for runtimes we spawn: the Codex app-server
+  (`CodexSessionRuntime`), the ACP runtimes behind Cursor and Grok
+  (`AcpSessionRuntime`, claimed only when the caller passes `owner`), the
+  per-session OpenCode server (`OpenCodeAdapter`), and each terminal PTY
+  (`terminal/Manager`, released from `cleanupProcessHandles`, which every
+  teardown path already goes through);
+- **by command token**, for Claude. The Agent SDK spawns the CLI itself and
+  returns no handle, but it forwards our session id as `--session-id` /
+  `--resume`, so that id identifies the process in its command line. The claim
+  is refreshed whenever the SDK reports a new session id.
+
+An external OpenCode server is not claimed: we did not start it, and it may
+serve more than this thread.
+
+`aggregateThreadResourceUsage` sums each claimed root's subtree, visiting every
+pid at most once so overlapping claims cannot double-count. Every provider runs
+one runtime per thread, so a subtree belongs to a single thread. It reports
+`unavailable` when neither telemetry source is alive, and `idle` when the
+thread's claims resolve to no live process — both render as nothing rather than
+a confident zero.
+
+`subscribeThreadResourceUsage` maps the snapshot stream through that function
+for one thread. Subscribing is what starts sampling, and the web client holds
+the stream only while the hover card is open (`idleTtlMs: 0`), so a closed
+sidebar costs nothing.
+
 ## Public API and UI
 
 The WebSocket RPC surface provides:

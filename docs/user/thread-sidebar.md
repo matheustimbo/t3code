@@ -36,6 +36,22 @@ If reordering is unavailable for one environment, update the T3 Code server runn
 environment. Older servers can still pin and unpin threads, but do not understand synced ordering;
 their pinned threads keep the default newest-first order below the ones you have arranged.
 
+## What a thread is using
+
+Hover a thread in the sidebar to see how much of the machine it is holding right now, below its
+project, branch, and model:
+
+- current CPU and memory, plus that thread's share of everything T3 Code is using on that machine;
+- CPU time spent so far and the highest memory it has reached;
+- how many processes that is, split between the agent and the thread's terminals;
+- disk read and write rates, shown only while there is enough traffic to matter.
+
+The numbers cover the agent and every process it started, including the commands it runs in your
+terminals. They are measured only while the card is open, so a closed sidebar costs nothing.
+
+A thread with no work running shows no usage. Threads on a machine without resource monitoring —
+including a server reached through WSL — show none either.
+
 ## Environment artwork
 
 Dev and Nightly environments can identify themselves with artwork at the top of the sidebar and in

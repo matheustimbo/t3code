@@ -58,6 +58,11 @@ import {
   terminalSessionsTotal,
 } from "../observability/Metrics.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import {
+  claimThreadProcess,
+  releaseThreadProcess,
+  terminalProcessKey,
+} from "../resourceTelemetry/ThreadProcessRegistry.ts";
 import * as PortScanner from "../preview/PortScanner.ts";
 import * as PtyAdapter from "./PtyAdapter.ts";
 
@@ -425,6 +430,9 @@ function cleanupProcessHandles(session: TerminalSessionState): void {
   session.unsubscribeData = null;
   session.unsubscribeExit?.();
   session.unsubscribeExit = null;
+  // Every teardown path funnels through here, so this is also where the
+  // terminal stops counting against its thread's resource usage.
+  releaseThreadProcess(terminalProcessKey(session.threadId, session.terminalId));
 }
 
 function enqueueProcessEvent(
@@ -1894,6 +1902,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             yield* modifyManagerState((state) => {
               session.process = ptyProcess;
               session.pid = processPid;
+              claimThreadProcess(terminalProcessKey(session.threadId, session.terminalId), {
+                threadId: session.threadId,
+                kind: "terminal",
+                pid: processPid,
+              });
               session.status = "running";
               session.unsubscribeData = unsubscribeData;
               session.unsubscribeExit = unsubscribeExit;

@@ -101,12 +101,32 @@ import {
   ProviderAdapterValidationError,
   type ProviderAdapterError,
 } from "../Errors.ts";
+import {
+  agentProcessKey,
+  claimThreadProcess,
+  releaseThreadProcess,
+} from "../../resourceTelemetry/ThreadProcessRegistry.ts";
 import { type ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
 const decodeUnknownJsonStringExit = Schema.decodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
 
 const PROVIDER = ProviderDriverKind.make("claudeAgent");
+
+/**
+ * Bind a thread to the Claude CLI process serving it. The Agent SDK spawns
+ * that process itself and never exposes a handle, but it passes our session
+ * id through as `--session-id`/`--resume`, so the id is a reliable marker in
+ * the child's command line.
+ */
+function claimClaudeAgentProcess(threadId: string, sessionId: string | undefined): void {
+  if (!sessionId) return;
+  claimThreadProcess(agentProcessKey(threadId), {
+    threadId,
+    kind: "agent",
+    commandToken: sessionId,
+  });
+}
 type ClaudeTextStreamKind = Extract<RuntimeContentStreamKind, "assistant_text" | "reasoning_text">;
 type ClaudeToolResultStreamKind = Extract<
   RuntimeContentStreamKind,
@@ -2020,6 +2040,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
     const nextThreadId = message.session_id;
     context.resumeSessionId = message.session_id;
+    // The CLI carries this id in its argv, and it is how the thread's agent
+    // process is found in the process tree. Re-claim whenever it changes.
+    claimClaudeAgentProcess(context.session.threadId, message.session_id);
     yield* updateResumeCursor(context);
 
     if (context.lastThreadStartedId !== nextThreadId) {
@@ -3794,6 +3817,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
     if (sessions.get(context.session.threadId) === context) {
       sessions.delete(context.session.threadId);
+      releaseThreadProcess(agentProcessKey(context.session.threadId));
     }
   });
 
@@ -4449,6 +4473,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       };
       yield* Ref.set(contextRef, context);
       sessions.set(threadId, context);
+      claimClaudeAgentProcess(threadId, sessionId);
 
       const sessionStartedStamp = yield* makeEventStamp();
       yield* offerRuntimeEvent({
