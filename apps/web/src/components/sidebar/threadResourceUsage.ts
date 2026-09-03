@@ -10,6 +10,12 @@ const IO_FLOOR_BYTES_PER_SECOND = 64 * 1_024;
 const MIN_SHARE_PERCENT = 1;
 
 export interface ThreadResourceUsageRows {
+  /**
+   * Said out loud when the host can measure but the thread owns nothing.
+   * Silence here is indistinguishable from a broken card, which is how the
+   * first users of this read it.
+   */
+  readonly idle: string | null;
   /** What the thread is holding right now: CPU, memory, and its cut of T3. */
   readonly load: string | null;
   /** What it has cost so far: CPU time burned and the high-water memory mark. */
@@ -21,6 +27,7 @@ export interface ThreadResourceUsageRows {
 }
 
 const EMPTY_ROWS: ThreadResourceUsageRows = {
+  idle: null,
   load: null,
   history: null,
   processes: null,
@@ -81,7 +88,10 @@ function processBreakdown(usage: ThreadResourceUsage): string | null {
 export function threadResourceUsageRows(
   usage: ThreadResourceUsage | null | undefined,
 ): ThreadResourceUsageRows {
-  if (!usage || usage.status !== "active") return EMPTY_ROWS;
+  // `unavailable` stays silent: that is the host lacking a resource monitor,
+  // not a fact about this thread.
+  if (!usage || usage.status === "unavailable") return EMPTY_ROWS;
+  if (usage.status === "idle") return { ...EMPTY_ROWS, idle: "No processes running" };
 
   // Compare what the card will actually print: a peak that rounds to the same
   // figure as current usage is the same number twice.
@@ -115,5 +125,5 @@ export function threadResourceUsageRows(
       ? null
       : `${formatBytes(usage.ioReadBytesPerSecond)}/s read · ${formatBytes(usage.ioWriteBytesPerSecond)}/s write`;
 
-  return { load, history, processes, io };
+  return { idle: null, load, history, processes, io };
 }

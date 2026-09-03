@@ -57,6 +57,7 @@ export function SidebarThreadResourceUsage(props: {
   return (
     <>
       {terminalRow}
+      {rows.idle ? <UsageRow icon={CpuIcon}>{rows.idle}</UsageRow> : null}
       {rows.load ? <UsageRow icon={CpuIcon}>{rows.load}</UsageRow> : null}
       {rows.history ? <UsageRow icon={HourglassIcon}>{rows.history}</UsageRow> : null}
       {rows.processes ? <UsageRow icon={TerminalIcon}>{rows.processes}</UsageRow> : null}

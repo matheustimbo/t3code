@@ -53,10 +53,19 @@ describe("threadResourceUsageRows", () => {
     expect(rows.history).toBe("8m 12s CPU time");
   });
 
-  it("says nothing when the thread is idle or telemetry is unavailable", () => {
-    expect(threadResourceUsageRows(usage({ status: "idle" })).load).toBeNull();
-    expect(threadResourceUsageRows(usage({ status: "unavailable" })).load).toBeNull();
-    expect(threadResourceUsageRows(null).processes).toBeNull();
+  it("says so when the thread owns no live process", () => {
+    const rows = threadResourceUsageRows(usage({ status: "idle" }));
+
+    expect(rows.idle).toBe("No processes running");
+    expect(rows.load).toBeNull();
+  });
+
+  it("stays silent when the host cannot measure at all", () => {
+    const rows = threadResourceUsageRows(usage({ status: "unavailable" }));
+
+    expect(rows.idle).toBeNull();
+    expect(rows.load).toBeNull();
+    expect(threadResourceUsageRows(null).idle).toBeNull();
   });
 
   it("names a lone terminal and a lone process in the singular", () => {

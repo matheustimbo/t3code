@@ -85,8 +85,8 @@ project, branch, and model:
 The numbers cover the agent and every process it started, including the commands it runs in your
 terminals. They are measured only while the card is open, so a closed sidebar costs nothing.
 
-A thread with no work running shows no usage. Threads on a machine without resource monitoring —
-including a server reached through WSL — show none either.
+A thread with nothing running says so instead of showing numbers. Threads on a machine without
+resource monitoring — including a server reached through WSL — show no usage line at all.
 
 ## Environment artwork
 
