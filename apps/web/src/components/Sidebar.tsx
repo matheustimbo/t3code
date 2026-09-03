@@ -312,39 +312,45 @@ function SidebarThreadTooltip({
       align="start"
       sideOffset={4}
       variant="glass"
-      className="max-w-80 text-left whitespace-normal [&_[data-slot=tooltip-viewport]]:p-0"
+      className="max-w-md text-left whitespace-normal [&_[data-slot=tooltip-viewport]]:p-0"
     >
-      <div className="flex min-w-0 max-w-80 flex-col gap-2 p-[var(--floating-content-inset)]">
-        <div className="min-w-0 truncate text-xs leading-none font-medium text-foreground">
+      <div className="flex min-w-0 max-w-md flex-col gap-2 p-[var(--floating-content-inset)]">
+        <div className="min-w-0 wrap-break-word text-xs leading-4 font-medium text-foreground">
           {thread.title}
         </div>
         <div className="grid gap-1.5 pl-0.5 text-xs text-muted-foreground">
           {projectTitle ? (
-            <div className="flex min-w-0 items-center gap-2">
+            <div className="flex min-w-0 items-start gap-2">
               <ProjectFavicon
                 environmentId={thread.environmentId}
                 cwd={projectCwd ?? ""}
                 projectName={projectTitle}
                 faviconPath={projectFaviconPath}
                 projectIcon={projectIcon}
-                className="size-3 shrink-0"
+                className="mt-0.5 size-3 shrink-0"
               />
-              <div className="min-w-0 truncate text-foreground/75">{projectTitle}</div>
+              <div className="min-w-0 wrap-break-word leading-4 text-foreground/75">
+                {projectTitle}
+              </div>
             </div>
           ) : null}
           {environmentLabel ? (
-            <div className="flex min-w-0 items-center gap-2">
+            <div className="flex min-w-0 items-start gap-2">
               <EnvironmentMachineIcon
                 kind={environmentMachine}
-                className="size-3 shrink-0 stroke-muted-foreground"
+                className="mt-0.5 size-3 shrink-0 stroke-muted-foreground"
               />
-              <div className="min-w-0 truncate text-foreground/75">{environmentLabel}</div>
+              <div className="min-w-0 wrap-break-word leading-4 text-foreground/75">
+                {environmentLabel}
+              </div>
             </div>
           ) : null}
           {thread.branch ? (
-            <div className="flex min-w-0 items-center gap-2">
-              <GitBranchIcon className="size-3 shrink-0 stroke-muted-foreground" />
-              <div className="min-w-0 truncate text-foreground/75">{thread.branch}</div>
+            <div className="flex min-w-0 items-start gap-2">
+              <GitBranchIcon className="mt-0.5 size-3 shrink-0 stroke-muted-foreground" />
+              <div className="min-w-0 wrap-break-word leading-4 text-foreground/75">
+                {thread.branch}
+              </div>
             </div>
           ) : null}
           {branchMismatch ? (
@@ -356,7 +362,7 @@ function SidebarThreadTooltip({
             </div>
           ) : null}
           {driverKind ? (
-            <div className="flex min-w-0 items-center gap-2">
+            <div className="flex min-w-0 items-start gap-2">
               <ProviderInstanceIcon
                 driverKind={driverKind}
                 displayName={
@@ -367,9 +373,9 @@ function SidebarThreadTooltip({
                 showBadge={showInstanceBadge && providerEntry?.accentColor !== undefined}
                 badgeContent="none"
                 badgeClassName="h-2 min-w-2 px-0"
-                iconClassName="size-3 shrink-0 grayscale opacity-60"
+                iconClassName="mt-0.5 size-3 shrink-0 grayscale opacity-60"
               />
-              <div className="min-w-0 truncate text-foreground/75">
+              <div className="min-w-0 wrap-break-word leading-4 text-foreground/75">
                 {showInstanceBadge && providerEntry
                   ? `${modelLabel} · ${providerEntry.displayName}`
                   : modelLabel}

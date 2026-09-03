@@ -11,12 +11,12 @@ import { terminalProcessLabel, threadResourceUsageRows } from "./threadResourceU
 function UsageRow(props: { icon: typeof CpuIcon; iconClassName?: string; children: string }) {
   const Icon = props.icon;
   return (
-    <div className="flex min-w-0 items-center gap-2">
+    <div className="flex min-w-0 items-start gap-2">
       <Icon
         aria-hidden
-        className={cn("size-3 shrink-0 stroke-muted-foreground", props.iconClassName)}
+        className={cn("mt-0.5 size-3 shrink-0 stroke-muted-foreground", props.iconClassName)}
       />
-      <div className="min-w-0 truncate text-foreground/75">{props.children}</div>
+      <div className="min-w-0 wrap-break-word leading-4 text-foreground/75">{props.children}</div>
     </div>
   );
 }
