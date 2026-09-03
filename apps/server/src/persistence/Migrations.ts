@@ -55,8 +55,14 @@ import Migration0040 from "./Migrations/040_ProjectionProjectFaviconPath.ts";
 import Migration0041 from "./Migrations/041_AuthSessionClientConnection.ts";
 import Migration0042 from "./Migrations/042_ProjectionThreadLinkedPullRequest.ts";
 import Migration0043 from "./Migrations/043_ProjectionThreadsUnsettledAt.ts";
+// 44 and 45 are the fork's and have already run on released databases, so
+// upstream's four shift to 46-49 rather than the fork renumbering under them.
 import Migration0044 from "./Migrations/044_ProjectionProjectTicketTitles.ts";
 import Migration0045 from "./Migrations/045_ProjectionThreadTitleRevision.ts";
+import Migration0046 from "./Migrations/046_ClearAutomaticProjectModelDefaults.ts";
+import Migration0047 from "./Migrations/047_ProjectionProjectsAutoPull.ts";
+import Migration0048 from "./Migrations/048_RepairAutomaticSettlementTimestamps.ts";
+import Migration0049 from "./Migrations/049_ProjectionProjectIcon.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -114,6 +120,10 @@ export const migrationEntries = [
   [43, "ProjectionThreadsUnsettledAt", Migration0043],
   [44, "ProjectionProjectTicketTitles", Migration0044],
   [45, "ProjectionThreadTitleRevision", Migration0045],
+  [46, "ClearAutomaticProjectModelDefaults", Migration0046],
+  [47, "ProjectionProjectsAutoPull", Migration0047],
+  [48, "RepairAutomaticSettlementTimestamps", Migration0048],
+  [49, "ProjectionProjectIcon", Migration0049],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

@@ -3,6 +3,7 @@ import { T3CODE_DISTRIBUTION_URLS } from "@t3tools/shared/distribution";
 
 export type DesktopUpdateButtonAction = "download" | "install" | "none";
 
+const DESKTOP_RELEASE_HISTORY_URL = T3CODE_DISTRIBUTION_URLS.releases;
 const DESKTOP_RELEASE_TAG_URL = T3CODE_DISTRIBUTION_URLS.releaseTags;
 
 /**
@@ -19,6 +20,10 @@ export function getDesktopUpdateReleaseUrl(version: string | null): string | nul
   const normalizedVersion = version?.trim();
   if (!normalizedVersion) return null;
   return `${DESKTOP_RELEASE_TAG_URL}/v${encodeURIComponent(normalizedVersion)}`;
+}
+
+export function getDesktopUpdateReleaseHistoryUrl(): string {
+  return DESKTOP_RELEASE_HISTORY_URL;
 }
 
 export function resolveDesktopUpdateButtonAction(
@@ -125,11 +130,6 @@ export function getDesktopUpdateActionError(result: DesktopUpdateActionResult): 
 
 export function shouldToastDesktopUpdateActionResult(result: DesktopUpdateActionResult): boolean {
   return getDesktopUpdateActionError(result) !== null;
-}
-
-export function shouldHighlightDesktopUpdateError(state: DesktopUpdateState | null): boolean {
-  if (!state || state.status !== "error") return false;
-  return state.errorContext === "download" || state.errorContext === "install";
 }
 
 export function canCheckForUpdate(state: DesktopUpdateState | null): boolean {

@@ -39,6 +39,7 @@ import { makeCodexAdapter } from "../Layers/CodexAdapter.ts";
 import {
   checkCodexProviderStatus,
   makePendingCodexProvider,
+  probeCodexSkillsForCwd,
   readCodexUsageLimits,
 } from "../Layers/CodexProvider.ts";
 import { resolveCodexLaunchArgs } from "../Layers/codexLaunchArgs.ts";
@@ -221,6 +222,34 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
             }),
         ),
       );
+      const snapshotForCwd = (cwd: string) =>
+        !effectiveConfig.enabled
+          ? snapshot.getSnapshot
+          : Effect.all([
+              snapshot.getSnapshot,
+              probeCodexSkillsForCwd({
+                binaryPath: effectiveConfig.binaryPath,
+                homePath: effectiveConfig.homePath,
+                launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, processEnv),
+                cwd,
+                environment: processEnv,
+              }).pipe(
+                Effect.scoped,
+                Effect.timeout("20 seconds"),
+                Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+              ),
+            ]).pipe(
+              Effect.map(([machineSnapshot, skills]) => ({ ...machineSnapshot, skills })),
+              Effect.mapError(
+                (cause) =>
+                  new ProviderDriverError({
+                    driver: DRIVER_KIND,
+                    instanceId,
+                    detail: `Failed to probe Codex skills for '${cwd}'`,
+                    cause,
+                  }),
+              ),
+            );
 
       return {
         instanceId,
@@ -230,6 +259,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         accentColor,
         enabled,
         snapshot,
+        snapshotForCwd,
         adapter,
         textGeneration,
       } satisfies ProviderInstance;

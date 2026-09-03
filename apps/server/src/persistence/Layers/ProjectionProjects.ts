@@ -2,11 +2,13 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
 
 import {
   ModelSelection,
+  ProjectIconOverride,
   ProjectScript,
   TicketProviderBindings,
   TicketTitlePolicy,
@@ -23,6 +25,8 @@ import {
 const ProjectionProjectDbRow = ProjectionProject.mapFields(
   Struct.assign({
     defaultModelSelection: Schema.NullOr(Schema.fromJsonString(ModelSelection)),
+    autoPull: Schema.Number,
+    projectIcon: Schema.NullOr(Schema.fromJsonString(ProjectIconOverride)),
     ticketTitlePolicy: Schema.NullOr(Schema.fromJsonString(TicketTitlePolicy)),
     ticketProviderBindings: Schema.fromJsonString(TicketProviderBindings),
     scripts: Schema.fromJsonString(Schema.Array(ProjectScript)),
@@ -43,9 +47,11 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           workspace_root,
           default_model_selection_json,
           default_thread_env_mode,
+          auto_pull,
           ticket_title_policy_json,
           ticket_provider_bindings_json,
           favicon_path,
+          project_icon_json,
           scripts_json,
           created_at,
           updated_at,
@@ -57,9 +63,11 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           ${row.workspaceRoot},
           ${row.defaultModelSelection !== null ? JSON.stringify(row.defaultModelSelection) : null},
           ${row.defaultThreadEnvMode},
+          ${row.autoPull ? 1 : 0},
           ${row.ticketTitlePolicy !== null ? JSON.stringify(row.ticketTitlePolicy) : null},
           ${JSON.stringify(row.ticketProviderBindings)},
           ${row.faviconPath ?? null},
+          ${row.projectIcon ? JSON.stringify(row.projectIcon) : null},
           ${JSON.stringify(row.scripts)},
           ${row.createdAt},
           ${row.updatedAt},
@@ -71,9 +79,11 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           workspace_root = excluded.workspace_root,
           default_model_selection_json = excluded.default_model_selection_json,
           default_thread_env_mode = excluded.default_thread_env_mode,
+          auto_pull = excluded.auto_pull,
           ticket_title_policy_json = excluded.ticket_title_policy_json,
           ticket_provider_bindings_json = excluded.ticket_provider_bindings_json,
           favicon_path = excluded.favicon_path,
+          project_icon_json = excluded.project_icon_json,
           scripts_json = excluded.scripts_json,
           created_at = excluded.created_at,
           updated_at = excluded.updated_at,
@@ -92,9 +102,11 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           workspace_root AS "workspaceRoot",
           default_model_selection_json AS "defaultModelSelection",
           default_thread_env_mode AS "defaultThreadEnvMode",
+          auto_pull AS "autoPull",
           ticket_title_policy_json AS "ticketTitlePolicy",
           ticket_provider_bindings_json AS "ticketProviderBindings",
           favicon_path AS "faviconPath",
+          project_icon_json AS "projectIcon",
           scripts_json AS "scripts",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -115,9 +127,11 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           workspace_root AS "workspaceRoot",
           default_model_selection_json AS "defaultModelSelection",
           default_thread_env_mode AS "defaultThreadEnvMode",
+          auto_pull AS "autoPull",
           ticket_title_policy_json AS "ticketTitlePolicy",
           ticket_provider_bindings_json AS "ticketProviderBindings",
           favicon_path AS "faviconPath",
+          project_icon_json AS "projectIcon",
           scripts_json AS "scripts",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -143,11 +157,13 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
 
   const getById: ProjectionProjectRepositoryShape["getById"] = (input) =>
     getProjectionProjectRow(input).pipe(
+      Effect.map(Option.map((row) => ({ ...row, autoPull: row.autoPull === 1 }))),
       Effect.mapError(toPersistenceSqlError("ProjectionProjectRepository.getById:query")),
     );
 
   const listAll: ProjectionProjectRepositoryShape["listAll"] = () =>
     listProjectionProjectRows().pipe(
+      Effect.map((rows) => rows.map((row) => ({ ...row, autoPull: row.autoPull === 1 }))),
       Effect.mapError(toPersistenceSqlError("ProjectionProjectRepository.listAll:query")),
     );
 

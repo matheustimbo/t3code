@@ -7,6 +7,7 @@ import {
   getDesktopUpdateActionError,
   getDesktopUpdateButtonTooltip,
   getDesktopUpdateInstallConfirmationMessage,
+  getDesktopUpdateReleaseHistoryUrl,
   getDesktopUpdateReleaseUrl,
   isDesktopUpdateButtonDisabled,
   resolveDesktopUpdateButtonAction,
@@ -27,6 +28,7 @@ const baseState: DesktopUpdateState = {
   availableVersion: null,
   downloadedVersion: null,
   releaseNotes: [],
+  omittedReleaseCount: 0,
   downloadPercent: null,
   checkedAt: null,
   message: null,
@@ -38,7 +40,9 @@ describe("desktop update button state", () => {
   it("shows available release notes on the stable channel", () => {
     expect(
       shouldShowDesktopUpdateReleaseNotes({
-        releaseNotes: [{ version: "1.1.0", items: ["feat: show stable release notes"] }],
+        releaseNotes: [
+          { version: "1.1.0", items: ["feat: show stable release notes"], totalItems: 1 },
+        ],
       }),
     ).toBe(true);
     expect(shouldShowDesktopUpdateReleaseNotes({ releaseNotes: [] })).toBe(false);
@@ -210,6 +214,12 @@ describe("desktop update UI helpers", () => {
   it("omits the release URL when the updater does not report a version", () => {
     expect(getDesktopUpdateReleaseUrl(null)).toBeNull();
     expect(getDesktopUpdateReleaseUrl("  ")).toBeNull();
+  });
+
+  it("builds the release history URL", () => {
+    expect(getDesktopUpdateReleaseHistoryUrl()).toBe(
+      "https://github.com/matheustimbo/t3code/releases",
+    );
   });
 
   it("toasts only for actionable updater errors", () => {

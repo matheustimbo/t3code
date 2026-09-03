@@ -34,6 +34,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
           model: "gpt-5.4",
         },
         defaultThreadEnvMode: null,
+        autoPull: false,
         ticketTitlePolicy: null,
         ticketProviderBindings: [],
         scripts: [],
