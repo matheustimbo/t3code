@@ -127,7 +127,10 @@ import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import { readThreadProcessClaims } from "./resourceTelemetry/ThreadProcessRegistry.ts";
-import { aggregateThreadResourceUsage } from "./resourceTelemetry/ThreadResourceUsage.ts";
+import {
+  aggregateThreadResourceUsage,
+  shouldSeedFromCachedSnapshot,
+} from "./resourceTelemetry/ThreadResourceUsage.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as UsageService from "./usage/UsageService.ts";
 import * as TicketProviderRegistry from "./ticket/TicketProviderRegistry.ts";
@@ -2706,8 +2709,21 @@ const makeWsRpcLayer = (
           observeRpcStream(
             WS_METHODS.subscribeThreadResourceUsage,
             Stream.unwrap(
-              Effect.map(resourceTelemetry.subscribe, ({ latest, changes }) =>
-                Stream.concat(Stream.make(latest), changes).pipe(
+              Effect.gen(function* () {
+                const subscribedAt = yield* DateTime.now;
+                const { latest, changes } = yield* resourceTelemetry.subscribe;
+                // `latest` is whatever was cached before this subscription
+                // asked the sampler to start, so on the first card of a
+                // session it is the empty startup snapshot. Emitting it paints
+                // the card "no telemetry" until the first real sample lands a
+                // moment later; skipping it leaves the card silent instead.
+                const seed = shouldSeedFromCachedSnapshot({
+                  cachedReadAtMs: DateTime.toEpochMillis(latest.readAt),
+                  subscribedAtMs: DateTime.toEpochMillis(subscribedAt),
+                })
+                  ? Stream.make(latest)
+                  : Stream.empty;
+                return Stream.concat(seed, changes).pipe(
                   Stream.map((snapshot) =>
                     aggregateThreadResourceUsage({
                       threadId: input.threadId,
@@ -2715,8 +2731,8 @@ const makeWsRpcLayer = (
                       snapshot,
                     }),
                   ),
-                ),
-              ),
+                );
+              }),
             ),
             { "rpc.aggregate": "server" },
           ),

@@ -10,7 +10,10 @@ import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 
 import type { ThreadProcessClaim } from "./ThreadProcessRegistry.ts";
-import { aggregateThreadResourceUsage } from "./ThreadResourceUsage.ts";
+import {
+  aggregateThreadResourceUsage,
+  shouldSeedFromCachedSnapshot,
+} from "./ThreadResourceUsage.ts";
 
 const READ_AT = DateTime.makeUnsafe("2026-06-17T12:00:00.000Z");
 const THREAD = "thread-a" as ThreadId;
@@ -274,5 +277,23 @@ describe("aggregateThreadResourceUsage", () => {
     const usage = usageFor([{ threadId: THREAD, kind: "agent", pid: 90 }], telemetry);
 
     expect(usage.cpuSharePercent).toBe(0);
+  });
+});
+
+describe("shouldSeedFromCachedSnapshot", () => {
+  it("drops a snapshot cached before the subscription started sampling", () => {
+    // The empty startup snapshot would render the card as "no telemetry".
+    expect(shouldSeedFromCachedSnapshot({ cachedReadAtMs: 1_000, subscribedAtMs: 2_000 })).toBe(
+      false,
+    );
+  });
+
+  it("keeps a snapshot another subscriber already sampled", () => {
+    expect(shouldSeedFromCachedSnapshot({ cachedReadAtMs: 2_000, subscribedAtMs: 2_000 })).toBe(
+      true,
+    );
+    expect(shouldSeedFromCachedSnapshot({ cachedReadAtMs: 3_000, subscribedAtMs: 2_000 })).toBe(
+      true,
+    );
   });
 });

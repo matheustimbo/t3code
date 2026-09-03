@@ -99,6 +99,22 @@ function round(value: number): number {
 }
 
 /**
+ * Whether a subscriber should be handed the cached snapshot as its first
+ * value.
+ *
+ * Subscribing is what starts sampling, so the cached snapshot predates the
+ * subscription on the first card of a session: it carries no processes and
+ * reads as "no telemetry on this host". Showing that is worse than showing
+ * nothing for the moment it takes the first real sample to land.
+ */
+export function shouldSeedFromCachedSnapshot(input: {
+  readonly cachedReadAtMs: number;
+  readonly subscribedAtMs: number;
+}): boolean {
+  return input.cachedReadAtMs >= input.subscribedAtMs;
+}
+
+/**
  * Sums one thread's slice of a telemetry snapshot: its provider runtime, its
  * terminals, and every process those spawned.
  *
