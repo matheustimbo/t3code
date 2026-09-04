@@ -20,17 +20,50 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
+      release: ${{ steps.version.outputs.release }}
     steps:
       - id: version
         name: Resolve fork version
+        env:
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          version="0.1.${GITHUB_RUN_NUMBER}"
+          set -euo pipefail
+          # Versions follow the published tags, not GITHUB_RUN_NUMBER. The run
+          # number counts cancelled and failed runs, so it skipped numbers, and
+          # when two runs overlapped the one that finished last published the
+          # *lower* version as `latest` -- which is what pointed every desktop
+          # updater at an older build than the one already released.
+          refs="$(
+            gh api --paginate \
+              "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/v0.1." \
+              --jq '.[] | "\(.object.sha) \(.ref)"'
+          )"
+
+          # One release per commit. This workflow fires on the sync's push and
+          # again on its dispatch fallback; the `fork-release` concurrency group
+          # serialises the two, so the second run finds the tag the first one
+          # published and stops here instead of cutting a duplicate version.
+          if awk -v sha="$GITHUB_SHA" '$1 == sha { hit = 1 } END { exit !hit }' <<<"$refs"; then
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "$GITHUB_SHA is already released; nothing to publish." |
+              tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          latest="$(
+            sed 's#.*refs/tags/v0\.1\.##' <<<"$refs" |
+              grep -E '^[0-9]+$' | sort -n | tail -1 || true
+          )"
+          version="0.1.$(( ${latest:-0} + 1 ))"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          echo "release=true" >> "$GITHUB_OUTPUT"
+          echo "Publishing fork release $version" >> "$GITHUB_STEP_SUMMARY"
 
   server:
     needs: prepare
+    if: needs.prepare.outputs.release == 'true'
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout fork release
@@ -79,6 +112,7 @@ jobs:
 
   desktop_mac:
     needs: prepare
+    if: needs.prepare.outputs.release == 'true'
     runs-on: macos-15
     strategy:
       fail-fast: false
@@ -156,6 +190,7 @@ jobs:
 
   release:
     needs: [prepare, server, desktop_mac]
+    if: needs.prepare.outputs.release == 'true'
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout release tooling
@@ -200,8 +235,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mapfile -t release_tags < <(git tag --list 'v0.1.*' --sort=-version:refname)
-          previous_tag="${release_tags[0]:-}"
+          # Skip the tag being published, so re-running this job after the
+          # release already exists still produces the real changelog.
+          previous_tag="$(
+            git tag --list 'v0.1.*' --sort=-version:refname |
+              grep -vFx "$RELEASE_TAG" | head -1 || true
+          )"
           range="${GITHUB_SHA}"
           if [[ -n "$previous_tag" ]]; then
             range="${previous_tag}..${GITHUB_SHA}"

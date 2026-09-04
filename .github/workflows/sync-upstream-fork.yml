@@ -15,6 +15,12 @@ concurrency:
   group: sync-upstream-fork
   cancel-in-progress: false
 
+env:
+  # How long a conflicted sync may sit before this job starts reporting red.
+  # Conflicts need a human, and while one is open no fork release can ship, so
+  # staying green forever hid a stalled pipeline for days.
+  MAX_BLOCKED_HOURS: "12"
+
 jobs:
   sync:
     if: github.repository == 'matheustimbo/t3code'
@@ -82,6 +88,7 @@ jobs:
             # A clean merge we cannot land (protection, or a race with a push)
             # becomes a pull request rather than a red job.
             echo "Integration push rejected; opening a pull request instead."
+            : > conflicted-files.txt
             git merge --abort || git reset --hard "origin/fork-main"
             echo "changed=false" >> "$GITHUB_OUTPUT"
             echo "conflict=true" >> "$GITHUB_OUTPUT"
@@ -89,6 +96,9 @@ jobs:
             exit 0
           fi
 
+          # Record what actually collided before unwinding the merge, so the
+          # pull request and the run summary say where a human has to look.
+          git diff --name-only --diff-filter=U > conflicted-files.txt || :
           git merge --abort
           echo "changed=false" >> "$GITHUB_OUTPUT"
           echo "conflict=true" >> "$GITHUB_OUTPUT"
@@ -102,6 +112,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # The push above already triggers both workflows, because a deploy key
+          # push is not the token push that GitHub suppresses. These dispatches
+          # are the fallback for the day that key is missing or rotated; the
+          # release workflow refuses to publish a commit it already released, so
+          # the duplicate run stops at its first job instead of cutting a second
+          # version.
           gh workflow run fork-release.yml --repo "$GITHUB_REPOSITORY" --ref fork-main
           if [[ "$MOBILE_CHANGED" == "true" ]]; then
             gh workflow run fork-mobile-builds.yml \
@@ -118,6 +134,30 @@ jobs:
         run: |
           set -euo pipefail
 
+          {
+            echo "The automated sync from \`pingdotgg/t3code:main\` cannot land on its own."
+            echo
+            if [[ -s conflicted-files.txt ]]; then
+              echo "Conflicting files as of $(date -u '+%Y-%m-%d %H:%M UTC'):"
+              echo
+              sed 's#^#- `#; s#$#`#' conflicted-files.txt
+              echo
+            fi
+            echo "Resolve locally, preserving the fork-only ticket-title and release behavior:"
+            echo
+            echo '```sh'
+            echo "git fetch origin fork-main main"
+            echo "git switch -c sync-upstream origin/fork-main"
+            echo "git merge origin/main"
+            echo "# resolve, then:"
+            echo "git push origin HEAD:fork-main"
+            echo '```'
+            echo
+            echo "No fork release can ship until \`fork-main\` contains upstream again."
+          } > sync-pr-body.md
+
+          cat sync-pr-body.md >> "$GITHUB_STEP_SUMMARY"
+
           existing="$(
             gh pr list \
               --repo "$GITHUB_REPOSITORY" \
@@ -128,7 +168,10 @@ jobs:
               --jq '.[0].number // empty'
           )"
           if [[ -n "$existing" ]]; then
-            echo "Sync PR #$existing is already open."
+            # Refresh the body: the conflict set moves as upstream advances, and a
+            # stale list sends whoever picks this up to the wrong files.
+            gh pr edit "$existing" --repo "$GITHUB_REPOSITORY" --body-file sync-pr-body.md
+            echo "Sync PR #$existing is already open; refreshed its conflict list."
             exit 0
           fi
 
@@ -137,4 +180,31 @@ jobs:
             --base fork-main \
             --head main \
             --title "chore: sync upstream main" \
-            --body "The automated daily sync from \`pingdotgg/t3code:main\` found merge conflicts. Resolve them while preserving the fork-only ticket-title and release behavior."
+            --body-file sync-pr-body.md
+
+      - name: Escalate a sync that has been blocked too long
+        if: steps.integrate.outputs.conflict == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          created="$(
+            gh pr list \
+              --repo "$GITHUB_REPOSITORY" \
+              --base fork-main \
+              --head main \
+              --state open \
+              --json createdAt \
+              --jq '.[0].createdAt // empty'
+          )"
+          if [[ -z "$created" ]]; then
+            exit 0
+          fi
+
+          hours=$(( ( $(date -u +%s) - $(date -u -d "$created" +%s) ) / 3600 ))
+          if (( hours >= MAX_BLOCKED_HOURS )); then
+            echo "::error::Upstream sync has been conflicted for ${hours}h. No fork release has shipped since then; resolve the open sync pull request."
+            exit 1
+          fi
+          echo "Sync conflicted for ${hours}h; this job turns red at ${MAX_BLOCKED_HOURS}h."
