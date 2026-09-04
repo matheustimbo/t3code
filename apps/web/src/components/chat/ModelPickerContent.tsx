@@ -5,17 +5,7 @@ import {
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
 import { resolveSelectableModel } from "@t3tools/shared/model";
-import {
-  displayRemainingPercent,
-  formatCompactLimitReset,
-  formatCompactRemainingPercent,
-  formatLimitReset,
-  formatRemainingPercent,
-  providerLimitColor,
-  providerUsageLimitDisplayGroups,
-  providerUsageLimitMostRestrictiveWindowId,
-  usageLimitsStatusLabel,
-} from "@t3tools/shared/providerUsageLimits";
+import { formatResetsIn, limitsNotice } from "@t3tools/shared/usageLimits";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { memo, useMemo, useState, useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import { ChevronRightIcon, SearchIcon } from "lucide-react";
@@ -222,15 +212,18 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     selectedInstanceId === "favorites"
       ? null
       : (instanceEntries.find((entry) => entry.instanceId === selectedInstanceId) ?? null);
-  const selectedLimitGroups = selectedLimitsEntry?.snapshot.usageLimits
-    ? providerUsageLimitDisplayGroups(selectedLimitsEntry.snapshot.usageLimits)
-    : [];
-  const selectedLimitsStatus = selectedLimitsEntry?.snapshot.usageLimits
-    ? usageLimitsStatusLabel(selectedLimitsEntry.snapshot.usageLimits)
-    : null;
-  const selectedMostRestrictiveWindowId = selectedLimitsEntry?.snapshot.usageLimits
-    ? providerUsageLimitMostRestrictiveWindowId(selectedLimitsEntry.snapshot.usageLimits)
-    : null;
+  const selectedLimits = selectedLimitsEntry?.snapshot.usageLimits ?? null;
+  const selectedLimitsNotice = selectedLimits ? limitsNotice(selectedLimits) : null;
+  // The window closest to running out is the one that will actually stop a
+  // turn, so it gets the warning outline.
+  const selectedMostRestrictiveWindowId =
+    selectedLimits?.windows.reduce<{ id: string; usedPercent: number } | null>(
+      (worst, window) =>
+        worst === null || window.usedPercent > worst.usedPercent
+          ? { id: window.id, usedPercent: window.usedPercent }
+          : worst,
+      null,
+    )?.id ?? null;
   const [expandedLegacyInstances, setExpandedLegacyInstances] = useState(
     () =>
       new Set<ProviderInstanceId>(
@@ -863,100 +856,58 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
               </div>
             </div>
 
-            {selectedLimitsEntry?.snapshot.usageLimits ? (
+            {selectedLimits ? (
               <div className="max-h-80 overflow-y-auto overscroll-contain border-b border-border/70">
-                {selectedLimitsStatus !== "Live" &&
-                !selectedLimitGroups.some((group) => group.label !== undefined) ? (
-                  <div className="px-2 pt-2">
-                    <span className="inline-flex rounded-md border border-border/70 px-2 py-1 text-[10px] text-muted-foreground">
-                      {selectedLimitsStatus}
-                    </span>
-                  </div>
-                ) : null}
-                {selectedLimitGroups.some(
-                  (group) => group.label !== undefined || group.windows.length > 0,
-                ) ? (
-                  <div className="divide-y divide-border/55 py-1">
-                    {selectedLimitGroups.map((group) => (
-                      <div key={group.id} className="min-w-0 px-2 py-1.5">
-                        {group.label ? (
-                          <div className="flex min-w-0 items-center gap-1 text-[10px]">
-                            <Tooltip>
-                              <TooltipTrigger
-                                render={
-                                  <div className="min-w-0 truncate font-medium text-foreground" />
-                                }
-                              >
-                                {group.label}
-                              </TooltipTrigger>
-                              <TooltipPopup side="top">{group.label}</TooltipPopup>
-                            </Tooltip>
-                            {usageLimitsStatusLabel(group.limits) !== "Live" ? (
-                              <span className="shrink-0 text-muted-foreground">
-                                {usageLimitsStatusLabel(group.limits)}
+                {selectedLimits.windows.length > 0 ? (
+                  <div className="flex min-w-0 flex-wrap gap-1 px-2 py-2">
+                    {selectedLimits.windows.map((window) => {
+                      const remaining = Math.round(100 - window.usedPercent);
+                      const resetsIn = formatResetsIn(window, Date.now());
+                      return (
+                        <Tooltip key={window.id}>
+                          <TooltipTrigger
+                            render={
+                              <div
+                                className={cn(
+                                  "flex min-w-0 items-center gap-1 rounded-md border border-border/70 bg-background/55 px-1.5 py-1 text-[10px]",
+                                  remaining === 0 && "border-destructive/70 bg-destructive/5",
+                                  remaining !== 0 &&
+                                    window.id === selectedMostRestrictiveWindowId &&
+                                    "border-warning/50 bg-warning/5",
+                                )}
+                              />
+                            }
+                          >
+                            {selectedLimitsEntry?.accentColor ? (
+                              <span
+                                aria-hidden
+                                className="size-1.5 shrink-0 rounded-full"
+                                style={{ backgroundColor: selectedLimitsEntry.accentColor }}
+                              />
+                            ) : null}
+                            <span className="max-w-24 truncate text-muted-foreground">
+                              {window.label}
+                            </span>
+                            <span className="shrink-0 font-medium text-foreground tabular-nums">
+                              {remaining}%
+                            </span>
+                            {resetsIn ? (
+                              <span className="shrink-0 text-muted-foreground tabular-nums">
+                                · {resetsIn}
                               </span>
                             ) : null}
-                          </div>
-                        ) : null}
-                        <div className={cn("flex min-w-0 flex-wrap gap-1", group.label && "pt-1")}>
-                          {group.windows.length > 0 ? (
-                            group.windows.map((entry) => {
-                              const remaining = displayRemainingPercent(entry.limits, entry.window);
-                              return (
-                                <Tooltip key={entry.id}>
-                                  <TooltipTrigger
-                                    render={
-                                      <div
-                                        className={cn(
-                                          "flex min-w-0 items-center gap-1 rounded-md border border-border/70 bg-background/55 px-1.5 py-1 text-[10px]",
-                                          remaining === 0 &&
-                                            "border-destructive/70 bg-destructive/5",
-                                          remaining !== 0 &&
-                                            entry.id === selectedMostRestrictiveWindowId &&
-                                            "border-warning/50 bg-warning/5",
-                                        )}
-                                      />
-                                    }
-                                  >
-                                    <span
-                                      aria-hidden
-                                      className="size-1.5 shrink-0 rounded-full"
-                                      style={{
-                                        backgroundColor: providerLimitColor(
-                                          selectedLimitsEntry.driverKind,
-                                          selectedLimitsEntry.accentColor,
-                                        ),
-                                      }}
-                                    />
-                                    <span className="max-w-24 truncate text-muted-foreground">
-                                      {entry.label}
-                                    </span>
-                                    <span className="shrink-0 font-medium text-foreground tabular-nums">
-                                      {formatCompactRemainingPercent(remaining)}
-                                    </span>
-                                    <span className="shrink-0 text-muted-foreground tabular-nums">
-                                      · {formatCompactLimitReset(entry.window.resetsAt)}
-                                    </span>
-                                  </TooltipTrigger>
-                                  <TooltipPopup side="top">
-                                    {entry.label} · {formatRemainingPercent(remaining)} ·{" "}
-                                    {formatLimitReset(entry.window.resetsAt)}
-                                  </TooltipPopup>
-                                </Tooltip>
-                              );
-                            })
-                          ) : (
-                            <span className="truncate py-1 text-[10px] text-muted-foreground">
-                              {group.limits.message ?? "Plan limits unavailable."}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    ))}
+                          </TooltipTrigger>
+                          <TooltipPopup side="top">
+                            {window.label} · {remaining}% left
+                            {resetsIn ? ` · ${resetsIn}` : ""}
+                          </TooltipPopup>
+                        </Tooltip>
+                      );
+                    })}
                   </div>
                 ) : (
                   <div className="px-2 py-2 text-[11px] text-muted-foreground">
-                    {selectedLimitsEntry.snapshot.usageLimits.message ?? "Plan limits unavailable."}
+                    {selectedLimitsNotice ?? "Plan limits unavailable."}
                   </div>
                 )}
               </div>

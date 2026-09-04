@@ -6,6 +6,7 @@ import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hos
 
 import {
   AuthAccessTokenType,
+  AuthStandardClientScopes,
   AuthEnvironmentBootstrapTokenType,
   AuthTokenExchangeGrantType,
   CommandId,
@@ -63,6 +64,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -101,6 +103,7 @@ import {
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as GitManager from "./git/GitManager.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
+import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
@@ -152,6 +155,7 @@ import * as ReviewService from "./review/ReviewService.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
+import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as CloudManagedEndpointRuntime from "./cloud/ManagedEndpointRuntime.ts";
 import * as CloudCliTokenManager from "./cloud/CliTokenManager.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
@@ -482,6 +486,7 @@ const makeBrowserOtlpPayload = (spanName: string) =>
   });
 
 const buildAppUnderTest = (options?: {
+  onPairingChangesSubscribed?: Effect.Effect<void>;
   config?: Partial<ServerConfig.ServerConfig["Service"]>;
   layers?: {
     keybindings?: Partial<Keybindings.Keybindings["Service"]>;
@@ -740,6 +745,11 @@ const buildAppUnderTest = (options?: {
             streamChanges: Stream.empty,
             ...options?.layers?.environmentTheme,
           }),
+          Layer.mock(UsageLimitSources.UsageLimitSources)({
+            current: Effect.succeed([]),
+            streamChanges: Stream.empty,
+            refresh: Effect.void,
+          }),
         ),
       ),
       Layer.provide(
@@ -922,6 +932,7 @@ const buildAppUnderTest = (options?: {
       ),
       Layer.provide(
         Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
+          getUserInputActivity: () => Effect.die("unused"),
           getCommandReadModel: () => Effect.succeed(makeDefaultOrchestrationReadModel()),
           getSnapshot: () => Effect.succeed(makeDefaultOrchestrationReadModel()),
           getShellSnapshot: () =>
@@ -1108,6 +1119,24 @@ const buildAppUnderTest = (options?: {
           ...options?.layers?.cloudCliTokenManager,
         }),
       ),
+      Layer.updateService(PairingGrantStore.PairingGrantStore, (grants) => {
+        const subscribed = options?.onPairingChangesSubscribed;
+        if (!subscribed) return grants;
+        return {
+          ...grants,
+          streamChanges: Stream.unwrap(
+            Effect.gen(function* () {
+              const changes = yield* Queue.unbounded<PairingGrantStore.BootstrapCredentialChange>();
+              yield* grants.streamChanges.pipe(
+                Stream.runForEach((change) => Queue.offer(changes, change)),
+                Effect.forkScoped({ startImmediately: true }),
+              );
+              yield* subscribed;
+              return Stream.fromQueue(changes);
+            }),
+          ),
+        };
+      }),
       Layer.provideMerge(makeAuthTestLayer()),
       Layer.provideMerge(ServerSecretStore.layer),
       Layer.provide(workspaceAndProjectServicesLayer),
@@ -1134,16 +1163,19 @@ const parseSessionCookieFromWsUrl = (
   };
 };
 
-const wsRpcProtocolLayer = (wsUrl: string) => {
+const wsRpcProtocolLayer = (wsUrl: string, onMessage?: (message: string) => void) => {
   const { cookie, url } = parseSessionCookieFromWsUrl(wsUrl);
   const webSocketConstructorLayer = Layer.succeed(
     Socket.WebSocketConstructor,
-    (socketUrl, protocols) =>
-      new NodeSocket.NodeWS.WebSocket(
+    (socketUrl, protocols) => {
+      const socket = new NodeSocket.NodeWS.WebSocket(
         socketUrl,
         protocols,
         cookie ? { headers: { cookie } } : undefined,
-      ) as unknown as globalThis.WebSocket,
+      );
+      if (onMessage) socket.on("message", (data) => onMessage(data.toString()));
+      return socket as unknown as globalThis.WebSocket;
+    },
   );
 
   return RpcClient.layerProtocolSocket().pipe(
@@ -1159,7 +1191,8 @@ type WsRpcClient =
 const withWsRpcClient = <A, E, R>(
   wsUrl: string,
   f: (client: WsRpcClient) => Effect.Effect<A, E, R>,
-) => makeWsRpcClient.pipe(Effect.flatMap(f), Effect.provide(wsRpcProtocolLayer(wsUrl)));
+  onMessage?: (message: string) => void,
+) => makeWsRpcClient.pipe(Effect.flatMap(f), Effect.provide(wsRpcProtocolLayer(wsUrl, onMessage)));
 
 const appendSessionCookieToWsUrl = (url: string, sessionCookieHeader: string) => {
   const isAbsoluteUrl = /^[a-zA-Z][a-zA-Z\d+.-]*:/.test(url);
@@ -1614,6 +1647,310 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("revalidates static files without sending unchanged bodies", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const staticDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-static-cache-" });
+      const indexPath = path.join(staticDir, "index.html");
+      yield* fileSystem.writeFileString(indexPath, "<html>first build</html>");
+      yield* buildAppUnderTest({ config: { staticDir } });
+
+      const initial = yield* HttpClient.get("/");
+      assert.equal(initial.status, 200);
+      assert.equal(initial.headers["cache-control"], "no-cache");
+      assert.include(yield* initial.text, "first build");
+      const etag = initial.headers.etag;
+      assert.isDefined(etag);
+      assert.isDefined(initial.headers["last-modified"]);
+
+      for (const headers of [
+        { "if-none-match": etag! },
+        { "if-none-match": `"older", ${etag!.replace(/^W\//, "")}` },
+        { "if-none-match": "*" },
+        { "if-modified-since": initial.headers["last-modified"]! },
+      ]) {
+        const response = yield* HttpClient.get("/", { headers });
+        assert.equal(response.status, 304);
+        assert.equal(response.headers.etag, etag);
+        assert.equal(response.headers["cache-control"], "no-cache");
+        assert.equal(yield* response.text, "");
+      }
+
+      const mismatched = yield* HttpClient.get("/", {
+        headers: {
+          "if-none-match": '"another-build"',
+          "if-modified-since": initial.headers["last-modified"]!,
+        },
+      });
+      assert.equal(mismatched.status, 200);
+      assert.include(yield* mismatched.text, "first build");
+
+      yield* fileSystem.writeFileString(indexPath, "<html>the next build is available</html>");
+      const changed = yield* HttpClient.get("/", { headers: { "if-none-match": etag! } });
+      assert.equal(changed.status, 200);
+      assert.notEqual(changed.headers.etag, etag);
+      assert.include(yield* changed.text, "next build");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("caches hashed static assets without freezing mutable files or SPA fallbacks", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const staticDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-static-hashes-" });
+      yield* fileSystem.makeDirectory(path.join(staticDir, "assets"));
+      yield* fileSystem.makeDirectory(path.join(staticDir, ".vite"));
+      yield* fileSystem.writeFileString(
+        path.join(staticDir, ".vite", "manifest.json"),
+        `{
+          "index.html": { "file": "assets/index-AbCd0123.js", "isEntry": true },
+          "large.js": { "file": "assets/large-aBcD9876.js" }
+        }`,
+      );
+      yield* fileSystem.writeFileString(path.join(staticDir, "index.html"), "<html>app</html>");
+      yield* fileSystem.writeFileString(
+        path.join(staticDir, "assets", "index-AbCd0123.js"),
+        "export const app = true;",
+      );
+      yield* fileSystem.writeFileString(path.join(staticDir, "assets", "config.json"), "{}");
+      const largeAsset = "export const value = 123;\n".repeat(8192);
+      yield* fileSystem.writeFileString(
+        path.join(staticDir, "assets", "large-aBcD9876.js"),
+        largeAsset,
+      );
+      yield* buildAppUnderTest({ config: { staticDir } });
+
+      const asset = yield* HttpClient.get("/assets/index-AbCd0123.js");
+      assert.equal(asset.status, 200);
+      assert.equal(asset.headers["cache-control"], "public, max-age=31536000, immutable");
+      assert.equal(yield* asset.text, "export const app = true;");
+
+      const head = yield* HttpClient.head("/assets/index-AbCd0123.js", {
+        headers: { "accept-encoding": "identity" },
+      });
+      assert.equal(head.status, 200);
+      assert.equal(head.headers.etag, asset.headers.etag);
+      assert.equal(head.headers["content-length"], String("export const app = true;".length));
+      assert.equal(yield* head.text, "");
+
+      const compressed = yield* HttpClient.get("/assets/large-aBcD9876.js", {
+        headers: { "accept-encoding": "gzip" },
+      });
+      assert.equal(compressed.headers["content-encoding"], "gzip");
+      assert.equal(compressed.headers.vary, "Accept-Encoding");
+      assert.equal(yield* compressed.text, largeAsset);
+      const compressedHead = yield* HttpClient.head("/assets/large-aBcD9876.js", {
+        headers: { "accept-encoding": "gzip" },
+      });
+      assert.equal(compressedHead.status, 200);
+      assert.equal(compressedHead.headers["content-encoding"], "gzip");
+      assert.equal(compressedHead.headers.vary, "Accept-Encoding");
+      assert.equal(compressedHead.headers.etag, compressed.headers.etag);
+      assert.equal(compressedHead.headers["content-length"], compressed.headers["content-length"]);
+      assert.equal(yield* compressedHead.text, "");
+      const unchanged = yield* HttpClient.get("/assets/large-aBcD9876.js", {
+        headers: { "accept-encoding": "identity", "if-none-match": compressed.headers.etag! },
+      });
+      assert.equal(unchanged.status, 304);
+      assert.equal(unchanged.headers.vary, "Accept-Encoding");
+      assert.equal(yield* unchanged.text, "");
+
+      for (const resource of [
+        "/assets/config.json",
+        "/threads/example",
+        "/assets/old-ZyXw9876.js",
+      ]) {
+        const response = yield* HttpClient.get(resource);
+        assert.equal(response.status, 200);
+        assert.equal(response.headers["cache-control"], "no-cache");
+        assert.equal(
+          yield* response.text,
+          resource.endsWith("config.json") ? "{}" : "<html>app</html>",
+        );
+      }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  for (const manifest of [
+    { label: "missing", contents: null },
+    { label: "nonmatching", contents: '{"other.js":{"file":"assets/other-AbCd0123.js"}}' },
+    { label: "malformed", contents: "{not-json" },
+  ]) {
+    it.effect(`revalidates hash-like static filenames with a ${manifest.label} manifest`, () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const staticDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-static-mutable-",
+        });
+        yield* fileSystem.makeDirectory(path.join(staticDir, "assets"));
+        if (manifest.contents !== null) {
+          yield* fileSystem.makeDirectory(path.join(staticDir, ".vite"));
+          yield* fileSystem.writeFileString(
+            path.join(staticDir, ".vite", "manifest.json"),
+            manifest.contents,
+          );
+        }
+        const filePath = path.join(staticDir, "assets", "config-20260904.js");
+        yield* fileSystem.writeFileString(filePath, "first config");
+        yield* buildAppUnderTest({ config: { staticDir } });
+
+        const initial = yield* HttpClient.get("/assets/config-20260904.js");
+        assert.equal(initial.headers["cache-control"], "no-cache");
+        assert.equal(yield* initial.text, "first config");
+
+        yield* fileSystem.writeFileString(filePath, "replacement config");
+        const changed = yield* HttpClient.get("/assets/config-20260904.js", {
+          headers: { "if-none-match": initial.headers.etag! },
+        });
+        assert.equal(changed.status, 200);
+        assert.equal(changed.headers["cache-control"], "no-cache");
+        assert.notEqual(changed.headers.etag, initial.headers.etag);
+        assert.equal(yield* changed.text, "replacement config");
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+    );
+  }
+
+  it.effect("binds static metadata and bytes to one file across atomic replacement", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const staticDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-static-replace-" });
+      const beforeOpenPath = path.join(staticDir, "before-open.txt");
+      const afterOpenPath = path.join(staticDir, "after-open.txt");
+      const original = "original bytes";
+      const replacement = "replacement bytes with a different size";
+      for (const filePath of [beforeOpenPath, afterOpenPath]) {
+        yield* fileSystem.writeFileString(filePath, original);
+        yield* fileSystem.writeFileString(`${filePath}.next`, replacement);
+      }
+      const replaced = new Set<string>();
+      const replaceOnce = Effect.fnUntraced(function* (filePath: string) {
+        if (replaced.has(filePath)) return;
+        replaced.add(filePath);
+        yield* fileSystem.rename(`${filePath}.next`, filePath);
+      });
+      const replacingFileSystem = FileSystem.FileSystem.of({
+        ...fileSystem,
+        stat: (filePath) =>
+          fileSystem
+            .stat(filePath)
+            .pipe(
+              Effect.tap(() => (filePath === beforeOpenPath ? replaceOnce(filePath) : Effect.void)),
+            ),
+        open: (filePath, options) =>
+          fileSystem
+            .open(filePath, options)
+            .pipe(
+              Effect.tap(() => (filePath === afterOpenPath ? replaceOnce(filePath) : Effect.void)),
+            ),
+      });
+      yield* buildAppUnderTest({ config: { staticDir } }).pipe(
+        Effect.provideService(FileSystem.FileSystem, replacingFileSystem),
+      );
+
+      for (const [name, expected] of [
+        ["before-open.txt", replacement],
+        ["after-open.txt", original],
+      ] as const) {
+        const response = yield* HttpClient.get(`/${name}`, {
+          headers: { "accept-encoding": "identity" },
+        });
+        assert.equal(response.status, 200);
+        assert.equal(response.headers["content-length"], String(expected.length));
+        assert.isTrue(response.headers.etag?.startsWith(`W/"${expected.length.toString(16)}-`));
+        assert.equal(yield* response.text, expected);
+        assert.isTrue(replaced.has(path.join(staticDir, name)));
+        assert.equal(yield* fileSystem.readFileString(path.join(staticDir, name)), replacement);
+      }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("closes static file handles after GET, HEAD, 304, and request cancellation", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const staticDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-static-close-" });
+      const filePath = path.join(staticDir, "index.html");
+      const body = "<p>file content</p>".repeat(1024);
+      yield* fileSystem.writeFileString(filePath, body);
+      const closed = yield* Queue.unbounded<FileSystem.File>();
+      const blocked = yield* Deferred.make<void>();
+      const active = new Set<FileSystem.File>();
+      let blockAfterOpen = false;
+      let bodyReads = 0;
+      const trackedFileSystem = FileSystem.FileSystem.of({
+        ...fileSystem,
+        open: (candidate, options) =>
+          Effect.gen(function* () {
+            if (candidate !== filePath) return yield* fileSystem.open(candidate, options);
+            let opened: FileSystem.File | undefined;
+            // Registered first, so this signal runs after the real descriptor-close finalizer.
+            yield* Effect.addFinalizer(() =>
+              Effect.gen(function* () {
+                if (opened === undefined) return;
+                active.delete(opened);
+                yield* Queue.offer(closed, opened);
+              }),
+            );
+            const file = yield* fileSystem.open(candidate, options);
+            opened = file;
+            active.add(file);
+            if (blockAfterOpen) {
+              yield* Deferred.succeed(blocked, undefined);
+              return yield* Effect.never;
+            }
+            return new Proxy(file, {
+              get(target, key) {
+                if (key === "readAlloc") {
+                  return (size: FileSystem.SizeInput) => {
+                    bodyReads += 1;
+                    return target.readAlloc(size);
+                  };
+                }
+                return Reflect.get(target, key, target);
+              },
+            });
+          }),
+      });
+      yield* buildAppUnderTest({ config: { staticDir } }).pipe(
+        Effect.provideService(FileSystem.FileSystem, trackedFileSystem),
+      );
+
+      const get = yield* HttpClient.get("/");
+      assert.equal(yield* get.text, body);
+      yield* Queue.take(closed);
+      assert.equal(active.size, 0);
+      assert.isAbove(bodyReads, 0);
+      const readsAfterGet = bodyReads;
+
+      const head = yield* HttpClient.head("/", { headers: { "accept-encoding": "gzip" } });
+      assert.equal(head.status, 200);
+      assert.equal(head.headers["content-encoding"], "gzip");
+      assert.equal(yield* head.text, "");
+      yield* Queue.take(closed);
+      assert.equal(active.size, 0);
+      assert.equal(bodyReads, readsAfterGet);
+
+      const unchanged = yield* HttpClient.get("/", {
+        headers: { "if-none-match": get.headers.etag! },
+      });
+      assert.equal(unchanged.status, 304);
+      yield* Queue.take(closed);
+      assert.equal(active.size, 0);
+      assert.equal(bodyReads, readsAfterGet);
+
+      blockAfterOpen = true;
+      const cancelled = yield* HttpClient.get("/").pipe(Effect.forkChild);
+      yield* Deferred.await(blocked);
+      assert.equal(active.size, 1);
+      yield* Fiber.interrupt(cancelled);
+      yield* Queue.take(closed);
+      assert.equal(active.size, 0);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("redirects to dev URL when configured", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest({
@@ -1869,6 +2206,38 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         "access:write",
         "relay:write",
       ]);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("replaces the local desktop credential on repeated bootstrap exchanges", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+      const first = yield* exchangeAccessToken();
+      const second = yield* exchangeAccessToken();
+      const third = yield* exchangeAccessToken();
+      assert.equal(first.response.status, 200);
+      assert.equal(second.response.status, 200);
+      assert.equal(third.response.status, 200);
+
+      const clientsResponse = yield* HttpClient.get("/api/auth/clients", {
+        headers: { authorization: `Bearer ${third.body.access_token}` },
+      });
+      const clients = (yield* clientsResponse.json) as ReadonlyArray<{
+        readonly current: boolean;
+        readonly subject: string;
+      }>;
+      assert.equal(clientsResponse.status, 200);
+      assert.equal(clients.length, 1);
+      assert.equal(clients[0]?.current, true);
+      assert.equal(clients[0]?.subject, "desktop-bootstrap");
+
+      for (const previous of [first, second]) {
+        const response = yield* HttpClient.get("/api/auth/session", {
+          headers: { authorization: `Bearer ${previous.body.access_token}` },
+        });
+        const state = (yield* response.json) as { readonly authenticated: boolean };
+        assert.equal(state.authenticated, false);
+      }
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -3935,6 +4304,128 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("returns only pairing metadata to access-read HTTP sessions", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+      const reader = yield* exchangeAccessToken(defaultDesktopBootstrapToken, {
+        scope: "access:read",
+      });
+      assert.equal(reader.response.status, 200);
+      assert.equal(reader.body.scope, "access:read");
+      const createdResponse = yield* HttpClient.post("/api/auth/pairing-token", {
+        headers: { cookie: yield* getAuthenticatedSessionCookieHeader() },
+        body: yield* HttpBody.json({ label: "Synthetic phone" }),
+      });
+      const created = (yield* createdResponse.json) as { id: string; credential: string };
+      assert.equal(createdResponse.status, 200);
+      const response = yield* HttpClient.get("/api/auth/pairing-links", {
+        headers: { authorization: `Bearer ${reader.body.access_token ?? ""}` },
+      });
+      assert.equal(response.status, 200);
+      const responseText = yield* response.text;
+      assert.notInclude(responseText, '"credential"');
+      assert.notInclude(responseText, created.credential);
+      const links = yield* responseJsonEffect<
+        ReadonlyArray<{
+          readonly id: string;
+          readonly label?: string;
+          readonly scopes: ReadonlyArray<string>;
+        }>
+      >(response);
+      const listed = links.find((link) => link.id === created.id);
+      assert.isDefined(listed);
+      assert.deepInclude(listed, {
+        label: "Synthetic phone",
+        scopes: [...AuthStandardClientScopes],
+      });
+
+      const unauthorizedCreate = yield* HttpClient.post("/api/auth/pairing-token", {
+        headers: { authorization: `Bearer ${reader.body.access_token ?? ""}` },
+        body: yield* HttpBody.json({}),
+      });
+      assert.equal(unauthorizedCreate.status, 403);
+      const idExchange = yield* exchangeAccessToken(created.id, { scope: "terminal:operate" });
+      assert.equal(idExchange.response.status, 401);
+      const authorized = yield* exchangeAccessToken(created.credential, {
+        scope: AuthStandardClientScopes.join(" "),
+      });
+      assert.equal(authorized.response.status, 200);
+      assert.equal(authorized.body.scope, AuthStandardClientScopes.join(" "));
+      const reused = yield* exchangeAccessToken(created.credential, { scope: "terminal:operate" });
+      assert.equal(reused.response.status, 401);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("returns only pairing metadata in access-read WebSocket snapshots and updates", () =>
+    Effect.gen(function* () {
+      const changesSubscribed = yield* Deferred.make<void>();
+      yield* buildAppUnderTest({
+        onPairingChangesSubscribed: Deferred.succeed(changesSubscribed, undefined).pipe(
+          Effect.asVoid,
+        ),
+      });
+      const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
+      const createLink = Effect.gen(function* () {
+        const response = yield* HttpClient.post("/api/auth/pairing-token", {
+          headers: { cookie: ownerCookie },
+          body: yield* HttpBody.json({}),
+        });
+        assert.equal(response.status, 200);
+        return (yield* response.json) as { id: string; credential: string };
+      });
+      const initialLink = yield* createLink;
+      const reader = yield* exchangeAccessToken(defaultDesktopBootstrapToken, {
+        scope: "access:read",
+      });
+      assert.equal(reader.body.scope, "access:read");
+      const ticketResponse = yield* HttpClient.post("/api/auth/websocket-ticket", {
+        headers: { authorization: `Bearer ${reader.body.access_token ?? ""}` },
+      });
+      assert.equal(ticketResponse.status, 200);
+      const { ticket } = (yield* ticketResponse.json) as { ticket: string };
+      const wsUrl = `${yield* getWsServerUrl("/ws", { authenticated: false })}?wsTicket=${encodeURIComponent(ticket)}`;
+      const frames: string[] = [];
+      yield* withWsRpcClient(
+        wsUrl,
+        (client) =>
+          Effect.gen(function* () {
+            const snapshotReceived = yield* Deferred.make<void>();
+            const eventsFiber = yield* client.subscribeAuthAccess({}).pipe(
+              Stream.tap((event) =>
+                event.type === "snapshot"
+                  ? Deferred.succeed(snapshotReceived, undefined)
+                  : Effect.void,
+              ),
+              Stream.takeUntil((event) => event.type === "pairingLinkUpserted"),
+              Stream.runCollect,
+              Effect.forkChild,
+            );
+            yield* Deferred.await(snapshotReceived);
+            yield* Deferred.await(changesSubscribed);
+            const liveLink = yield* createLink;
+            const events = yield* Fiber.join(eventsFiber);
+            const snapshot = events.find((event) => event.type === "snapshot");
+            const update = events.find((event) => event.type === "pairingLinkUpserted");
+            assert.isDefined(snapshot);
+            assert.isDefined(update);
+            assert.isTrue(
+              snapshot?.payload.pairingLinks.some((link) => link.id === initialLink.id),
+            );
+            assert.equal(update?.payload.id, liveLink.id);
+            // Inspect the wire frames so client schema decoding cannot hide a leak.
+            assert.notInclude(frames.join(""), '"credential"');
+            assert.notInclude(frames.join(""), initialLink.credential);
+            assert.notInclude(frames.join(""), liveLink.credential);
+            const paired = yield* exchangeAccessToken(liveLink.credential, {
+              scope: AuthStandardClientScopes.join(" "),
+            });
+            assert.equal(paired.response.status, 200);
+          }),
+        (frame) => frames.push(frame),
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("lists and revokes pairing links for access management sessions", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest({
@@ -3962,7 +4453,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       });
       const listedLinks = (yield* listResponse.json) as ReadonlyArray<{
         readonly id: string;
-        readonly credential: string;
       }>;
 
       const revokeResponse = yield* HttpClient.post("/api/auth/pairing-links/revoke", {
@@ -7304,7 +7794,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           projectionSnapshotQuery: {
             getThreadDetailSnapshot: () =>
               Effect.gen(function* () {
-                yield* Effect.sleep("25 millis");
                 yield* PubSub.publish(liveEvents, messageEvent);
                 return Option.some({ snapshotSequence: 1, thread });
               }),
@@ -7317,14 +7806,19 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         withWsRpcClient(wsUrl, (client) =>
           client[ORCHESTRATION_WS_METHODS.subscribeThread]({
             threadId: defaultThreadId,
-          }).pipe(Stream.take(2), Stream.runCollect),
+            requestCompletionMarker: true,
+          }).pipe(
+            Stream.takeUntil((item) => item.kind === "synchronized"),
+            Stream.runCollect,
+          ),
         ),
-      ).pipe(Effect.timeout("2 seconds"));
+      );
 
       assert.equal(items[0]?.kind, "snapshot");
       assert.equal(items[1]?.kind, "event");
       assert.equal(items[1]?.kind === "event" ? items[1].event.sequence : null, 2);
-    }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
+      assert.equal(items[2]?.kind, "synchronized");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
   it.effect("coalesces buffered live tool updates to the latest state", () =>

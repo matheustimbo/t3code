@@ -29,58 +29,6 @@ const baseProviderSnapshot = {
 };
 
 describe("ServerProvider", () => {
-  it("decodes normalized subscription limits", () => {
-    const parsed = decodeServerProvider({
-      ...baseProviderSnapshot,
-      usageLimits: {
-        status: "available",
-        support: "supported",
-        source: "codex-app-server",
-        checkedAt: "2026-08-29T12:00:00.000Z",
-        windows: [
-          {
-            id: "codex:primary",
-            label: "5 hours",
-            remainingPercent: 75,
-            usedPercent: 25,
-            resetsAt: "2026-08-29T17:00:00.000Z",
-            windowDurationMinutes: 300,
-          },
-        ],
-      },
-    });
-
-    expect(parsed.usageLimits?.windows[0]?.remainingPercent).toBe(75);
-  });
-
-  it("decodes independently metered provider-pool accounts", () => {
-    const parsed = decodeServerProvider({
-      ...baseProviderSnapshot,
-      usageLimits: {
-        status: "available",
-        support: "experimental",
-        source: "cliproxyapi-management",
-        checkedAt: "2026-08-29T12:00:00.000Z",
-        windows: [],
-        accounts: [
-          {
-            id: "auth-index-one",
-            email: "claude@example.com",
-            planLabel: "Max",
-            status: "available",
-            support: "experimental",
-            source: "cliproxyapi-management",
-            checkedAt: "2026-08-29T12:00:00.000Z",
-            windows: [{ id: "five_hour", label: "5 hours", remainingPercent: 80 }],
-          },
-        ],
-      },
-    });
-
-    expect(parsed.usageLimits?.accounts?.[0]?.email).toBe("claude@example.com");
-    expect(parsed.usageLimits?.accounts?.[0]?.planLabel).toBe("Max");
-    expect(parsed.usageLimits?.accounts?.[0]?.windows[0]?.remainingPercent).toBe(80);
-  });
   it("defaults capability arrays when decoding provider snapshots", () => {
     const parsed = decodeServerProvider({
       instanceId: "codex",
@@ -208,6 +156,24 @@ describe("server config forward compatibility", () => {
     ]);
 
     expect(parsed).toEqual([decodedBase]);
+  });
+
+  it("drops usage windows this build cannot decode instead of failing the provider", () => {
+    const parsed = decodeServerProvider({
+      ...baseProviderSnapshot,
+      usageLimits: {
+        checkedAt: "2026-04-10T00:00:00.000Z",
+        windows: [
+          { id: "primary", kind: "session", label: "Session", usedPercent: 12 },
+          { id: "future", kind: "some-future-kind", label: "Future", usedPercent: 1 },
+          { id: "bad", kind: "weekly", label: "Weekly", usedPercent: 120 },
+        ],
+      },
+    });
+
+    expect(parsed.usageLimits?.windows).toEqual([
+      { id: "primary", kind: "session", label: "Session", usedPercent: 12 },
+    ]);
   });
 });
 

@@ -24,6 +24,7 @@ import {
 import { EditorId, FileManagerRevealKind, RemoteOpenTarget } from "./editor.ts";
 import { ModelCapabilities } from "./model.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
+import { ServerProviderUsageLimits, UsageLimitSourceSnapshots } from "./providerUsageLimits.ts";
 import { ServerSettings } from "./settings.ts";
 
 const KeybindingsMalformedConfigIssue = Schema.Struct({
@@ -184,67 +185,6 @@ export const ServerProviderUpdateState = Schema.Struct({
 });
 export type ServerProviderUpdateState = typeof ServerProviderUpdateState.Type;
 
-export const ServerProviderUsageLimitsStatus = Schema.Literals([
-  "available",
-  "partial",
-  "stale",
-  "unavailable",
-  "error",
-  "disabled",
-]);
-export type ServerProviderUsageLimitsStatus = typeof ServerProviderUsageLimitsStatus.Type;
-
-export const ServerProviderUsageLimitsSupport = Schema.Literals([
-  "supported",
-  "experimental",
-  "unavailable",
-]);
-export type ServerProviderUsageLimitsSupport = typeof ServerProviderUsageLimitsSupport.Type;
-
-export const ServerProviderUsageLimitWindow = Schema.Struct({
-  id: TrimmedNonEmptyString,
-  label: TrimmedNonEmptyString,
-  remainingPercent: Schema.optional(Schema.Number),
-  usedPercent: Schema.optional(Schema.Number),
-  resetsAt: Schema.optional(IsoDateTime),
-  windowDurationMinutes: Schema.optional(PositiveInt),
-});
-export type ServerProviderUsageLimitWindow = typeof ServerProviderUsageLimitWindow.Type;
-
-const ServerProviderUsageLimitsFields = {
-  status: ServerProviderUsageLimitsStatus,
-  support: ServerProviderUsageLimitsSupport,
-  source: TrimmedNonEmptyString,
-  checkedAt: IsoDateTime,
-  windows: Schema.Array(ServerProviderUsageLimitWindow),
-  message: Schema.optional(TrimmedNonEmptyString),
-  dashboardUrl: Schema.optional(TrimmedNonEmptyString),
-} as const;
-
-/** One independently metered account exposed by a provider-side account pool. */
-export const ServerProviderUsageLimitsAccount = Schema.Struct({
-  id: TrimmedNonEmptyString,
-  label: Schema.optional(TrimmedNonEmptyString),
-  email: Schema.optional(TrimmedNonEmptyString),
-  planLabel: Schema.optional(TrimmedNonEmptyString),
-  ...ServerProviderUsageLimitsFields,
-});
-export type ServerProviderUsageLimitsAccount = typeof ServerProviderUsageLimitsAccount.Type;
-
-/**
- * Current subscription allowance for one configured provider instance. A
- * provider-side account pool may expose independent readings in `accounts`.
- *
- * The payload is deliberately provider-neutral: credentials and raw upstream
- * responses never cross the server/client boundary. Optional percentages and
- * reset timestamps let adapters report honest partial data.
- */
-export const ServerProviderUsageLimits = Schema.Struct({
-  ...ServerProviderUsageLimitsFields,
-  accounts: Schema.optional(Schema.Array(ServerProviderUsageLimitsAccount)),
-});
-export type ServerProviderUsageLimits = typeof ServerProviderUsageLimits.Type;
-
 export const ServerProvider = Schema.Struct({
   // Routing key for the configured instance this snapshot represents. This
   // is the only stable identity consumers may use for provider routing.
@@ -288,9 +228,10 @@ export const ServerProvider = Schema.Struct({
   ),
   skills: Schema.Array(ServerProviderSkill).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   workspaceSnapshots: Schema.optionalKey(Schema.Array(ServerProviderWorkspaceSnapshot)),
+  // Absent when the driver has no notion of subscription usage.
+  usageLimits: Schema.optional(ServerProviderUsageLimits),
   versionAdvisory: Schema.optionalKey(ServerProviderVersionAdvisory),
   updateState: Schema.optionalKey(ServerProviderUpdateState),
-  usageLimits: Schema.optionalKey(ServerProviderUsageLimits),
 });
 export type ServerProvider = typeof ServerProvider.Type;
 
@@ -643,6 +584,12 @@ export const ServerConfig = Schema.Struct({
    * and it stays absent for subscribers that did not opt in.
    */
   environmentThemes: Schema.optional(Schema.Array(EnvironmentTheme)),
+  /**
+   * Quota reported by configured `usageLimitSources`. Like themes, never in
+   * a snapshot: the source stream emits the current set on subscribe, and it
+   * stays absent for subscribers that did not opt in.
+   */
+  usageLimitSources: Schema.optional(UsageLimitSourceSnapshots),
 });
 export type ServerConfig = typeof ServerConfig.Type;
 
@@ -754,12 +701,28 @@ export const ServerConfigStreamEnvironmentThemesUpdatedEvent = Schema.Struct({
 export type ServerConfigStreamEnvironmentThemesUpdatedEvent =
   typeof ServerConfigStreamEnvironmentThemesUpdatedEvent.Type;
 
+export const ServerConfigUsageLimitSourcesUpdatedPayload = Schema.Struct({
+  /** The full set; empty once no source is configured. */
+  sources: UsageLimitSourceSnapshots,
+});
+export type ServerConfigUsageLimitSourcesUpdatedPayload =
+  typeof ServerConfigUsageLimitSourcesUpdatedPayload.Type;
+
+export const ServerConfigStreamUsageLimitSourcesUpdatedEvent = Schema.Struct({
+  version: Schema.Literal(1),
+  type: Schema.Literal("usageLimitSourcesUpdated"),
+  payload: ServerConfigUsageLimitSourcesUpdatedPayload,
+});
+export type ServerConfigStreamUsageLimitSourcesUpdatedEvent =
+  typeof ServerConfigStreamUsageLimitSourcesUpdatedEvent.Type;
+
 export const ServerConfigStreamEvent = Schema.Union([
   ServerConfigStreamSnapshotEvent,
   ServerConfigStreamKeybindingsUpdatedEvent,
   ServerConfigStreamProviderStatusesEvent,
   ServerConfigStreamSettingsUpdatedEvent,
   ServerConfigStreamEnvironmentThemesUpdatedEvent,
+  ServerConfigStreamUsageLimitSourcesUpdatedEvent,
 ]);
 export type ServerConfigStreamEvent = typeof ServerConfigStreamEvent.Type;
 

@@ -45,7 +45,8 @@ import {
 import { withInstanceIdentity } from "./instanceIdentity.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import { readOpenCodeGoUsageLimits } from "../providerUsageLimitReaders.ts";
-import { makeUnavailableUsageLimits, pollProviderUsageLimits } from "../providerUsageLimits.ts";
+import { pollProviderUsageLimits } from "../providerUsageLimitPolling.ts";
+import { makeUnavailableUsageLimits } from "../providerUsageLimits.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
   makePackageManagedProviderMaintenanceResolver,
@@ -152,6 +153,14 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
         Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner),
         Effect.provideService(OpenCodeRuntime, openCodeRuntime),
       );
+      // NOTE: the local branch intentionally uses the shared SDK server
+      // instead of `opencode debug skill` (loadSkillsFromCli). The CLI writes
+      // its full JSON inventory to stdout, but the Bun-compiled binary does
+      // not flush more than one 64KB pipe buffer to a non-TTY stdout, so the
+      // piped output arrives truncated and unparseable — which degrades to an
+      // empty skill list and poisons the workspace snapshot the `$` picker
+      // reads. The SDK `app.skills` endpoint honors the per-request directory
+      // and returns complete results regardless of size.
       const loadSkillsForCwd = (cwd: string) =>
         effectiveConfig.serverUrl.trim().length > 0
           ? Effect.scoped(
@@ -175,11 +184,17 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
                 return yield* openCodeRuntime.loadOpenCodeSkills(client);
               }),
             )
-          : openCodeRuntime.loadSkillsFromCli({
-              binaryPath: effectiveConfig.binaryPath,
-              cwd,
-              environment: processEnv,
-            });
+          : serverOwner.withServer((server) =>
+              openCodeRuntime.loadOpenCodeSkills(
+                openCodeRuntime.createOpenCodeSdkClient({
+                  baseUrl: server.url,
+                  directory: cwd,
+                  ...(server.serverPassword !== undefined
+                    ? { serverPassword: server.serverPassword }
+                    : {}),
+                }),
+              ),
+            );
 
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
       const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<OpenCodeSettings>>(
@@ -212,13 +227,10 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
                 yield* publishSnapshot({
                   ...current,
                   usageLimits: makeUnavailableUsageLimits({
-                    source: "opencode-go",
-                    support: "experimental",
                     checkedAt: DateTime.formatIso(yield* DateTime.now),
-                    status: "disabled",
+                    reason: "unsupported",
                     message:
                       "Experimental OpenCode Go plan limits are disabled in provider settings.",
-                    dashboardUrl: "https://opencode.ai/zen",
                   }),
                 });
                 return;

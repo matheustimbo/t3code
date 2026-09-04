@@ -1,13 +1,15 @@
 import type { UsageProviderKind } from "@t3tools/contracts";
 import { CheckIcon, RefreshCwIcon, XIcon } from "lucide-react";
 import { useMemo, useState } from "react";
-import * as Schema from "effect/Schema";
 
 import type { DailyTotals, HourlyTotals } from "@t3tools/shared/usageMerge";
 
 import { isElectron } from "../../env";
 import { cn } from "../../lib/utils";
+import { usePrimaryEnvironmentId } from "../../state/environments";
+import { serverEnvironment } from "../../state/server";
 import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
+import { useAtomCommand } from "../../state/use-atom-command";
 import {
   enumerateDays,
   enumerateHourStarts,
@@ -33,10 +35,20 @@ import {
 } from "../WorkspaceBreadcrumb";
 import { WorkspacePageContainer } from "../WorkspacePageContainer";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
+import { UsageLimitsSection } from "./UsageLimits";
 import { UsageProviderChart, type UsageChartMetric } from "./UsageProviderChart";
 import { PROVIDER_ORDER, PROVIDER_PRESENTATION, providersWithUsage } from "./usageProviders";
-import { PlanLimitsPanel } from "./PlanLimitsPanel";
-import { useLocalStorage } from "../../hooks/useLocalStorage";
+
+type UsageMetric = UsageChartMetric | "limits";
+const METRIC_OPTIONS = [
+  { value: "cost", label: "Cost" },
+  { value: "tokens", label: "Tokens" },
+  { value: "limits", label: "Limits" },
+] as const satisfies readonly { value: UsageMetric; label: string }[];
+
+function isUsageMetric(value: string | null | undefined): value is UsageMetric {
+  return METRIC_OPTIONS.some((option) => option.value === value);
+}
 
 const WINDOW_OPTIONS = [
   { days: 1, label: "Past 24h" },
@@ -44,23 +56,22 @@ const WINDOW_OPTIONS = [
   { days: 30, label: "30 days" },
   { days: 90, label: "90 days" },
 ] as const;
-const UsageTab = Schema.Literals(["limits", "local"]);
 
 export function UsagePage() {
-  const [usageTab, setUsageTab] = useLocalStorage(
-    "t3code:usage-tab:v1",
-    "limits" as const,
-    UsageTab,
-  );
   const [windowSelection, setWindowSelection] = useState(() => ({
     days: 30,
     window: makeWindow(30),
   }));
-  const [metric, setMetric] = useState<UsageChartMetric>("cost");
+  const [metric, setMetric] = useState<UsageMetric>("cost");
+  const showingLimits = metric === "limits";
   const [breakdown, setBreakdown] = useState<"model" | "time">("model");
   const { days: windowDays, window } = windowSelection;
   const isPast24Hours = windowDays === 1;
   const { merged, environments, isPending, isPartial, refresh } = useUsage(window);
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
+    reportFailure: false,
+  });
 
   // Hold the content until every environment is terminal. Rendering merged
   // totals while devices are still answering makes every number on the page
@@ -103,6 +114,15 @@ export function UsagePage() {
     });
   };
   const refreshWindow = () => {
+    // On Limits the button re-probes every provider (and usage-limit source)
+    // on the primary environment; the live snapshots then flow in over the
+    // config stream, so nothing else needs to move.
+    if (showingLimits) {
+      if (primaryEnvironmentId) {
+        void refreshProviders({ environmentId: primaryEnvironmentId, input: {} });
+      }
+      return;
+    }
     const nextWindow = makeWindow(windowDays, undefined, isPast24Hours ? "hour" : "day");
     if (
       nextWindow.sinceDay === window.sinceDay &&
@@ -125,108 +145,115 @@ export function UsagePage() {
         <WorkspaceBreadcrumbItem current>
           <h1>Usage</h1>
         </WorkspaceBreadcrumbItem>
-        <WorkspaceBreadcrumbSeparator className="hidden md:flex" />
-        <WorkspaceBreadcrumbItem className="hidden min-w-0 shrink md:flex">
-          <span className="truncate">
-            {usageTab === "limits" ? "Subscription allowances" : windowLabel}
-          </span>
-        </WorkspaceBreadcrumbItem>
+        {showingLimits ? null : (
+          <>
+            <WorkspaceBreadcrumbSeparator className="hidden md:flex" />
+            <WorkspaceBreadcrumbItem className="hidden min-w-0 shrink md:flex">
+              <span className="truncate">{windowLabel}</span>
+            </WorkspaceBreadcrumbItem>
+          </>
+        )}
       </WorkspaceBreadcrumb>
-      {usageTab === "local" ? (
-        <>
-          <div className="ms-auto hidden min-w-0 items-center justify-end gap-2 lg:flex">
-            <ToggleGroup
-              aria-label="Usage metric"
-              variant="segmented"
-              value={[metric]}
-              onValueChange={(next) => {
-                const value = next[0];
-                if (value === "cost" || value === "tokens") setMetric(value);
-              }}
-            >
-              {(["cost", "tokens"] as const).map((option) => (
-                <Toggle key={option} value={option}>
-                  {option === "cost" ? "Cost" : "Tokens"}
-                </Toggle>
-              ))}
-            </ToggleGroup>
-            <ToggleGroup
-              aria-label="Usage period"
-              variant="segmented"
-              value={[String(windowDays)]}
-              onValueChange={(next) => {
-                const value = next[0];
-                if (value) selectWindow(Number(value));
-              }}
-            >
-              {WINDOW_OPTIONS.map((option) => (
-                <Toggle key={option.days} value={String(option.days)}>
-                  {option.label}
-                </Toggle>
-              ))}
-            </ToggleGroup>
-            <Button
-              onClick={refreshWindow}
-              aria-label="Refresh usage"
-              size="icon-sm"
-              variant="ghost"
-            >
-              <RefreshCwIcon className="size-3.5" />
-            </Button>
-          </div>
-          <div className="ms-auto flex min-w-0 items-center justify-end gap-1 lg:hidden">
-            <Select
-              value={metric}
-              onValueChange={(value) => {
-                if (value === "cost" || value === "tokens") setMetric(value);
-              }}
-            >
-              <SelectTrigger
-                aria-label="Usage metric"
-                size="compact"
-                variant="ghost"
-                className="w-auto min-w-0"
-              >
-                <SelectValue>{metric === "cost" ? "Cost" : "Tokens"}</SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem value="cost">Cost</SelectItem>
-                <SelectItem value="tokens">Tokens</SelectItem>
-              </SelectPopup>
-            </Select>
-            <Select
-              value={String(windowDays)}
-              onValueChange={(value) => selectWindow(Number(value))}
-            >
-              <SelectTrigger
-                aria-label="Usage period"
-                size="compact"
-                variant="ghost"
-                className="w-auto min-w-0"
-              >
-                <SelectValue>
-                  {WINDOW_OPTIONS.find((option) => option.days === windowDays)?.label}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                {WINDOW_OPTIONS.map((option) => (
-                  <SelectItem key={option.days} value={String(option.days)}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-            <Button
-              onClick={refreshWindow}
-              aria-label="Refresh usage"
-              size="icon-sm"
-              variant="ghost"
-            >
-              <RefreshCwIcon className="size-3.5" />
-            </Button>
-          </div>
-        </>
-      ) : null}
+      <div className="ms-auto hidden min-w-0 items-center justify-end gap-2 lg:flex">
+        <ToggleGroup
+          aria-label="Usage metric"
+          variant="segmented"
+          value={[metric]}
+          onValueChange={(next) => {
+            const value = next[0];
+            if (isUsageMetric(value)) setMetric(value);
+          }}
+        >
+          {METRIC_OPTIONS.map((option) => (
+            <Toggle key={option.value} value={option.value}>
+              {option.label}
+            </Toggle>
+          ))}
+        </ToggleGroup>
+        {/* The period does not apply to Limits, so it stays in place but
+            disabled; unmounting it shifted the metric toggle ~300px. */}
+        <ToggleGroup
+          aria-label="Usage period"
+          variant="segmented"
+          value={[String(windowDays)]}
+          disabled={showingLimits}
+          onValueChange={(next) => {
+            const value = next[0];
+            if (value) selectWindow(Number(value));
+          }}
+        >
+          {WINDOW_OPTIONS.map((option) => (
+            <Toggle key={option.days} value={String(option.days)}>
+              {option.label}
+            </Toggle>
+          ))}
+        </ToggleGroup>
+        <Button
+          onClick={refreshWindow}
+          aria-label={showingLimits ? "Refresh limits" : "Refresh usage"}
+          size="icon-sm"
+          variant="ghost"
+        >
+          <RefreshCwIcon className="size-3.5" />
+        </Button>
+      </div>
+      <div className="ms-auto flex min-w-0 items-center justify-end gap-1 lg:hidden">
+        <Select
+          value={metric}
+          onValueChange={(value) => {
+            if (isUsageMetric(value)) setMetric(value);
+          }}
+        >
+          <SelectTrigger
+            aria-label="Usage metric"
+            size="compact"
+            variant="ghost"
+            className="w-auto min-w-0"
+          >
+            <SelectValue>
+              {METRIC_OPTIONS.find((option) => option.value === metric)?.label}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectPopup align="end" alignItemWithTrigger={false}>
+            {METRIC_OPTIONS.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectPopup>
+        </Select>
+        <Select
+          value={String(windowDays)}
+          disabled={showingLimits}
+          onValueChange={(value) => selectWindow(Number(value))}
+        >
+          <SelectTrigger
+            aria-label="Usage period"
+            size="compact"
+            variant="ghost"
+            className="w-auto min-w-0"
+          >
+            <SelectValue>
+              {WINDOW_OPTIONS.find((option) => option.days === windowDays)?.label}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectPopup align="end" alignItemWithTrigger={false}>
+            {WINDOW_OPTIONS.map((option) => (
+              <SelectItem key={option.days} value={String(option.days)}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectPopup>
+        </Select>
+        <Button
+          onClick={refreshWindow}
+          aria-label={showingLimits ? "Refresh limits" : "Refresh usage"}
+          size="icon-sm"
+          variant="ghost"
+        >
+          <RefreshCwIcon className="size-3.5" />
+        </Button>
+      </div>
     </div>
   );
 
@@ -237,21 +264,8 @@ export function UsagePage() {
 
         <ScrollArea className="min-h-0 flex-1">
           <WorkspacePageContainer width="wide">
-            <ToggleGroup
-              aria-label="Usage view"
-              variant="segmented"
-              value={[usageTab]}
-              onValueChange={(next) => {
-                const value = next[0];
-                if (value === "limits" || value === "local") setUsageTab(value);
-              }}
-              className="mb-6 w-fit"
-            >
-              <Toggle value="limits">Plan limits</Toggle>
-              <Toggle value="local">Local usage</Toggle>
-            </ToggleGroup>
-            {usageTab === "limits" ? (
-              <PlanLimitsPanel />
+            {showingLimits ? (
+              <UsageLimitsSection />
             ) : settling ? (
               <>
                 {environments.length > 1 ? <UsageDeviceStrip environments={environments} /> : null}

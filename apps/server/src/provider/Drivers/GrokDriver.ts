@@ -30,13 +30,12 @@ import { withInstanceIdentity } from "./instanceIdentity.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import { discoverGrokSkills } from "./GrokSkills.ts";
 import { makeGrokAcpRuntime } from "../acp/GrokAcpSupport.ts";
+import { parseGrokUsageWindows } from "../Layers/polledUsageLimits.ts";
 import {
-  makeUnavailableUsageLimits,
-  makeUsageLimitsSnapshot,
-  parseGrokUsageWindows,
   pollProviderUsageLimits,
   ProviderUsageLimitsReadError,
-} from "../providerUsageLimits.ts";
+} from "../providerUsageLimitPolling.ts";
+import { makeUnavailableUsageLimits, makeUsageLimits } from "../providerUsageLimits.ts";
 import { readCliProxyGrokUsageLimits } from "../providerUsageLimitReaders.ts";
 import {
   makeManualOnlyProviderMaintenanceCapabilities,
@@ -145,12 +144,9 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
               yield* publishSnapshot({
                 ...current,
                 usageLimits: makeUnavailableUsageLimits({
-                  source: "grok-xai-billing",
-                  support: "experimental",
                   checkedAt: DateTime.formatIso(yield* DateTime.now),
-                  status: "disabled",
+                  reason: "unsupported",
                   message: "Experimental Grok plan limits are disabled in provider settings.",
-                  dashboardUrl: "https://grok.com/",
                 }),
               });
               return;
@@ -198,12 +194,9 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
                         message: "Grok returned no subscription billing window.",
                       });
                     }
-                    return makeUsageLimitsSnapshot({
-                      source: "grok-xai-billing",
-                      support: "experimental",
+                    return makeUsageLimits({
                       checkedAt: DateTime.formatIso(yield* DateTime.now),
                       windows,
-                      dashboardUrl: "https://grok.com/",
                     });
                   }),
                 );

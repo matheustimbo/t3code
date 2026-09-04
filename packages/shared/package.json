@@ -251,9 +251,9 @@
       "types": "./src/usageFormat.ts",
       "import": "./src/usageFormat.ts"
     },
-    "./providerUsageLimits": {
-      "types": "./src/providerUsageLimits.ts",
-      "import": "./src/providerUsageLimits.ts"
+    "./usageLimits": {
+      "types": "./src/usageLimits.ts",
+      "import": "./src/usageLimits.ts"
     },
     "./desktopAppControl": {
       "types": "./src/desktopAppControl.ts",

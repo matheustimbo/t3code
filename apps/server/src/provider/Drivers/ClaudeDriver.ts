@@ -30,11 +30,11 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeClaudeAdapter } from "../Layers/ClaudeAdapter.ts";
+import { makeClaudeScopedLimitNames } from "../Layers/claudeUsageLimits.ts";
 import {
   checkClaudeProviderStatus,
   makePendingClaudeProvider,
   probeClaudeCapabilities,
-  readClaudeSdkUsageLimits,
 } from "../Layers/ClaudeProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { resolveClaudeModelCatalog } from "../ClaudeModelCatalog.ts";
@@ -47,8 +47,6 @@ import {
 } from "../ProviderDriver.ts";
 import { withInstanceIdentity } from "./instanceIdentity.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
-import { readClaudeUsageLimits } from "../providerUsageLimitReaders.ts";
-import { makeUnavailableUsageLimits, pollProviderUsageLimits } from "../providerUsageLimits.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
   makePackageManagedProviderMaintenanceResolver,
@@ -138,10 +136,14 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         continuationGroupKey,
       });
 
+      // One per instance: the status probe writes the model-scoped bucket
+      // names it saw, the adapter reads them to place turn-driven events.
+      const scopedLimitNames = yield* makeClaudeScopedLimitNames;
       const adapterOptions = {
         instanceId,
         environment: processEnv,
         modelCatalog,
+        scopedLimitNames,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
       };
       const adapter = yield* makeClaudeAdapter(effectiveConfig, adapterOptions);
@@ -175,6 +177,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
                 processEnv,
                 cwd,
                 resolveClaudeModelCatalog(manifest),
+                scopedLimitNames,
               ),
             ),
             Effect.map(stampIdentity),
@@ -199,48 +202,13 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
             Effect.map(stampIdentity),
           ),
         checkProvider,
-        enrichSnapshot: ({ settings, snapshot, getSnapshot, publishSnapshot, backgroundPolicy }) =>
-          Effect.gen(function* () {
-            const enrichedSnapshot = yield* enrichProviderSnapshotWithVersionAdvisory(
-              snapshot,
-              maintenanceCapabilities,
-              { enableProviderUpdateChecks: settings.enableProviderUpdateChecks },
-            ).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
-            yield* publishSnapshot(enrichedSnapshot);
-            if (!settings.provider.usageLimitsEnabled) {
-              const current = yield* getSnapshot;
-              yield* publishSnapshot({
-                ...current,
-                usageLimits: makeUnavailableUsageLimits({
-                  source: "claude-oauth-private",
-                  support: "experimental",
-                  checkedAt: DateTime.formatIso(yield* DateTime.now),
-                  status: "disabled",
-                  message: "Experimental Claude plan limits are disabled in provider settings.",
-                  dashboardUrl: "https://claude.ai/settings/usage",
-                }),
-              });
-              return;
-            }
-            return yield* pollProviderUsageLimits({
-              instanceId,
-              getSnapshot,
-              publishSnapshot,
-              read: (processEnv.CLIPROXYAPI_MANAGEMENT_KEY?.trim()
-                ? readClaudeUsageLimits(settings.provider, processEnv)
-                : readClaudeUsageLimits(settings.provider, processEnv).pipe(
-                    Effect.catch(() =>
-                      readClaudeSdkUsageLimits(settings.provider, processEnv, cwd),
-                    ),
-                  )
-              ).pipe(
-                Effect.provideService(FileSystem.FileSystem, fileSystem),
-                Effect.provideService(Path.Path, path),
-                Effect.provideService(HttpClient.HttpClient, httpClient),
-              ),
-              backgroundPolicy,
-            });
-          }),
+        enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
+          enrichProviderSnapshotWithVersionAdvisory(snapshot, maintenanceCapabilities, {
+            enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
+          }).pipe(
+            Effect.provideService(HttpClient.HttpClient, httpClient),
+            Effect.flatMap((enrichedSnapshot) => publishSnapshot(enrichedSnapshot)),
+          ),
       }).pipe(
         Effect.mapError(
           (cause) =>

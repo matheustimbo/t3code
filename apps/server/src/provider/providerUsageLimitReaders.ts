@@ -1,8 +1,8 @@
 import type {
-  ClaudeSettings,
   CursorSettings,
   OpenCodeSettings,
-  ServerProviderUsageLimitWindow,
+  ServerProviderUsageLimits,
+  ServerProviderUsageWindow,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -15,18 +15,13 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
 import {
-  makePooledUsageLimitsSnapshot,
-  makeUsageLimitsSnapshot,
-  makeUsageLimitsAccount,
-  makeUnavailableUsageLimitsAccount,
-  parseCliProxyCodexUsageWindows,
-  parseClaudePlanLabel,
-  parseClaudeUsageWindows,
   parseCursorUsageWindows,
   parseGrokUsageWindows,
   parseOpenCodeUsageWindows,
-  ProviderUsageLimitsReadError,
-} from "./providerUsageLimits.ts";
+  prefixUsageWindowsWithAccount,
+} from "./Layers/polledUsageLimits.ts";
+import { ProviderUsageLimitsReadError } from "./providerUsageLimitPolling.ts";
+import { makeUsageLimits } from "./providerUsageLimits.ts";
 import { expandHomePath } from "../pathExpansion.ts";
 
 const ClaudeCredentials = Schema.Struct({
@@ -323,7 +318,7 @@ const readCliProxyUsageLimits = Effect.fn("readCliProxyUsageLimits")(function* (
     checkedAtMs: number,
   ) => Effect.Effect<
     {
-      readonly windows: ReadonlyArray<ServerProviderUsageLimitWindow>;
+      readonly windows: ReadonlyArray<ServerProviderUsageWindow>;
       readonly planLabel?: string | undefined;
     },
     ProviderUsageLimitsReadError,
@@ -347,140 +342,36 @@ const readCliProxyUsageLimits = Effect.fn("readCliProxyUsageLimits")(function* (
   const checkedAtInstant = yield* DateTime.now;
   const checkedAt = DateTime.formatIso(checkedAtInstant);
   const checkedAtMs = DateTime.toEpochMillis(checkedAtInstant);
-  const accounts = yield* Effect.forEach(
+  // The provider snapshot holds one window list, so a hub pooling several
+  // accounts contributes each account's windows under its own prefix. An
+  // account that fails or is disabled contributes nothing rather than
+  // failing the whole read: the other accounts are still worth showing.
+  const windowGroups = yield* Effect.forEach(
     authFiles,
     (authFile) =>
       Effect.gen(function* () {
         const label = cliProxyAccountLabel(authFile);
-        if (cliProxyAccountDisabled(authFile)) {
-          return makeUnavailableUsageLimitsAccount({
-            id: authFile.auth_index,
-            label,
-            ...(authFile.email?.trim() ? { email: authFile.email.trim() } : {}),
-            source: "cliproxyapi-management",
-            support: "experimental",
-            checkedAt,
-            status: "disabled",
-            message: "Disabled in CLIProxyAPI.",
-            dashboardUrl: input.config.dashboardUrl,
-          });
-        }
+        if (cliProxyAccountDisabled(authFile)) return [];
         const accountUsage = yield* input.readAccount(authFile, checkedAtMs);
-        const windows = accountUsage.windows;
-        if (windows.length === 0) {
-          return yield* safeReadError(
-            `${input.providerLabel} account ${label} returned no subscription windows.`,
-          );
-        }
-        return makeUsageLimitsAccount({
-          id: authFile.auth_index,
-          label,
-          ...(authFile.email?.trim() ? { email: authFile.email.trim() } : {}),
-          ...(accountUsage.planLabel ? { planLabel: accountUsage.planLabel } : {}),
-          source: "cliproxyapi-management",
-          support: "experimental",
-          checkedAt,
-          windows,
-          dashboardUrl: input.config.dashboardUrl,
-        });
+        return prefixUsageWindowsWithAccount(label, accountUsage.windows);
       }).pipe(
         Effect.catch((error) =>
-          Effect.succeed(
-            makeUnavailableUsageLimitsAccount({
-              id: authFile.auth_index,
-              label: cliProxyAccountLabel(authFile),
-              ...(authFile.email?.trim() ? { email: authFile.email.trim() } : {}),
-              source: "cliproxyapi-management",
-              support: "experimental",
-              checkedAt,
-              status: "error",
-              message: error.message,
-              dashboardUrl: input.config.dashboardUrl,
-            }),
-          ),
+          Effect.logDebug(`${input.providerLabel} usage read failed for one account`, {
+            account: cliProxyAccountLabel(authFile),
+            message: error.message,
+          }).pipe(Effect.as([] as ReadonlyArray<ServerProviderUsageWindow>)),
         ),
       ),
     { concurrency: 3 },
   );
-  return makePooledUsageLimitsSnapshot({
-    source: "cliproxyapi-management",
-    support: "experimental",
-    checkedAt,
-    accounts,
-    dashboardUrl: input.config.dashboardUrl,
-  });
-});
 
-const readCliProxyClaudeUsageLimits = Effect.fn("readCliProxyClaudeUsageLimits")(function* (
-  config: CliProxyManagementConfig,
-) {
-  return yield* readCliProxyUsageLimits({
-    config,
-    provider: "claude",
-    providerLabel: "Claude",
-    readAccount: (authFile) => {
-      const header = {
-        Authorization: "Bearer $TOKEN$",
-        "Content-Type": "application/json",
-        "anthropic-beta": "oauth-2025-04-20",
-      };
-      const request = (url: string) =>
-        executeCliProxyApiCall({ config, authFile, providerLabel: "Claude", url, header });
-      return Effect.all(
-        [
-          request("https://api.anthropic.com/api/oauth/usage"),
-          request("https://api.anthropic.com/api/oauth/profile").pipe(Effect.result),
-        ],
-        { concurrency: 2 },
-      ).pipe(
-        Effect.map(([usagePayload, profileResult]) => {
-          const planLabel = Result.isSuccess(profileResult)
-            ? parseClaudePlanLabel(profileResult.success)
-            : undefined;
-          return {
-            windows: parseClaudeUsageWindows(usagePayload),
-            ...(planLabel ? { planLabel } : {}),
-          };
-        }),
-      );
-    },
-  });
-});
-
-export const readCliProxyCodexUsageLimits = Effect.fn("readCliProxyCodexUsageLimits")(function* (
-  environment: NodeJS.ProcessEnv,
-) {
-  const config = resolveCliProxyManagementConfig(environment);
-  if (!config) {
+  const windows = windowGroups.flat();
+  if (windows.length === 0) {
     return yield* safeReadError(
-      "Set CLIPROXYAPI_MANAGEMENT_URL or a provider base URL to read CLIProxyAPI accounts.",
+      `No ${input.providerLabel} account behind CLIProxyAPI reported subscription windows.`,
     );
   }
-  return yield* readCliProxyUsageLimits({
-    config,
-    provider: "codex",
-    providerLabel: "Codex",
-    readAccount: (authFile, checkedAtMs) => {
-      const accountId = cliProxyCodexAccountId(authFile);
-      return executeCliProxyApiCall({
-        config,
-        authFile,
-        providerLabel: "Codex",
-        url: "https://chatgpt.com/backend-api/wham/usage",
-        header: {
-          Authorization: "Bearer $TOKEN$",
-          "Content-Type": "application/json",
-          "User-Agent":
-            "codex-tui/0.149.1 (Mac OS 26.5.2; arm64) iTerm.app/3.6.11 (codex-tui; 0.149.1)",
-          ...(accountId ? { "Chatgpt-Account-Id": accountId } : {}),
-        },
-      }).pipe(
-        Effect.map((payload) => ({
-          windows: parseCliProxyCodexUsageWindows(payload, checkedAtMs),
-        })),
-      );
-    },
-  });
+  return makeUsageLimits({ checkedAt, windows });
 });
 
 export const readCliProxyGrokUsageLimits = Effect.fn("readCliProxyGrokUsageLimits")(function* (
@@ -538,56 +429,6 @@ export const readCliProxyGrokUsageLimits = Effect.fn("readCliProxyGrokUsageLimit
   });
 });
 
-const readNativeClaudeUsageLimits = Effect.fn("readNativeClaudeUsageLimits")(function* (
-  settings: Pick<ClaudeSettings, "homePath">,
-  environment: NodeJS.ProcessEnv,
-) {
-  const path = yield* Path.Path;
-  const configDirectory = settings.homePath.trim()
-    ? expandHomePath(settings.homePath)
-    : path.join(environment.HOME ?? process.env.HOME ?? "", ".claude");
-  const accessToken = yield* readFirstToken({
-    paths: [path.join(configDirectory, ".credentials.json")],
-    decode: (contents) => {
-      const decoded = decodeClaudeCredentials(contents);
-      return Option.map(decoded, (credentials) => credentials.claudeAiOauth.accessToken);
-    },
-  });
-  const payload = yield* executePrivateJson(
-    HttpClientRequest.get("https://api.anthropic.com/api/oauth/usage").pipe(
-      HttpClientRequest.bearerToken(accessToken),
-      HttpClientRequest.setHeader("anthropic-beta", "oauth-2025-04-20"),
-      HttpClientRequest.acceptJson,
-    ),
-    "Claude",
-  );
-  const windows = parseClaudeUsageWindows(payload);
-  if (windows.length === 0) {
-    return yield* safeReadError("Claude did not return any subscription windows.");
-  }
-  return makeUsageLimitsSnapshot({
-    source: "claude-oauth-private",
-    support: "experimental",
-    checkedAt: DateTime.formatIso(yield* DateTime.now),
-    windows,
-    dashboardUrl: "https://claude.ai/settings/usage",
-  });
-});
-
-export const readClaudeUsageLimits = Effect.fn("readClaudeUsageLimits")(function* (
-  settings: Pick<ClaudeSettings, "homePath">,
-  environment: NodeJS.ProcessEnv,
-) {
-  const cliProxy = resolveCliProxyManagementConfig(environment);
-  if (cliProxy) return yield* readCliProxyClaudeUsageLimits(cliProxy);
-  if (environment.CLIPROXYAPI_MANAGEMENT_KEY?.trim()) {
-    return yield* safeReadError(
-      "Set CLIPROXYAPI_MANAGEMENT_URL or a provider base URL to read CLIProxyAPI accounts.",
-    );
-  }
-  return yield* readNativeClaudeUsageLimits(settings, environment);
-});
-
 export const readCursorUsageLimits = Effect.fn("readCursorUsageLimits")(function* (
   _settings: Pick<CursorSettings, "apiEndpoint">,
   environment: NodeJS.ProcessEnv,
@@ -623,13 +464,7 @@ export const readCursorUsageLimits = Effect.fn("readCursorUsageLimits")(function
   if (windows.length === 0) {
     return yield* safeReadError("Cursor did not return a billing-cycle allowance.");
   }
-  return makeUsageLimitsSnapshot({
-    source: "cursor-private-api",
-    support: "experimental",
-    checkedAt: DateTime.formatIso(yield* DateTime.now),
-    windows,
-    dashboardUrl: "https://cursor.com/dashboard?tab=usage",
-  });
+  return makeUsageLimits({ checkedAt: DateTime.formatIso(yield* DateTime.now), windows });
 });
 
 export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(function* (
@@ -654,11 +489,5 @@ export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(
   if (windows.length === 0) {
     return yield* safeReadError("This OpenCode account did not report OpenCode Go limits.");
   }
-  return makeUsageLimitsSnapshot({
-    source: "opencode-go",
-    support: "experimental",
-    checkedAt: DateTime.formatIso(yield* DateTime.now),
-    windows,
-    dashboardUrl: "https://opencode.ai/zen",
-  });
+  return makeUsageLimits({ checkedAt: DateTime.formatIso(yield* DateTime.now), windows });
 });

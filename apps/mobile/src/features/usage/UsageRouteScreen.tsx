@@ -1,5 +1,4 @@
 import { useNavigation } from "@react-navigation/native";
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import type { DailyTotals, MergedUsage } from "@t3tools/shared/usageMerge";
 import {
   enumerateDays,
@@ -12,29 +11,17 @@ import {
   formatUsd,
   makeWindow,
 } from "@t3tools/shared/usageFormat";
-import {
-  displayRemainingPercent,
-  formatLimitReset,
-  formatRemainingPercent,
-  providerLimitColor,
-  usageLimitsStatusLabel,
-} from "@t3tools/shared/providerUsageLimits";
 import { useMemo, useState } from "react";
-import { AsyncResult } from "effect/unstable/reactivity";
-import { Linking, Platform, Pressable, RefreshControl, ScrollView, View } from "react-native";
+import { Platform, Pressable, RefreshControl, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text } from "../../components/AppText";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
-import { useProviderUsageLimits } from "../../state/providerUsageLimits";
-import { serverEnvironment } from "../../state/server";
-import { useAtomCommand } from "../../state/use-atom-command";
-import { ProviderIcon } from "../../components/ProviderIcon";
-import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { SettingsSection } from "../settings/components/SettingsSection";
 import { UsageDailyChart } from "./UsageDailyChart";
+import { UsageLimitsSection } from "./UsageLimitsSection";
 import type { UsageChartMetric } from "./usageChartData";
 import { PROVIDER_LABEL, useProviderColors } from "./usageProviders";
 
@@ -55,16 +42,6 @@ export function UsageRouteScreen() {
     window: makeWindow(30),
   }));
   const [metric, setMetric] = useState<UsageChartMetric>("cost");
-  const preferencesResult = useAtomValue(mobilePreferencesAtom);
-  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
-  const usageTab = AsyncResult.isSuccess(preferencesResult)
-    ? (preferencesResult.value.usageTab ?? "limits")
-    : "limits";
-  const [refreshingLimits, setRefreshingLimits] = useState(false);
-  const limitEnvironments = useProviderUsageLimits();
-  const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
-    reportFailure: false,
-  });
   const { days: windowDays, window } = windowSelection;
   const isPast24Hours = windowDays === 1;
   const { merged, environments, isPending, isPartial, refresh } = useUsage(window);
@@ -116,15 +93,6 @@ export function UsageRouteScreen() {
       setWindowSelection({ days: windowDays, window: nextWindow });
     }
   };
-  const refreshPlanLimits = () => {
-    if (refreshingLimits) return;
-    setRefreshingLimits(true);
-    void Promise.all(
-      limitEnvironments.map((environment) =>
-        refreshProviders({ environmentId: environment.environmentId, input: {} }),
-      ),
-    ).finally(() => setRefreshingLimits(false));
-  };
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
@@ -140,174 +108,44 @@ export function UsageRouteScreen() {
         className="flex-1"
         contentContainerClassName="gap-6 px-5 pt-4"
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
-        refreshControl={
-          <RefreshControl
-            refreshing={usageTab === "limits" ? refreshingLimits : refreshing}
-            onRefresh={usageTab === "limits" ? refreshPlanLimits : refreshWindow}
-          />
-        }
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refreshWindow} />}
       >
         <SegmentedControl
-          options={[
-            { value: "limits" as const, label: "Plan limits" },
-            { value: "local" as const, label: "Local usage" },
-          ]}
-          selected={usageTab}
-          onSelect={(value) => savePreferences({ usageTab: value })}
+          options={WINDOW_OPTIONS.map((option) => ({ value: option.days, label: option.label }))}
+          selected={windowDays}
+          onSelect={selectWindow}
         />
-        {usageTab === "limits" ? (
-          <MobilePlanLimits environments={limitEnvironments} />
+
+        <UsageCoverageNotice environments={environments} merged={merged} isPartial={isPartial} />
+
+        {isPending ? (
+          <Text className="py-16 text-center text-base text-foreground-muted">
+            Scanning provider transcripts…
+          </Text>
+        ) : environments.length === 0 ? (
+          <Text className="py-16 text-center text-base text-foreground-muted">
+            Connect an environment to see usage.
+          </Text>
         ) : (
           <>
-            <SegmentedControl
-              options={WINDOW_OPTIONS.map((option) => ({
-                value: option.days,
-                label: option.label,
-              }))}
-              selected={windowDays}
-              onSelect={selectWindow}
-            />
-            <UsageCoverageNotice
-              environments={environments}
+            <ChartCard
               merged={merged}
-              isPartial={isPartial}
+              days={chartDays}
+              daily={chartTotals}
+              metric={metric}
+              onMetricChange={setMetric}
+              sinceDay={window.sinceDay}
+              untilDay={window.untilDay}
+              isPast24Hours={isPast24Hours}
+              timeZone={window.timeZone}
             />
-
-            {isPending ? (
-              <Text className="py-16 text-center text-base text-foreground-muted">
-                Scanning provider transcripts…
-              </Text>
-            ) : environments.length === 0 ? (
-              <Text className="py-16 text-center text-base text-foreground-muted">
-                Connect an environment to see usage.
-              </Text>
-            ) : (
-              <>
-                <ChartCard
-                  merged={merged}
-                  days={chartDays}
-                  daily={chartTotals}
-                  metric={metric}
-                  onMetricChange={setMetric}
-                  sinceDay={window.sinceDay}
-                  untilDay={window.untilDay}
-                  isPast24Hours={isPast24Hours}
-                  timeZone={window.timeZone}
-                />
-                <ProviderSection merged={merged} metric={metric} />
-                <TotalsSection merged={merged} isPast24Hours={isPast24Hours} />
-                <ModelsSection merged={merged} />
-              </>
-            )}
+            <ProviderSection merged={merged} metric={metric} />
+            <UsageLimitsSection />
+            <TotalsSection merged={merged} isPast24Hours={isPast24Hours} />
+            <ModelsSection merged={merged} />
           </>
         )}
       </ScrollView>
-    </View>
-  );
-}
-
-function MobilePlanLimits(props: {
-  readonly environments: ReturnType<typeof useProviderUsageLimits>;
-}) {
-  if (props.environments.length === 0) {
-    return (
-      <Text className="py-16 text-center text-base text-foreground-muted">
-        Connect an environment to see plan limits.
-      </Text>
-    );
-  }
-  return (
-    <View className="gap-6">
-      {props.environments.map((environment) => (
-        <View key={environment.environmentId} className="gap-2">
-          <Text className="text-sm font-t3-medium text-foreground-muted">{environment.label}</Text>
-          {environment.entries.length === 0 ? (
-            <View className="rounded-2xl bg-card px-4 py-6">
-              <Text className="text-center text-sm text-foreground-muted">
-                No enabled providers.
-              </Text>
-            </View>
-          ) : (
-            environment.entries.map((entry) => {
-              const provider = entry.provider;
-              const limits = entry.limits;
-              const exhausted = limits?.windows.some(
-                (window) => displayRemainingPercent(limits, window) === 0,
-              );
-              return (
-                <View
-                  key={entry.entryId}
-                  className="gap-3 rounded-2xl border border-border-subtle bg-card p-4"
-                  style={exhausted ? { borderColor: "#dc2626" } : undefined}
-                >
-                  <View className="flex-row items-center gap-2">
-                    <ProviderIcon provider={provider.driver} size={18} />
-                    <View className="min-w-0 flex-1">
-                      <Text className="text-sm font-t3-medium text-foreground" numberOfLines={1}>
-                        {provider.displayName ?? provider.driver}
-                      </Text>
-                      <Text className="text-xs text-foreground-muted" numberOfLines={1}>
-                        {entry.accountLabel}
-                        {entry.accountPlanLabel ? ` · ${entry.accountPlanLabel}` : ""}
-                        {entry.sharedAcrossEnvironments ? " · Shared account" : ""}
-                      </Text>
-                    </View>
-                    <Text className="text-xs text-foreground-muted">
-                      {limits ? usageLimitsStatusLabel(limits) : "Waiting"}
-                    </Text>
-                  </View>
-                  {limits && limits.windows.length > 0 ? (
-                    <View className="gap-2">
-                      {limits.windows.map((window) => {
-                        const remaining = displayRemainingPercent(limits, window);
-                        return (
-                          <View key={window.id} className="rounded-xl bg-subtle px-3 py-2.5">
-                            <View className="flex-row items-center justify-between gap-2">
-                              <Text
-                                className="min-w-0 flex-1 text-xs text-foreground"
-                                numberOfLines={1}
-                              >
-                                {window.label}
-                              </Text>
-                              <Text className="text-xs font-t3-medium text-foreground">
-                                {formatRemainingPercent(remaining)}
-                              </Text>
-                            </View>
-                            <View className="mt-2 h-1.5 overflow-hidden rounded-full bg-sheet">
-                              <View
-                                className="h-full rounded-full"
-                                style={{
-                                  width: `${remaining ?? 0}%`,
-                                  backgroundColor: providerLimitColor(
-                                    provider.driver,
-                                    provider.accentColor,
-                                  ),
-                                }}
-                              />
-                            </View>
-                            <Text className="mt-1.5 text-2xs text-foreground-muted">
-                              {formatLimitReset(window.resetsAt)}
-                            </Text>
-                          </View>
-                        );
-                      })}
-                    </View>
-                  ) : (
-                    <Text className="text-sm text-foreground-muted">
-                      {limits?.message ?? "Plan limits have not been reported yet."}
-                    </Text>
-                  )}
-                  {limits?.dashboardUrl ? (
-                    <Pressable onPress={() => void Linking.openURL(limits.dashboardUrl!)}>
-                      <Text className="text-xs font-t3-medium text-accent">Provider dashboard</Text>
-                    </Pressable>
-                  ) : null}
-                </View>
-              );
-            })
-          )}
-        </View>
-      ))}
     </View>
   );
 }

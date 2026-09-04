@@ -62,6 +62,37 @@ function makeActivity(overrides: {
 }
 
 describe("derivePendingApprovals", () => {
+  it.each([{}, { requestType: "unknown" }])(
+    "exposes legacy OpenCode approvals without a known request kind: %j",
+    (legacyPayload) => {
+      const requested = makeActivity({
+        kind: "approval.requested",
+        payload: { requestId: "per-legacy", detail: "*", ...legacyPayload },
+      });
+
+      expect(derivePendingApprovals([requested])).toEqual([
+        {
+          requestId: "per-legacy",
+          requestKind: "command",
+          createdAt: requested.createdAt,
+          detail: "*",
+        },
+      ]);
+    },
+  );
+
+  it.each(["tool_user_input", "auth_tokens_refresh"])(
+    "does not turn %s into an approval",
+    (requestType) => {
+      const activity = makeActivity({
+        kind: "approval.requested",
+        payload: { requestId: "not-an-approval", requestType },
+      });
+
+      expect(derivePendingApprovals([activity])).toEqual([]);
+    },
+  );
+
   it("tracks open approvals and removes resolved ones", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
@@ -90,7 +121,7 @@ describe("derivePendingApprovals", () => {
         kind: "approval.requested",
         summary: "File-change approval requested",
         tone: "approval",
-        payload: { requestId: "req-2", requestKind: "file-change" },
+        payload: { requestId: "req-2", requestType: "unknown" },
       }),
     ];
 
@@ -199,7 +230,7 @@ describe("derivePendingApprovals", () => {
         tone: "approval",
         payload: {
           requestId: "req-stale-1",
-          requestKind: "command",
+          requestType: "unknown",
         },
       }),
       makeActivity({
@@ -250,6 +281,26 @@ describe("derivePendingApprovals", () => {
 });
 
 describe("derivePendingUserInputs", () => {
+  it("keeps free-text questions without suggested answers", () => {
+    const question = {
+      id: "0",
+      header: "Question",
+      question: "What should it be named?",
+      options: [],
+      allowCustomAnswer: true,
+      multiSelect: false,
+    };
+    const activities = [
+      makeActivity({
+        id: "async-question",
+        kind: "user-input.requested",
+        summary: "User input requested",
+        payload: { requestId: "async-1", responseMode: "message", questions: [question] },
+      }),
+    ];
+    expect(derivePendingUserInputs(activities)[0]?.questions).toEqual([question]);
+  });
+
   it("preserves native choice values and the custom-answer restriction", () => {
     const question = {
       id: "interaction-result",
@@ -1555,6 +1606,26 @@ describe("deriveWorkLogEntries", () => {
 
     const [entry] = deriveWorkLogEntries(activities);
     expect(entry?.command).toBe("bash script.sh");
+    expect(entry?.rawCommand).toBeUndefined();
+  });
+
+  it("preserves serialized shell wrappers with non-matching boundary quotes", () => {
+    const command =
+      "/bin/zsh -lc 'git status\nsed -n '\"'1,20p' apps/web/src/components/DiffPanel.tsx\"";
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "command-tool-serialized-wrapper",
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          data: { item: { command } },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.command).toBe(command);
     expect(entry?.rawCommand).toBeUndefined();
   });
 

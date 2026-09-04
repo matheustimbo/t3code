@@ -18,6 +18,9 @@ npx --yes --package=https://github.com/matheustimbo/t3code/releases/latest/downl
 This starts the T3 Code server on your machine and opens the local web app. Use
 the same command with `--help` appended for the full CLI reference.
 
+If the web or desktop app shows "T3 Code could not load", check your connection and select
+**Reload** to try again.
+
 ## Open a project in the desktop app
 
 When the T3 Code desktop app is running on the same machine, open the current directory with:

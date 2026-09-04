@@ -42,7 +42,8 @@ import {
 import { withInstanceIdentity } from "./instanceIdentity.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import { readCursorUsageLimits } from "../providerUsageLimitReaders.ts";
-import { makeUnavailableUsageLimits, pollProviderUsageLimits } from "../providerUsageLimits.ts";
+import { pollProviderUsageLimits } from "../providerUsageLimitPolling.ts";
+import { makeUnavailableUsageLimits } from "../providerUsageLimits.ts";
 import {
   makeProviderMaintenanceCapabilities,
   type ProviderMaintenanceCapabilitiesResolver,
@@ -162,12 +163,9 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
               yield* publishSnapshot({
                 ...current,
                 usageLimits: makeUnavailableUsageLimits({
-                  source: "cursor-private-api",
-                  support: "experimental",
                   checkedAt: DateTime.formatIso(yield* DateTime.now),
-                  status: "disabled",
+                  reason: "unsupported",
                   message: "Experimental Cursor plan limits are disabled in provider settings.",
-                  dashboardUrl: "https://cursor.com/dashboard?tab=usage",
                 }),
               });
               return;

@@ -238,8 +238,8 @@ describe("mobile connection storage", () => {
     mocks.setPreferencesJson(
       JSON.stringify({
         baseFontSize: 17,
-        threadListSettledShelfExpanded: true,
-        threadListSnoozedShelfExpanded: true,
+        threadListV2SettledShelfExpanded: true,
+        threadListV2SnoozedShelfExpanded: true,
         threadListSettledShelfExpanded: "false",
         threadListSnoozedShelfExpanded: 1,
       }),

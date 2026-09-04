@@ -4,7 +4,9 @@ import { resolveContextStripLabelsCompact } from "./BranchToolbar.logic";
 import {
   COMPOSER_FOOTER_COMPACT_BREAKPOINT_PX,
   COMPOSER_FOOTER_WIDE_ACTIONS_COMPACT_BREAKPOINT_PX,
+  COMPOSER_RESTING_EXPANSION_MIN_PX,
   getRestingComposerImagePreviewCounts,
+  resolveComposerTimelineInset,
   resolveRestingComposerControlsLayout,
   resolveRestingComposerControlsNaturalWidth,
   shouldAnimateComposerRestingTransition,
@@ -71,6 +73,26 @@ describe("shouldUseCompactComposerPrimaryActions", () => {
         hasWideActions: true,
       }),
     ).toBe(false);
+  });
+});
+
+describe("resolveComposerTimelineInset", () => {
+  it("follows the expanded overlay height", () => {
+    expect(
+      resolveComposerTimelineInset({ currentInset: 160, overlayHeight: 140, isResting: false }),
+    ).toBe(140);
+  });
+
+  it("keeps a larger expanded reservation while resting", () => {
+    expect(
+      resolveComposerTimelineInset({ currentInset: 200, overlayHeight: 60, isResting: true }),
+    ).toBe(200);
+  });
+
+  it("reserves the empty expansion when no larger height is known", () => {
+    expect(
+      resolveComposerTimelineInset({ currentInset: 0, overlayHeight: 60, isResting: true }),
+    ).toBe(60 + COMPOSER_RESTING_EXPANSION_MIN_PX);
   });
 });
 
@@ -331,6 +353,33 @@ describe("resolveRestingComposerControlsLayout hysteresis", () => {
         previous: { hiddenCount: 1, visible: true },
       }),
     ).toEqual({ hiddenCount: 0, visible: true });
+  });
+
+  it("restores the blocks that fit when the full cluster has no slack", () => {
+    const partlyRestored = resolveRestingComposerControlsLayout({
+      ...base,
+      hostWidth: 357,
+      previous: { hiddenCount: 2, visible: true },
+    });
+    expect(partlyRestored).toEqual({ hiddenCount: 1, visible: true });
+    expect(
+      resolveRestingComposerControlsLayout({ ...base, hostWidth: 357, previous: partlyRestored }),
+    ).toEqual(partlyRestored);
+    expect(
+      resolveRestingComposerControlsLayout({ ...base, hostWidth: 358, previous: partlyRestored }),
+    ).toEqual({ hiddenCount: 0, visible: true });
+  });
+
+  it("requires slack before partially restoring a cluster", () => {
+    // One inline block, the picker, and overflow need 149 + 60 + 24 + 8 = 241px.
+    const previous = { hiddenCount: 2, visible: true };
+    expect(resolveRestingComposerControlsLayout({ ...base, hostWidth: 241, previous })).toEqual(
+      previous,
+    );
+    expect(resolveRestingComposerControlsLayout({ ...base, hostWidth: 242, previous })).toEqual({
+      hiddenCount: 1,
+      visible: true,
+    });
   });
 
   it("still resolves from scratch when there is no previous layout", () => {

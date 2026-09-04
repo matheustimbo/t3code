@@ -16,15 +16,8 @@ import {
   getProviderOptionCurrentValue,
   getProviderOptionDescriptors,
 } from "@t3tools/shared/model";
-import {
-  displayRemainingPercent,
-  formatCompactLimitReset,
-  formatCompactRemainingPercent,
-  providerUsageLimitDisplayGroups,
-  providerUsageLimitMostRestrictiveWindowId,
-  usageLimitsStatusLabel,
-} from "@t3tools/shared/providerUsageLimits";
 import type { ServerProviderUsageLimits } from "@t3tools/contracts";
+import { formatResetsIn, limitsNotice } from "@t3tools/shared/usageLimits";
 import { useNavigation, useRoute, type RouteProp } from "@react-navigation/native";
 import {
   createNativeStackNavigator,
@@ -188,12 +181,17 @@ function ProviderHeader(props: {
   readonly usageLimits?: ServerProviderUsageLimits | undefined;
   readonly onToggle: () => void;
 }) {
-  const usageLimitGroups = props.usageLimits
-    ? providerUsageLimitDisplayGroups(props.usageLimits)
-    : [];
-  const mostRestrictiveWindowId = props.usageLimits
-    ? providerUsageLimitMostRestrictiveWindowId(props.usageLimits)
-    : null;
+  const usageWindows = props.usageLimits?.windows ?? [];
+  const usageNotice = props.usageLimits ? limitsNotice(props.usageLimits) : null;
+  // The window closest to running out is the one that will stop a turn first.
+  const mostRestrictiveWindowId =
+    usageWindows.reduce<{ id: string; usedPercent: number } | null>(
+      (worst, window) =>
+        worst === null || window.usedPercent > worst.usedPercent
+          ? { id: window.id, usedPercent: window.usedPercent }
+          : worst,
+      null,
+    )?.id ?? null;
   const titleRow = (
     <View className="flex-row items-center gap-2">
       <ProviderIcon provider={props.driver} size={15} />
@@ -218,61 +216,35 @@ function ProviderHeader(props: {
   );
   const limitsRow = props.usageLimits ? (
     <View className="gap-1.5 pb-1 pl-6">
-      {usageLimitGroups.some((group) => group.label !== undefined || group.windows.length > 0) ? (
-        usageLimitGroups.map((group) => (
-          <View key={group.id} className="gap-1">
-            {group.label ? (
-              <View className="flex-row items-center gap-2">
-                <Text
-                  className="min-w-0 flex-1 text-3xs font-t3-medium text-foreground"
-                  numberOfLines={1}
-                >
-                  {group.label}
-                </Text>
-                {usageLimitsStatusLabel(group.limits) !== "Live" ? (
-                  <Text className="text-3xs text-foreground-muted">
-                    {usageLimitsStatusLabel(group.limits)}
-                  </Text>
+      {usageWindows.length > 0 ? (
+        <View className="flex-row flex-wrap gap-1.5">
+          {usageWindows.map((window) => {
+            const remaining = Math.round(100 - window.usedPercent);
+            const resetsIn = formatResetsIn(window, Date.now());
+            return (
+              <View
+                key={window.id}
+                className="flex-row items-center gap-1 rounded-lg border border-border-subtle bg-card px-2 py-1"
+                style={
+                  remaining === 0
+                    ? { borderColor: "#dc2626" }
+                    : window.id === mostRestrictiveWindowId
+                      ? { borderColor: "#d97706" }
+                      : undefined
+                }
+              >
+                <Text className="text-3xs text-foreground-muted">{window.label}</Text>
+                <Text className="text-3xs font-t3-bold text-foreground">{remaining}%</Text>
+                {resetsIn ? (
+                  <Text className="text-3xs text-foreground-muted">· {resetsIn}</Text>
                 ) : null}
               </View>
-            ) : null}
-            <View className="flex-row flex-wrap gap-1.5">
-              {group.windows.length > 0 ? (
-                group.windows.map((entry) => {
-                  const remaining = displayRemainingPercent(entry.limits, entry.window);
-                  return (
-                    <View
-                      key={entry.id}
-                      className="flex-row items-center gap-1 rounded-lg border border-border-subtle bg-card px-2 py-1"
-                      style={
-                        remaining === 0
-                          ? { borderColor: "#dc2626" }
-                          : entry.id === mostRestrictiveWindowId
-                            ? { borderColor: "#d97706" }
-                            : undefined
-                      }
-                    >
-                      <Text className="text-3xs text-foreground-muted">{entry.label}</Text>
-                      <Text className="text-3xs font-t3-bold text-foreground">
-                        {formatCompactRemainingPercent(remaining)}
-                      </Text>
-                      <Text className="text-3xs text-foreground-muted">
-                        · {formatCompactLimitReset(entry.window.resetsAt)}
-                      </Text>
-                    </View>
-                  );
-                })
-              ) : (
-                <Text className="text-3xs text-foreground-muted" numberOfLines={1}>
-                  {group.limits.message ?? "Plan limits unavailable"}
-                </Text>
-              )}
-            </View>
-          </View>
-        ))
+            );
+          })}
+        </View>
       ) : (
         <Text className="text-3xs text-foreground-muted">
-          {props.usageLimits.message ?? "Plan limits unavailable"}
+          {usageNotice ?? "Plan limits unavailable"}
         </Text>
       )}
     </View>
@@ -732,7 +704,7 @@ function useThreadSettingsCatalogItems(
         if (session.providerFilter !== null && group.providerKey !== session.providerFilter) {
           return [];
         }
-        const driver = group.models[0]?.providerDriver;
+        const driver = group.models[0]?.providerDriver ?? group.providerKey;
         const catalogModels = session.showLegacy
           ? group.models
           : group.models.filter((model) => !model.isLegacy || session.isDisplayed(model));
