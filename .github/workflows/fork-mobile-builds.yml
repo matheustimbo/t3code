@@ -135,13 +135,14 @@ jobs:
         env:
           CERTIFICATE_BASE64: ${{ secrets.IOS_DIST_CERT_BASE64 }}
           CERTIFICATE_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+          PROFILES_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILES_BASE64 }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
         shell: bash
         run: |
-          if [[ -n "$CERTIFICATE_BASE64" && -n "$CERTIFICATE_PASSWORD" && -n "$APPLE_API_KEY" &&
-                -n "$APPLE_API_KEY_ID" && -n "$APPLE_API_ISSUER" &&
+          if [[ -n "$CERTIFICATE_BASE64" && -n "$CERTIFICATE_PASSWORD" && -n "$PROFILES_BASE64" &&
+                -n "$APPLE_API_KEY" && -n "$APPLE_API_KEY_ID" && -n "$APPLE_API_ISSUER" &&
                 -n "$T3CODE_IOS_TEAM_ID" && -n "$T3CODE_IOS_BUNDLE_ID" ]]; then
             echo "enabled=true" >> "$GITHUB_OUTPUT"
           else
@@ -149,7 +150,7 @@ jobs:
             {
               echo "## TestFlight upload skipped"
               echo
-              echo "The unsigned Simulator build is still produced. To also archive and upload to internal TestFlight, configure repository variables \`IOS_TEAM_ID\` and \`IOS_BUNDLE_ID\`, and secrets \`IOS_DIST_CERT_BASE64\`, \`IOS_DIST_CERT_PASSWORD\`, \`APPLE_API_KEY\`, \`APPLE_API_KEY_ID\` and \`APPLE_API_ISSUER\`."
+              echo "The unsigned Simulator build is still produced. To also archive and upload to internal TestFlight, configure repository variables \`IOS_TEAM_ID\` and \`IOS_BUNDLE_ID\`, and secrets \`IOS_DIST_CERT_BASE64\`, \`IOS_DIST_CERT_PASSWORD\`, \`IOS_PROVISIONING_PROFILES_BASE64\`, \`APPLE_API_KEY\`, \`APPLE_API_KEY_ID\` and \`APPLE_API_ISSUER\`."
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
@@ -226,14 +227,16 @@ jobs:
             build/ios-simulator/Build/Products/Release-iphonesimulator/T3Code.app \
             ../../mobile-artifacts/t3code-fork-ios-simulator.zip
 
-      # Only the distribution certificate is imported. Xcode creates and renews
-      # the profiles for the app, the widget and the share extension itself via
-      # -allowProvisioningUpdates against the App Store Connect API key.
-      - name: Import distribution certificate
+      # Signing is fully explicit: the distribution certificate plus one App Store
+      # profile per target. Xcode's automatic provisioning is deliberately not
+      # used -- it signs archives with a *development* identity, which a runner
+      # has no certificate for.
+      - name: Import signing assets
         if: steps.signing.outputs.enabled == 'true'
         env:
           CERTIFICATE_BASE64: ${{ secrets.IOS_DIST_CERT_BASE64 }}
           CERTIFICATE_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+          PROFILES_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILES_BASE64 }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
         shell: bash
@@ -260,9 +263,22 @@ jobs:
             "$keychain"
           security list-keychains -d user -s "$keychain"
 
-          test -n "$(security find-identity -v -p codesigning "$keychain" | sed -n '1s/.*"\(.*\)".*/\1/p')"
+          identity="$(security find-identity -v -p codesigning "$keychain" | sed -n '1s/.*"\(.*\)".*/\1/p')"
+          test -n "$identity"
+          echo "signing identity: $identity"
 
-          # altool and xcodebuild both discover the key by ID in this directory.
+          profiles_dir="$HOME/Library/MobileDevice/Provisioning Profiles"
+          mkdir -p "$profiles_dir"
+          printf '%s' "$PROFILES_BASE64" | base64 -D > "$signing_dir/profiles.tar.gz"
+          tar -xzf "$signing_dir/profiles.tar.gz" -C "$signing_dir"
+          for profile in "$signing_dir"/*.mobileprovision; do
+            uuid="$(security cms -D -i "$profile" | plutil -extract UUID raw -)"
+            cp "$profile" "$profiles_dir/$uuid.mobileprovision"
+            echo "installed $(basename "$profile") as $uuid"
+          done
+          test "$(find "$profiles_dir" -name '*.mobileprovision' | wc -l | tr -d ' ')" -ge 3
+
+          # altool discovers the key by ID in this directory.
           mkdir -p "$HOME/.private_keys"
           printf '%s' "$APPLE_API_KEY" > "$HOME/.private_keys/AuthKey_${APPLE_API_KEY_ID}.p8"
 
@@ -275,20 +291,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          key_path="$HOME/.private_keys/AuthKey_${APPLE_API_KEY_ID}.p8"
 
+          # Archive unsigned, then let exportArchive sign every target with its
+          # own App Store profile. Signing during the archive would need a
+          # per-target PROVISIONING_PROFILE_SPECIFIER, which xcodebuild can only
+          # set globally -- the app, widget and share extension each need a
+          # different profile.
           xcodebuild \
             -workspace ios/T3Code.xcworkspace \
             -scheme T3Code \
             -configuration Release \
             -destination 'generic/platform=iOS' \
             -archivePath build/T3Code.xcarchive \
-            -allowProvisioningUpdates \
-            -authenticationKeyPath "$key_path" \
-            -authenticationKeyID "$APPLE_API_KEY_ID" \
-            -authenticationKeyIssuerID "$APPLE_API_ISSUER" \
-            DEVELOPMENT_TEAM="$T3CODE_IOS_TEAM_ID" \
-            CODE_SIGN_STYLE=Automatic \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
             CURRENT_PROJECT_VERSION="$IOS_BUILD_NUMBER" \
             archive
 
@@ -298,7 +314,6 @@ jobs:
           test "$actual_bundle_id" = "$T3CODE_IOS_BUNDLE_ID"
           # A stale build number is only rejected at upload, after the archive.
           test "$actual_build_number" = "$IOS_BUILD_NUMBER"
-          codesign --verify --deep --strict "$archived_app"
 
           cat > build/ExportOptions.plist <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
@@ -310,7 +325,18 @@ jobs:
               <key>teamID</key>
               <string>${T3CODE_IOS_TEAM_ID}</string>
               <key>signingStyle</key>
-              <string>automatic</string>
+              <string>manual</string>
+              <key>signingCertificate</key>
+              <string>iPhone Distribution</string>
+              <key>provisioningProfiles</key>
+              <dict>
+                <key>${T3CODE_IOS_BUNDLE_ID}</key>
+                <string>T3 Code Fork App Store</string>
+                <key>${T3CODE_IOS_BUNDLE_ID}.widgets</key>
+                <string>T3 Code Fork Widgets App Store</string>
+                <key>${T3CODE_IOS_BUNDLE_ID}.sharing</key>
+                <string>T3 Code Fork Sharing App Store</string>
+              </dict>
               <key>uploadSymbols</key>
               <true/>
               <key>destination</key>
@@ -323,11 +349,7 @@ jobs:
             -exportArchive \
             -archivePath build/T3Code.xcarchive \
             -exportPath build/export \
-            -exportOptionsPlist build/ExportOptions.plist \
-            -allowProvisioningUpdates \
-            -authenticationKeyPath "$key_path" \
-            -authenticationKeyID "$APPLE_API_KEY_ID" \
-            -authenticationKeyIssuerID "$APPLE_API_ISSUER"
+            -exportOptionsPlist build/ExportOptions.plist
 
           ipa="$(find build/export -maxdepth 1 -name '*.ipa' -print -quit)"
           test -n "$ipa"
