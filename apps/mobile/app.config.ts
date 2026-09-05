@@ -17,6 +17,9 @@ const easProjectId = repoEnv.T3CODE_EAS_PROJECT_ID?.trim();
 const easOwner = repoEnv.T3CODE_EAS_OWNER?.trim();
 
 const personalTeamBundleIdentifier = repoEnv.T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID?.trim();
+// Forks distributing from their own Apple team need a bundle identifier they own,
+// without the capability trade-offs T3CODE_IOS_PERSONAL_TEAM forces.
+const iosBundleIdentifierOverride = repoEnv.T3CODE_IOS_BUNDLE_ID?.trim() || undefined;
 const iosTeamId = repoEnv.T3CODE_IOS_TEAM_ID?.trim() || "ARK85ZXQ4Z";
 const androidPackageOverride = repoEnv.T3CODE_ANDROID_PACKAGE?.trim() || undefined;
 const IOS_BUNDLE_IDENTIFIER_PATTERN = /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/;
@@ -35,6 +38,15 @@ if (
 ) {
   throw new Error(
     "T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID must be a reverse-DNS identifier such as com.example.t3code when T3CODE_IOS_PERSONAL_TEAM=1.",
+  );
+}
+
+if (
+  iosBundleIdentifierOverride &&
+  !IOS_BUNDLE_IDENTIFIER_PATTERN.test(iosBundleIdentifierOverride)
+) {
+  throw new Error(
+    "T3CODE_IOS_BUNDLE_ID must be a reverse-DNS identifier such as com.example.t3code.",
   );
 }
 
@@ -122,7 +134,7 @@ function resolveAppVariant(value: string | undefined): AppVariant {
 const variant = VARIANT_CONFIG[APP_VARIANT];
 const iosBundleIdentifier = isIosPersonalTeamBuild
   ? personalTeamBundleIdentifier!
-  : variant.iosBundleIdentifier;
+  : (iosBundleIdentifierOverride ?? variant.iosBundleIdentifier);
 const androidPackage = androidPackageOverride ?? variant.androidPackage;
 
 const dmSansFonts = {

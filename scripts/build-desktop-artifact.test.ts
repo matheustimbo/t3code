@@ -28,6 +28,7 @@ import {
   MAC_FILE_EXCLUSIONS,
   InvalidMacPasskeyRpDomainError,
   InvalidMacPasskeyPublishableKeyError,
+  InvalidDesktopAppIdError,
   InvalidMockUpdateServerPortError,
   UnsupportedDesktopBuildArchitectureError,
   isMacPasskeySigningConfigurationError,
@@ -43,6 +44,7 @@ import {
   renderMacPasskeyEntitlements,
   resolveClerkPasskeyNativeArtifacts,
   resolveMacPasskeySigningConfiguration,
+  resolveDesktopAppId,
   resolveDesktopRuntimeDependencies,
   resolveMacStageDependencies,
   resolveFffNativeDependencies,
@@ -1607,6 +1609,39 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       }),
     ),
   );
+
+  it("signs fork builds under their own bundle identifier", () => {
+    assert.equal(resolveDesktopAppId({}), "com.t3tools.t3code");
+    assert.equal(resolveDesktopAppId({ T3CODE_DESKTOP_APP_ID: "  " }), "com.t3tools.t3code");
+    assert.equal(
+      resolveDesktopAppId({ T3CODE_DESKTOP_APP_ID: " com.example.t3code " }),
+      "com.example.t3code",
+    );
+
+    const configuration = resolveMacPasskeySigningConfiguration({
+      T3CODE_DESKTOP_APP_ID: "com.example.t3code",
+      T3CODE_APPLE_TEAM_ID: "ABC1234567",
+      T3CODE_MACOS_PROVISIONING_PROFILE: "/tmp/t3code.provisionprofile",
+      T3CODE_CLERK_PASSKEY_RP_DOMAINS: "clerk.example.com",
+    });
+
+    assert.equal(configuration.appId, "com.example.t3code");
+    assert.include(
+      renderMacPasskeyEntitlements(configuration),
+      "<string>ABC1234567.com.example.t3code</string>",
+    );
+
+    const error = (() => {
+      try {
+        resolveDesktopAppId({ T3CODE_DESKTOP_APP_ID: "not-reverse-dns" });
+      } catch (caught) {
+        return caught;
+      }
+      return assert.fail("Expected an invalid bundle identifier to be rejected.");
+    })();
+    assert.instanceOf(error, InvalidDesktopAppIdError);
+    assert.ok(isMacPasskeySigningConfigurationError(error));
+  });
 
   it("derives macOS passkey signing configuration from the Clerk publishable key", () => {
     const configuration = resolveMacPasskeySigningConfiguration({

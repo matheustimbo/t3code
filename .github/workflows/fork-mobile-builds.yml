@@ -115,35 +115,54 @@ jobs:
           retention-days: 30
 
   ios:
-    name: iOS simulator and optional iPhone IPA
+    name: iOS simulator and TestFlight build
     if: >-
       github.repository == 'matheustimbo/t3code' &&
       (github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || inputs.platform == 'ios')
     runs-on: macos-26
     timeout-minutes: 60
     env:
-      T3CODE_IOS_PERSONAL_TEAM: "1"
-      T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID: ${{ vars.IOS_BUNDLE_ID || 'com.matheustimbo.t3code.fork' }}
+      # No T3CODE_IOS_PERSONAL_TEAM here: the fork signs with a paid team, so the
+      # widget target, share extension, push and Sign in with Apple stay enabled.
+      T3CODE_IOS_BUNDLE_ID: ${{ vars.IOS_BUNDLE_ID }}
       T3CODE_IOS_TEAM_ID: ${{ vars.IOS_TEAM_ID }}
+      # TestFlight rejects a build number it has already seen, and app.config.ts
+      # sets no ios.buildNumber, so every prebuild would otherwise emit 1.
+      IOS_BUILD_NUMBER: ${{ github.run_number }}
     steps:
       - id: signing
-        name: Check iPhone signing configuration
+        name: Check TestFlight configuration
         env:
-          CERTIFICATE_BASE64: ${{ secrets.IOS_CERTIFICATE_BASE64 }}
-          PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
-          TEAM_ID: ${{ vars.IOS_TEAM_ID }}
+          CERTIFICATE_BASE64: ${{ secrets.IOS_DIST_CERT_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
         shell: bash
         run: |
-          if [[ -n "$CERTIFICATE_BASE64" && -n "$PROVISIONING_PROFILE_BASE64" && -n "$TEAM_ID" ]]; then
+          if [[ -n "$CERTIFICATE_BASE64" && -n "$CERTIFICATE_PASSWORD" && -n "$APPLE_API_KEY" &&
+                -n "$APPLE_API_KEY_ID" && -n "$APPLE_API_ISSUER" &&
+                -n "$T3CODE_IOS_TEAM_ID" && -n "$T3CODE_IOS_BUNDLE_ID" ]]; then
             echo "enabled=true" >> "$GITHUB_OUTPUT"
           else
             echo "enabled=false" >> "$GITHUB_OUTPUT"
             {
-              echo "## iPhone IPA skipped"
+              echo "## TestFlight upload skipped"
               echo
-              echo "The unsigned Simulator build is still produced. To also build an IPA for a registered iPhone, configure the repository variable \`IOS_TEAM_ID\` and secrets \`IOS_CERTIFICATE_BASE64\`, \`IOS_CERTIFICATE_PASSWORD\`, and \`IOS_PROVISIONING_PROFILE_BASE64\`."
+              echo "The unsigned Simulator build is still produced. To also archive and upload to internal TestFlight, configure repository variables \`IOS_TEAM_ID\` and \`IOS_BUNDLE_ID\`, and secrets \`IOS_DIST_CERT_BASE64\`, \`IOS_DIST_CERT_PASSWORD\`, \`APPLE_API_KEY\`, \`APPLE_API_KEY_ID\` and \`APPLE_API_ISSUER\`."
             } >> "$GITHUB_STEP_SUMMARY"
           fi
+
+      # An unset T3CODE_IOS_TEAM_ID is not an error in app.config.ts: it silently
+      # falls back to the upstream T3 Tools team, and signing then fails much
+      # later with an unrelated-looking message.
+      - name: Require an explicit Apple team
+        if: steps.signing.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$T3CODE_IOS_TEAM_ID"
+          test -n "$T3CODE_IOS_BUNDLE_ID"
 
       - name: Checkout fork
         uses: actions/checkout@v6
@@ -176,6 +195,18 @@ jobs:
           EXPO_NO_GIT_STATUS: "1"
         run: pnpm exec expo prebuild --clean --platform ios
 
+      # Belt and braces: the build settings below cover Info.plists that use
+      # $(CURRENT_PROJECT_VERSION), and this covers the ones Expo writes as a
+      # literal. App and extensions must carry the same CFBundleVersion.
+      - name: Stamp the build number
+        working-directory: apps/mobile
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r plist; do
+            /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $IOS_BUILD_NUMBER" "$plist" 2>/dev/null || true
+          done < <(find ios -name Info.plist -not -path "*/Pods/*")
+
       - name: Build iOS Simulator app
         working-directory: apps/mobile
         run: |
@@ -195,22 +226,24 @@ jobs:
             build/ios-simulator/Build/Products/Release-iphonesimulator/T3Code.app \
             ../../mobile-artifacts/t3code-fork-ios-simulator.zip
 
-      - name: Import iPhone signing assets
+      # Only the distribution certificate is imported. Xcode creates and renews
+      # the profiles for the app, the widget and the share extension itself via
+      # -allowProvisioningUpdates against the App Store Connect API key.
+      - name: Import distribution certificate
         if: steps.signing.outputs.enabled == 'true'
-        id: iphone-signing
         env:
-          CERTIFICATE_BASE64: ${{ secrets.IOS_CERTIFICATE_BASE64 }}
-          CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
-          PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+          CERTIFICATE_BASE64: ${{ secrets.IOS_DIST_CERT_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
         shell: bash
         run: |
           set -euo pipefail
           signing_dir="$RUNNER_TEMP/ios-signing"
           keychain="$RUNNER_TEMP/t3code-build.keychain-db"
           keychain_password="$(uuidgen)"
-          mkdir -p "$signing_dir" "$HOME/Library/MobileDevice/Provisioning Profiles"
+          mkdir -p "$signing_dir"
           printf '%s' "$CERTIFICATE_BASE64" | base64 -D > "$signing_dir/certificate.p12"
-          printf '%s' "$PROVISIONING_PROFILE_BASE64" | base64 -D > "$signing_dir/profile.mobileprovision"
 
           security create-keychain -p "$keychain_password" "$keychain"
           security set-keychain-settings -lut 21600 "$keychain"
@@ -222,58 +255,115 @@ jobs:
             -f pkcs12 \
             -k "$keychain"
           security set-key-partition-list \
-            -S apple-tool:,apple: \
+            -S apple-tool:,apple:,codesign: \
             -k "$keychain_password" \
             "$keychain"
           security list-keychains -d user -s "$keychain"
 
-          security cms -D -i "$signing_dir/profile.mobileprovision" > "$signing_dir/profile.plist"
-          profile_uuid="$(/usr/libexec/PlistBuddy -c 'Print UUID' "$signing_dir/profile.plist")"
-          profile_name="$(/usr/libexec/PlistBuddy -c 'Print Name' "$signing_dir/profile.plist")"
-          profile_team="$(/usr/libexec/PlistBuddy -c 'Print TeamIdentifier:0' "$signing_dir/profile.plist")"
-          profile_app_id="$(/usr/libexec/PlistBuddy -c 'Print Entitlements:application-identifier' "$signing_dir/profile.plist")"
-          profile_bundle_id="${profile_app_id#*.}"
+          test -n "$(security find-identity -v -p codesigning "$keychain" | sed -n '1s/.*"\(.*\)".*/\1/p')"
 
-          test "$profile_team" = "$T3CODE_IOS_TEAM_ID"
-          test "$profile_bundle_id" = "$T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID"
-          cp "$signing_dir/profile.mobileprovision" \
-            "$HOME/Library/MobileDevice/Provisioning Profiles/$profile_uuid.mobileprovision"
+          # altool and xcodebuild both discover the key by ID in this directory.
+          mkdir -p "$HOME/.private_keys"
+          printf '%s' "$APPLE_API_KEY" > "$HOME/.private_keys/AuthKey_${APPLE_API_KEY_ID}.p8"
 
-          identity="$(security find-identity -v -p codesigning "$keychain" | sed -n '1s/.*"\(.*\)".*/\1/p')"
-          test -n "$identity"
-          echo "identity=$identity" >> "$GITHUB_OUTPUT"
-          echo "profile-name=$profile_name" >> "$GITHUB_OUTPUT"
-
-      - name: Build signed iPhone IPA
+      - name: Archive and export for the App Store
         if: steps.signing.outputs.enabled == 'true'
         working-directory: apps/mobile
         env:
-          SIGNING_IDENTITY: ${{ steps.iphone-signing.outputs.identity }}
-          PROVISIONING_PROFILE_NAME: ${{ steps.iphone-signing.outputs.profile-name }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        shell: bash
         run: |
           set -euo pipefail
+          key_path="$HOME/.private_keys/AuthKey_${APPLE_API_KEY_ID}.p8"
+
           xcodebuild \
             -workspace ios/T3Code.xcworkspace \
             -scheme T3Code \
             -configuration Release \
             -destination 'generic/platform=iOS' \
             -archivePath build/T3Code.xcarchive \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$key_path" \
+            -authenticationKeyID "$APPLE_API_KEY_ID" \
+            -authenticationKeyIssuerID "$APPLE_API_ISSUER" \
             DEVELOPMENT_TEAM="$T3CODE_IOS_TEAM_ID" \
-            PRODUCT_BUNDLE_IDENTIFIER="$T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID" \
-            CODE_SIGN_STYLE=Manual \
-            CODE_SIGN_IDENTITY="$SIGNING_IDENTITY" \
-            PROVISIONING_PROFILE_SPECIFIER="$PROVISIONING_PROFILE_NAME" \
+            CODE_SIGN_STYLE=Automatic \
+            CURRENT_PROJECT_VERSION="$IOS_BUILD_NUMBER" \
             archive
 
-          codesign --verify --deep --strict \
-            build/T3Code.xcarchive/Products/Applications/T3Code.app
-          mkdir -p build/iphone/Payload ../../mobile-artifacts
-          ditto \
-            build/T3Code.xcarchive/Products/Applications/T3Code.app \
-            build/iphone/Payload/T3Code.app
-          ditto -c -k --sequesterRsrc --keepParent \
-            build/iphone/Payload \
-            ../../mobile-artifacts/t3code-fork-iphone.ipa
+          archived_app="build/T3Code.xcarchive/Products/Applications/T3Code.app"
+          actual_bundle_id="$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$archived_app/Info.plist")"
+          actual_build_number="$(/usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$archived_app/Info.plist")"
+          test "$actual_bundle_id" = "$T3CODE_IOS_BUNDLE_ID"
+          # A stale build number is only rejected at upload, after the archive.
+          test "$actual_build_number" = "$IOS_BUILD_NUMBER"
+          codesign --verify --deep --strict "$archived_app"
+
+          cat > build/ExportOptions.plist <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+            <dict>
+              <key>method</key>
+              <string>app-store-connect</string>
+              <key>teamID</key>
+              <string>${T3CODE_IOS_TEAM_ID}</string>
+              <key>signingStyle</key>
+              <string>automatic</string>
+              <key>uploadSymbols</key>
+              <true/>
+              <key>destination</key>
+              <string>export</string>
+            </dict>
+          </plist>
+          EOF
+
+          xcodebuild \
+            -exportArchive \
+            -archivePath build/T3Code.xcarchive \
+            -exportPath build/export \
+            -exportOptionsPlist build/ExportOptions.plist \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$key_path" \
+            -authenticationKeyID "$APPLE_API_KEY_ID" \
+            -authenticationKeyIssuerID "$APPLE_API_ISSUER"
+
+          ipa="$(find build/export -maxdepth 1 -name '*.ipa' -print -quit)"
+          test -n "$ipa"
+          mkdir -p ../../mobile-artifacts
+          cp "$ipa" ../../mobile-artifacts/t3code-fork-ios.ipa
+
+      - name: Upload to internal TestFlight
+        if: steps.signing.outputs.enabled == 'true'
+        env:
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ipa="mobile-artifacts/t3code-fork-ios.ipa"
+
+          # Validate first: upload rejections surface here with a usable message
+          # instead of as a silent processing failure in App Store Connect.
+          xcrun altool --validate-app \
+            --file "$ipa" \
+            --type ios \
+            --apiKey "$APPLE_API_KEY_ID" \
+            --apiIssuer "$APPLE_API_ISSUER"
+
+          xcrun altool --upload-app \
+            --file "$ipa" \
+            --type ios \
+            --apiKey "$APPLE_API_KEY_ID" \
+            --apiIssuer "$APPLE_API_ISSUER"
+
+          {
+            echo "## TestFlight"
+            echo
+            echo "Uploaded \`$T3CODE_IOS_BUNDLE_ID\` build \`$IOS_BUILD_NUMBER\`."
+            echo "It reaches the internal testing group once App Store Connect finishes processing."
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload iOS Simulator app
         uses: actions/upload-artifact@v7
@@ -284,12 +374,12 @@ jobs:
           compression-level: 0
           retention-days: 30
 
-      - name: Upload signed iPhone IPA
+      - name: Upload App Store IPA
         if: steps.signing.outputs.enabled == 'true'
         uses: actions/upload-artifact@v7
         with:
-          name: t3code-fork-iphone
-          path: mobile-artifacts/t3code-fork-iphone.ipa
+          name: t3code-fork-ios
+          path: mobile-artifacts/t3code-fork-ios.ipa
           if-no-files-found: error
           compression-level: 0
           retention-days: 30

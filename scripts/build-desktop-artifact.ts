@@ -53,7 +53,8 @@ import { Command, Flag } from "effect/unstable/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 const LINUX_ICON_SIZES = [16, 22, 24, 32, 48, 64, 128, 256, 512] as const;
-const DESKTOP_APP_ID = "com.t3tools.t3code";
+const DEFAULT_DESKTOP_APP_ID = "com.t3tools.t3code";
+const DESKTOP_APP_ID_PATTERN = /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/u;
 const APPLE_TEAM_ID_PATTERN = /^[A-Z0-9]{10}$/u;
 
 const BuildPlatform = Schema.Literals(["mac", "linux", "win"]);
@@ -1143,6 +1144,17 @@ export class InvalidAppleTeamIdError extends Schema.TaggedErrorClass<InvalidAppl
   }
 }
 
+export class InvalidDesktopAppIdError extends Schema.TaggedErrorClass<InvalidDesktopAppIdError>()(
+  "InvalidDesktopAppIdError",
+  {
+    appId: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `T3CODE_DESKTOP_APP_ID '${this.appId}' must be a reverse-DNS bundle identifier.`;
+  }
+}
+
 export class MissingMacPasskeyProvisioningProfileError extends Schema.TaggedErrorClass<MissingMacPasskeyProvisioningProfileError>()(
   "MissingMacPasskeyProvisioningProfileError",
   {},
@@ -1184,6 +1196,7 @@ export class MissingMacPasskeyRpDomainError extends Schema.TaggedErrorClass<Miss
 export const MacPasskeySigningConfigurationError = Schema.Union([
   InvalidMacPasskeyRpDomainError,
   InvalidAppleTeamIdError,
+  InvalidDesktopAppIdError,
   MissingMacPasskeyProvisioningProfileError,
   MissingMacPasskeyDomainConfigurationError,
   InvalidMacPasskeyPublishableKeyError,
@@ -1233,9 +1246,26 @@ function normalizePasskeyRpDomain(value: string): string {
   return parsed.hostname;
 }
 
+/**
+ * Bundle identifier the desktop artifact is built and signed under. Forks set
+ * `T3CODE_DESKTOP_APP_ID` to an identifier registered in their own Apple team,
+ * which is what the Developer ID provisioning profile has to match.
+ */
+export function resolveDesktopAppId(env: Readonly<Record<string, string | undefined>>): string {
+  const configured = env.T3CODE_DESKTOP_APP_ID?.trim();
+  if (!configured) {
+    return DEFAULT_DESKTOP_APP_ID;
+  }
+  if (!DESKTOP_APP_ID_PATTERN.test(configured)) {
+    throw new InvalidDesktopAppIdError({ appId: configured });
+  }
+  return configured;
+}
+
 export function resolveMacPasskeySigningConfiguration(
   env: Readonly<Record<string, string | undefined>>,
 ): MacPasskeySigningConfiguration {
+  const appId = resolveDesktopAppId(env);
   const teamId = env.T3CODE_APPLE_TEAM_ID?.trim().toUpperCase() ?? "";
   if (!APPLE_TEAM_ID_PATTERN.test(teamId)) {
     throw new InvalidAppleTeamIdError({ teamId });
@@ -1270,7 +1300,7 @@ export function resolveMacPasskeySigningConfiguration(
   }
 
   return {
-    appId: DESKTOP_APP_ID,
+    appId,
     teamId,
     rpDomains: uniqueRpDomains,
     provisioningProfilePath,
@@ -2587,9 +2617,10 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   wslRuntimeBundled = false,
   macAdhocSigned = false,
   arch?: typeof BuildArch.Type,
+  appId: string = DEFAULT_DESKTOP_APP_ID,
 ) {
   const buildConfig: Record<string, unknown> = {
-    appId: DESKTOP_APP_ID,
+    appId,
     productName: resolveDesktopProductName(version),
     artifactName: "T3-Code-${version}-${arch}.${ext}",
     electronLanguages: [...DESKTOP_ELECTRON_LANGUAGES],
@@ -3604,6 +3635,11 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   const stageProdResourcesDir = path.join(stageAppDir, "apps/desktop/prod-resources");
   yield* fs.copy(stageResourcesDir, stageProdResourcesDir);
 
+  const desktopAppId = yield* Effect.try({
+    try: () => resolveDesktopAppId(loadRepoEnv({ repoRoot })),
+    catch: MacPasskeySigningConfigurationResolutionError.fromCause,
+  });
+
   const configuredMacPasskeySigning =
     options.platform === "mac" && options.signed
       ? yield* Effect.try({
@@ -3690,6 +3726,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       bundlesWslRuntime({ arch: options.arch, prebuildPath: options.wslPrebuild }),
       options.adhocSign,
       options.arch,
+      desktopAppId,
     ),
     dependencies: stageDependencies,
     devDependencies: {
