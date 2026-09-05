@@ -228,27 +228,20 @@ instance in T3 Code:
 ```text
 ANTHROPIC_BASE_URL             http://127.0.0.1:8317
 ANTHROPIC_AUTH_TOKEN           your-proxy-api-key             Sensitive
-CLIPROXYAPI_MANAGEMENT_KEY     your-management-key            Sensitive
 ```
 
-Enable **Experimental plan limits** in the same provider settings. T3 Code uses
-`ANTHROPIC_BASE_URL` to find the CLIProxyAPI management API, lists every Claude OAuth credential,
-and shows each account's official reset windows separately. It does not add allowance percentages
-across the pool.
+To also see the plan limits of every Claude account the hub pools, add the hub itself as a usage
+source: **Settings → Providers → Usage providers → Add hub**, with the hub's URL and its management
+key. Each pooled account then appears on **Usage → Limits** under the hub's name, with its own reset
+windows. Percentages are never added across the pool.
 
-If the management API uses another origin or a reverse-proxy path, also set:
+The management API must be enabled in CLIProxyAPI and reachable from the environment running the T3
+Code server. Treat the management key as a sensitive secret: it authorizes account inventory and
+authenticated upstream calls. T3 Code keeps it in the environment's secret store and never sends it
+to clients.
 
-```text
-CLIPROXYAPI_MANAGEMENT_URL     https://proxy.example.com
-```
-
-The management API must be enabled in CLIProxyAPI. Remote T3 environments also require CLIProxyAPI
-to allow management access from that environment. Treat the management key as a sensitive secret:
-it authorizes account inventory and authenticated upstream calls.
-
-The same account-pool integration also supports T3 Code's Codex and Grok providers. See
-[Review usage and plan limits](./usage.md#cliproxyapi-account-pools) for the shared setup and the
-provider types that CLIProxyAPI does not expose to T3 Code.
+See [Review usage and plan limits](./usage.md#cliproxyapi-account-pools) for the providers this
+covers and the ones it does not.
 
 ## I Want Different Claude Settings, Not A Different Account
 

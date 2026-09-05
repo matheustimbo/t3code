@@ -32,14 +32,16 @@ import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
 import type * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { HttpClient, type HttpClientError, HttpClientResponse } from "effect/unstable/http";
+import { HttpClient, type HttpClientError } from "effect/unstable/http";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
-import { cliproxyStatusToAccounts, decodeCliproxyQuotaStatus } from "./cliproxyUsageLimits.ts";
+import { CliproxyUpstreamError } from "./cliproxyManagementApi.ts";
+import { readCliproxyAccounts } from "./cliproxyUsageLimits.ts";
 
-const FETCH_TIMEOUT = "10 seconds";
-const QUOTA_STATUS_PATH = "/v0/management/quota-scheduler/status";
+// One read fans out to every pooled account, so it needs more room than a
+// single request would.
+const FETCH_TIMEOUT = "30 seconds";
 
 export class UsageLimitSources extends Context.Service<
   UsageLimitSources,
@@ -57,11 +59,18 @@ export class UsageLimitSources extends Context.Service<
  * (which can carry the request URL and response body) goes to the log.
  */
 function readFailureMessage(
-  error: HttpClientError.HttpClientError | Schema.SchemaError | Cause.TimeoutError | InvalidUrl,
+  error:
+    | HttpClientError.HttpClientError
+    | Schema.SchemaError
+    | Cause.TimeoutError
+    | CliproxyUpstreamError
+    | InvalidUrl,
 ): string {
   switch (error._tag) {
     case "InvalidUrl":
       return "The hub URL is not valid.";
+    case "CliproxyUpstreamError":
+      return `An account the hub pools was refused upstream (HTTP ${error.status}).`;
     case "TimeoutError":
       return "The hub did not answer in time.";
     case "SchemaError":
@@ -101,22 +110,24 @@ export const make = Effect.gen(function* () {
     id: UsageLimitSourceId,
     config: UsageLimitSourceConfig,
   ) {
-    const checkedAt = DateTime.formatIso(yield* DateTime.now);
+    const readAt = yield* DateTime.now;
+    const checkedAt = DateTime.formatIso(readAt);
     const base = { id, kind: config.kind, label: sourceLabel(id, config), checkedAt } as const;
     if (config.managementKey.length === 0) {
       return { ...base, accounts: [], error: "No management key configured." };
     }
     const accounts = yield* Effect.try({
-      try: () => new URL(QUOTA_STATUS_PATH, config.url).toString(),
+      try: () => new URL(config.url).toString(),
       catch: (cause) => new InvalidUrl({ url: config.url, cause }),
     }).pipe(
-      Effect.flatMap((url) =>
-        httpClient.get(url, { headers: { Authorization: `Bearer ${config.managementKey}` } }),
+      Effect.flatMap(() =>
+        readCliproxyAccounts({
+          config,
+          httpClient,
+          checkedAt,
+          nowMs: DateTime.toEpochMillis(readAt),
+        }),
       ),
-      Effect.flatMap(HttpClientResponse.filterStatusOk),
-      Effect.flatMap((response) => response.json),
-      Effect.flatMap(decodeCliproxyQuotaStatus),
-      Effect.map((status) => cliproxyStatusToAccounts(status, checkedAt)),
       Effect.timeout(FETCH_TIMEOUT),
       Effect.result,
     );

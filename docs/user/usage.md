@@ -28,33 +28,37 @@ temporarily show **Unavailable** until the integration is updated.
 
 ### CLIProxyAPI account pools
 
-T3 Code can enumerate and read the independent OAuth accounts managed by CLIProxyAPI for **Claude**,
-**Codex**, and **Grok/xAI**. Add these variables to each matching provider instance:
+A CLIProxyAPI hub pools several OAuth accounts behind one endpoint. T3 Code can show each pooled
+account's plan limits beside your local ones.
+
+Add the hub under **Settings → Providers → Usage providers → Add hub**, giving its URL and
+management key. Every **Claude** and **Codex** account the hub pools then appears on
+**Usage → Limits** under the hub's name, badged _via CLIProxyAPI_ so a pooled account is not
+mistaken for the local login. Each account keeps its own reset windows; percentages are never added
+across the pool. An account whose credential has expired is left out rather than shown at zero.
+
+The hub reports no usage percentages itself, so T3 Code asks each provider through the account's own
+credential. That means the numbers match what the provider would tell that account directly.
+
+**Grok/xAI** pooled accounts work differently: add these variables to the Grok provider instance
+instead, and enable **Experimental plan limits** in the same settings.
 
 ```text
 CLIPROXYAPI_MANAGEMENT_URL     http://127.0.0.1:8317
 CLIPROXYAPI_MANAGEMENT_KEY     your-management-key            Sensitive
 ```
 
-Claude and Grok still require **Experimental plan limits** to be enabled. Codex switches from its
-single app-server reading to the CLIProxyAPI account pool whenever the management key is configured.
-Each credential is shown separately; percentages are never added across the pool. Disabled and
-failed credentials remain visible with their own status. Claude accounts also show the plan
-reported by the account profile and include modern model-scoped weekly windows such as Fable.
-
 The management URL can be omitted when the provider already has a CLIProxyAPI base URL in
-`ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, `CODEX_BASE_URL`, `XAI_BASE_URL`, or `GROK_BASE_URL`.
-Setting it explicitly is recommended, especially behind a reverse proxy. The management API must be
-enabled and reachable from the T3 Code server.
+`XAI_BASE_URL` or `GROK_BASE_URL`. Setting it explicitly is recommended, especially behind a reverse
+proxy.
 
-CLIProxyAPI does not currently expose equivalent quota adapters for T3 Code's **Cursor** or
-**OpenCode** providers, so those two continue to use their native readers. CLIProxyAPI's Kimi and
-Antigravity account types are not shown because T3 Code has no corresponding built-in provider.
+**Cursor** and **OpenCode** read their limits natively and do not go through a hub. CLIProxyAPI's
+Kimi and Antigravity account types are not shown because T3 Code has no corresponding provider.
 
-The management key authorizes account inventory and authenticated upstream calls. Keep it sensitive;
-T3 Code uses it only on the server and never includes it in usage snapshots sent to clients. For
-Grok paid accounts whose billing endpoints do not return quota windows, T3 Code reports the account
-as unavailable instead of sending a model request as a health probe.
+The management API must be enabled in CLIProxyAPI and reachable from the environment running the T3
+Code server. The management key authorizes account inventory and authenticated upstream calls. Keep
+it sensitive: T3 Code stores it in the environment's secret store, uses it only on the server, and
+never includes it in usage snapshots sent to clients.
 
 T3 Code refreshes limits only while provider status is in demand and respects the environment's
 background-activity policy. A failed refresh keeps the last successful values marked **Out of
