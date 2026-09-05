@@ -216,7 +216,10 @@ jobs:
           # The oldest upstream commit `fork-main` still lacks is how long the
           # fork has actually been stuck. A successful sync empties this range,
           # so anything waiting here arrived after the last clean integration.
-          oldest="$(git log --reverse --format=%cI HEAD..upstream/main | head -1)"
+          # `tail`, not `--reverse | head`: `head` closes the pipe on its first
+          # line, and under `pipefail` that SIGPIPE fails the step. Log order is
+          # newest first, so the last line is the oldest commit either way.
+          oldest="$(git log --format=%cI HEAD..upstream/main | tail -1)"
           if [[ -z "$oldest" ]]; then
             exit 0
           fi
