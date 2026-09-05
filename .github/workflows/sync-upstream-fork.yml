@@ -16,10 +16,11 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  # How long a conflicted sync may sit before this job starts reporting red.
-  # Conflicts need a human, and while one is open no fork release can ship, so
-  # staying green forever hid a stalled pipeline for days.
-  MAX_BLOCKED_HOURS: "12"
+  # How long upstream work may sit unintegrated before this job reports red.
+  # Measured from the oldest upstream commit still missing from `fork-main`,
+  # not from the age of the sync pull request: that request outlives the
+  # conflict it described, so a stale one made every later sync start red.
+  MAX_BLOCKED_HOURS: "24"
 
 jobs:
   sync:
@@ -60,8 +61,10 @@ jobs:
             echo "changed=false" >> "$GITHUB_OUTPUT"
             echo "conflict=false" >> "$GITHUB_OUTPUT"
             echo "mobile_changed=false" >> "$GITHUB_OUTPUT"
+            echo "caught_up=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          echo "caught_up=false" >> "$GITHUB_OUTPUT"
 
           mobile_changed=false
           if ! git diff --quiet HEAD...upstream/main -- \
@@ -182,29 +185,45 @@ jobs:
             --title "chore: sync upstream main" \
             --body-file sync-pr-body.md
 
-      - name: Escalate a sync that has been blocked too long
-        if: steps.integrate.outputs.conflict == 'true'
+      - name: Close a sync pull request that has nothing left to say
+        if: steps.integrate.outputs.caught_up == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          created="$(
+          # `fork-main` contains upstream, so whatever the request described was
+          # resolved, here or by hand. Leaving it open ages it into a false alarm.
+          existing="$(
             gh pr list \
               --repo "$GITHUB_REPOSITORY" \
               --base fork-main \
               --head main \
               --state open \
-              --json createdAt \
-              --jq '.[0].createdAt // empty'
+              --json number \
+              --jq '.[0].number // empty'
           )"
-          if [[ -z "$created" ]]; then
+          if [[ -n "$existing" ]]; then
+            gh pr close "$existing" --repo "$GITHUB_REPOSITORY" \
+              --comment "fork-main now contains upstream main; closing automatically."
+          fi
+
+      - name: Escalate a sync that has been blocked too long
+        if: steps.integrate.outputs.conflict == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The oldest upstream commit `fork-main` still lacks is how long the
+          # fork has actually been stuck. A successful sync empties this range,
+          # so anything waiting here arrived after the last clean integration.
+          oldest="$(git log --reverse --format=%cI HEAD..upstream/main | head -1)"
+          if [[ -z "$oldest" ]]; then
             exit 0
           fi
 
-          hours=$(( ( $(date -u +%s) - $(date -u -d "$created" +%s) ) / 3600 ))
+          hours=$(( ( $(date -u +%s) - $(date -u -d "$oldest" +%s) ) / 3600 ))
           if (( hours >= MAX_BLOCKED_HOURS )); then
-            echo "::error::Upstream sync has been conflicted for ${hours}h. No fork release has shipped since then; resolve the open sync pull request."
+            echo "::error::Upstream commits have been waiting ${hours}h to integrate. No fork release carries them; resolve the open sync pull request."
             exit 1
           fi
-          echo "Sync conflicted for ${hours}h; this job turns red at ${MAX_BLOCKED_HOURS}h."
+          echo "Oldest unintegrated upstream commit is ${hours}h old; this job turns red at ${MAX_BLOCKED_HOURS}h."

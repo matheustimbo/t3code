@@ -1,4 +1,4 @@
-import { latestForkServerCommand } from "@t3tools/shared/distribution";
+import { forkServerCommand, latestForkServerCommand } from "@t3tools/shared/distribution";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
@@ -83,7 +83,7 @@ export function formatServiceStatus(
       `  Unit: ${status.unitPath}`,
       `  Logs: ${status.logPath}`,
       ...problems,
-      `  Next: Use \`npx t3@${installedVersion} service update\` to repair it, or pass \`--allow-downgrade\` explicitly.`,
+      `  Next: Use \`${forkServerCommand(installedVersion, "service update")}\` to repair it, or pass \`--allow-downgrade\` explicitly.`,
     ].join("\n");
   }
   return [
@@ -92,7 +92,9 @@ export function formatServiceStatus(
     `  Unit: ${status.unitPath}`,
     `  Logs: ${status.logPath}`,
     ...problems,
-    ...(status.current ? [] : [`  Next: Run \`${latestForkServerCommand("service update")}\`.`]),
+    ...(status.current
+      ? []
+      : [`  Next: Run \`${forkServerCommand(cliVersion, "service update")}\`.`]),
   ].join("\n");
 }
 
