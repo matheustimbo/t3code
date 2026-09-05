@@ -48,16 +48,6 @@ export function resolveDesktopUpdateButtonAction(
   return "none";
 }
 
-export function shouldShowDesktopUpdateButton(state: DesktopUpdateState | null): boolean {
-  if (!state || !state.enabled) {
-    return false;
-  }
-  if (state.status === "downloading") {
-    return true;
-  }
-  return resolveDesktopUpdateButtonAction(state) !== "none";
-}
-
 export function shouldShowDesktopUpdateReleaseNotes(
   state: Pick<DesktopUpdateState, "releaseNotes">,
 ): boolean {

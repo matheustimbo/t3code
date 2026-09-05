@@ -49,6 +49,7 @@ import { pollProviderUsageLimits } from "../providerUsageLimitPolling.ts";
 import { makeUnavailableUsageLimits } from "../providerUsageLimits.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
+  makeCachedProviderMaintenanceResolution,
   makePackageManagedProviderMaintenanceResolver,
   normalizeCommandPath,
   resolveProviderMaintenanceCapabilitiesEffect,
@@ -73,11 +74,8 @@ function isOpenCodeNativeCommandPath(commandPath: string): boolean {
 const UPDATE = makePackageManagedProviderMaintenanceResolver({
   provider: DRIVER_KIND,
   npmPackageName: "opencode-ai",
-  homebrewFormula: "anomalyco/tap/opencode",
   nativeUpdate: {
-    executable: "opencode",
     args: ["upgrade"],
-    lockKey: "opencode-native",
     isCommandPath: isOpenCodeNativeCommandPath,
   },
 });
@@ -104,6 +102,9 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
   defaultConfig: (): OpenCodeSettings => decodeOpenCodeSettings({}),
   create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
     Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const pathService = yield* Path.Path;
       const openCodeRuntime = yield* OpenCodeRuntime;
       const serverConfig = yield* ServerConfig;
       const httpClient = yield* HttpClient.HttpClient;
@@ -122,10 +123,16 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
         continuationGroupKey: continuationIdentity.continuationKey,
       });
       const effectiveConfig = { ...config, enabled } satisfies OpenCodeSettings;
-      const maintenanceCapabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
-        binaryPath: effectiveConfig.binaryPath,
-        env: processEnv,
-      });
+      const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
+        resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
+          binaryPath: effectiveConfig.binaryPath,
+          env: processEnv,
+        }).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, pathService),
+        ),
+      );
 
       const adapter = yield* makeOpenCodeAdapter(effectiveConfig, {
         instanceId,
@@ -199,7 +206,7 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
       const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<OpenCodeSettings>>(
         {
-          maintenanceCapabilities,
+          resolveMaintenance,
           getSettings: snapshotSettings.getSettings,
           streamSettings: snapshotSettings.streamSettings,
           haveSettingsChanged: haveProviderSnapshotSettingsChanged,
@@ -216,6 +223,7 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
             backgroundPolicy,
           }) =>
             Effect.gen(function* () {
+              const maintenanceCapabilities = yield* resolveMaintenance();
               const enrichedSnapshot = yield* enrichProviderSnapshotWithVersionAdvisory(
                 snapshot,
                 maintenanceCapabilities,
