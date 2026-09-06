@@ -7,6 +7,9 @@ const isGetAccountResponse = Schema.is(CodexSchema.V2GetAccountResponse);
 const isThreadReadResponse = Schema.is(CodexSchema.V2ThreadReadResponse);
 const isThreadResumeResponse = Schema.is(CodexSchema.V2ThreadResumeResponse);
 const isThreadRollbackResponse = Schema.is(CodexSchema.V2ThreadRollbackResponse);
+const isThreadForkResponse = Schema.is(CodexSchema.V2ThreadForkResponse);
+const isTurnCompletedNotification = Schema.is(CodexSchema.V2TurnCompletedNotification);
+const decodeThreadResumeResponse = Schema.decodeUnknownSync(CodexSchema.V2ThreadResumeResponse);
 
 it("keeps async questions in live notifications and thread history", () => {
   const item = {
@@ -139,6 +142,86 @@ it("accepts Codex rate limit errors for thread responses", () => {
     true,
   );
   assert.equal(isThreadRollbackResponse({ thread: failedThread }), true);
+});
+
+it("accepts Codex misalignment policy errors for historical and live turns", () => {
+  const failedTurn = {
+    error: {
+      codexErrorInfo: "misalignmentPolicyViolation",
+      message: "safety systems blocked request",
+      misalignment: null,
+    },
+    id: "turn-1",
+    items: [],
+    status: "failed",
+  };
+  const failedThread = {
+    cliVersion: "0.153.0",
+    createdAt: 0,
+    cwd: "/tmp/project",
+    ephemeral: false,
+    id: "thread-1",
+    modelProvider: "openai",
+    preview: "",
+    sessionId: "session-1",
+    source: "cli",
+    status: { type: "idle" },
+    turns: [failedTurn],
+    updatedAt: 0,
+  };
+  const resumeLikeResponse = {
+    approvalPolicy: "never",
+    approvalsReviewer: "user",
+    cwd: "/tmp/project",
+    model: "gpt-5.6-sol",
+    modelProvider: "openai",
+    sandbox: { type: "dangerFullAccess" },
+    thread: failedThread,
+  };
+  const forkLikeResponse = {
+    ...resumeLikeResponse,
+    thread: {
+      ...failedThread,
+      forkedFromId: failedThread.id,
+      id: "fork-thread-1",
+      sessionId: "fork-session-1",
+    },
+  };
+
+  assert.equal(isThreadReadResponse({ thread: failedThread }), true);
+  assert.equal(isThreadResumeResponse(resumeLikeResponse), true);
+  assert.equal(isThreadRollbackResponse({ thread: failedThread }), true);
+  assert.equal(isThreadForkResponse(forkLikeResponse), true);
+  const decodedResume = decodeThreadResumeResponse(resumeLikeResponse);
+  assert.equal(
+    decodedResume.thread.turns[0]?.error?.codexErrorInfo,
+    "misalignmentPolicyViolation",
+  );
+  assert.equal(
+    isTurnCompletedNotification({
+      threadId: "thread-1",
+      turn: failedTurn,
+    }),
+    true,
+  );
+
+  const malformedResponse = {
+    ...resumeLikeResponse,
+    thread: {
+      ...failedThread,
+      turns: [
+        {
+          ...failedTurn,
+          error: {
+            ...failedTurn.error,
+            codexErrorInfo: "misalignment_policy_violation",
+          },
+        },
+      ],
+    },
+  };
+  assert.equal(isThreadResumeResponse(malformedResponse), false);
+  assert.throws(() => decodeThreadResumeResponse(malformedResponse));
 });
 
 it("accepts Codex 0.150 account plan values", () => {
