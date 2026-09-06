@@ -19,6 +19,7 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import * as TestClock from "effect/testing/TestClock";
 
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import {
@@ -132,6 +133,7 @@ type LoaderResponse = Option.Option<OrchestrationThreadDetailSnapshot>;
 
 const makeHarness = Effect.fn("TestThreadPagination.makeHarness")(function* (options?: {
   readonly paginationCapability?: boolean;
+  readonly completionMarkerCapability?: boolean;
   readonly initialResponse?: LoaderResponse;
   /** Cached snapshot returned by the cache store (simulates a warm cache). */
   readonly cached?: OrchestrationThreadDetailSnapshot;
@@ -155,6 +157,7 @@ const makeHarness = Effect.fn("TestThreadPagination.makeHarness")(function* (opt
     client,
     initialConfig: Effect.succeed({
       threadSnapshotPagination: options?.paginationCapability !== false,
+      threadResumeCompletionMarker: options?.completionMarkerCapability === true,
     } as never),
     subscribeServerConfig: (input) => client.subscribeServerConfig(input),
     ready: Effect.void,
@@ -300,6 +303,47 @@ describe("thread pagination state", () => {
       const subscribeInput = yield* Ref.get(harness.lastSubscribeInput);
       expect(subscribeInput?.turnLimit).toBe(INITIAL_THREAD_USER_TURN_LIMIT);
     }),
+  );
+
+  it.effect("settles a loaded thread when the completion marker never arrives", () =>
+    Effect.gen(function* () {
+      // A marker that is delayed or lost must not pin the thread to
+      // "synchronizing" forever: the history is already on screen, and nothing
+      // else clears the wait while the socket stays healthy.
+      const harness = yield* makeHarness({
+        completionMarkerCapability: true,
+        initialResponse: Option.some(WINDOWED_SNAPSHOT),
+      });
+      const loaded = yield* harness.awaitState((value) => Option.isSome(value.data));
+      expect(loaded.status).toBe("synchronizing");
+      yield* TestClock.adjust("9 seconds");
+      const settled = yield* harness.awaitState((value) => value.status === "live");
+      expect(settled.status).toBe("live");
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("lets the marker win and leaves the expired deadline inert", () =>
+    Effect.gen(function* () {
+      // The marker stays the primary signal: once it settles the thread, the
+      // deadline that was already ticking must not fire a second transition
+      // or reopen the wait. threads-atoms.test.ts pins the same live ->
+      // synchronizing -> live shape but runs on a real clock, so it cannot
+      // observe what the deadline does after it expires.
+      const harness = yield* makeHarness({
+        completionMarkerCapability: true,
+        initialResponse: Option.some(WINDOWED_SNAPSHOT),
+      });
+      const loaded = yield* harness.awaitState((value) => Option.isSome(value.data));
+      expect(loaded.status).toBe("synchronizing");
+      yield* Queue.offer(harness.inputs, { kind: "synchronized" });
+      const synced = yield* harness.awaitState((value) => value.status === "live");
+      expect(synced.status).toBe("live");
+      yield* TestClock.adjust("30 seconds");
+      // Read the ref rather than awaiting an emission: the assertion is that
+      // the expired deadline publishes nothing at all.
+      const afterDeadline = yield* SubscriptionRef.get(harness.threadState);
+      expect(afterDeadline.status).toBe("live");
+    }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("does not send a window to servers without the capability", () =>

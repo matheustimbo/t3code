@@ -8,6 +8,7 @@ import {
   type ThreadId as ThreadIdType,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -48,6 +49,20 @@ function statusWithoutLiveData(data: Option.Option<OrchestrationThread>): Enviro
  */
 export const INITIAL_THREAD_USER_TURN_LIMIT = 10;
 export const OLDER_THREAD_PAGE_USER_TURN_LIMIT = 20;
+
+// How long a thread waits for the server's completion marker before it
+// settles on its own. The marker stays the primary signal; this only bounds
+// the wait. Without a bound, a marker that is delayed or lost — a drained
+// subscription, a batch that is never pulled — pins the thread to
+// "synchronizing" for the rest of the session over history that is already
+// fully loaded, with no timeout, retry, or error to recover from.
+const COMPLETION_MARKER_DEADLINE = "8 seconds";
+
+// An upper bound on how long the wait can be extended by arriving items. A
+// thread with an active turn delivers deltas every few seconds, so re-arming
+// on progress alone would postpone the deadline for the whole run whenever it
+// is only the marker that was lost rather than the whole stream.
+const COMPLETION_MARKER_HARD_CAP_MS = 30_000;
 
 function pageStateFromSnapshot(
   page: OrchestrationThreadDetailPage | undefined,
@@ -227,6 +242,12 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   };
   if (resumeCache?.owner === owner) resumeCache.snapshot = committed;
   const awaitingCompletion = yield* Ref.make(false);
+  // Sliding so a re-arm replaces a pending deadline rather than queueing
+  // behind it; switchMap below interrupts the sleep already in flight, so at
+  // most one deadline is ever live and no generation bookkeeping is needed.
+  const completionDeadlines = yield* Queue.sliding<void>(1);
+  // Epoch millis past which arriving items stop extending the wait.
+  const completionHardDeadline = yield* Ref.make(0);
   // Bumped whenever loaded history may have been rewritten out from under an
   // in-flight older-page fetch (snapshot replacement, revert, deletion). A
   // page response captured under an older epoch is discarded, not merged.
@@ -353,6 +374,55 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       ),
     );
 
+  // Arming only hands the deadline daemon below a token: makeSubscribeInput
+  // must not require a Scope, so the sleep cannot be forked from there.
+  const armCompletionDeadline = Queue.offer(completionDeadlines, undefined);
+
+  // The transition the completion marker performs, applied when the deadline
+  // expires instead. Runs under applyLock because setThread reads
+  // awaitingCompletion and writes the status in two steps: settling between
+  // those two would leave the flag cleared and the status stuck on
+  // "synchronizing" with nothing left to re-arm — the very state this bounds.
+  const settleWithoutCompletionMarker = Effect.gen(function* () {
+    if (!(yield* Ref.get(awaitingCompletion))) return;
+    // A deadline is not the server asserting "you are up to date", so it never
+    // spends the wait unless the wait is what produced the transition. Decide
+    // and write in one step: a warm resume republishes "live" while the flag
+    // is armed, and clearing it there would let a later replay snapshot paint
+    // "live" directly, dropping the "synchronizing" pass that tells the reader
+    // history is still moving. Anything else gets another interval.
+    const settled = yield* SubscriptionRef.modify(state, (value) =>
+      value.status === "synchronizing" && Option.isSome(value.data)
+        ? [true, { ...value, status: "live" as const, error: Option.none() }]
+        : [false, value],
+    );
+    if (!settled) {
+      yield* armCompletionDeadline;
+      return;
+    }
+    yield* Ref.set(awaitingCompletion, false);
+    // Every other status transition is committed through remember; without it
+    // the recovery would be lost on remount and the reader would meet the sync
+    // label again on the next visit.
+    yield* remember;
+  });
+
+  yield* Stream.fromQueue(completionDeadlines).pipe(
+    Stream.switchMap(() =>
+      Stream.fromEffect(
+        Effect.sleep(COMPLETION_MARKER_DEADLINE).pipe(
+          // switchMap interrupts this inner stream on the next arm, and the
+          // settle's read-decide-write must not be cut between steps.
+          Effect.andThen(
+            applyLock.withPermits(1)(Effect.uninterruptible(settleWithoutCompletionMarker)),
+          ),
+        ),
+      ),
+    ),
+    Stream.runDrain,
+    Effect.forkScoped,
+  );
+
   const setThread = Effect.fn("EnvironmentThreadState.setThread")(function* (
     thread: OrchestrationThread,
     // "keep" preserves the current page state (live events touch only loaded
@@ -427,7 +497,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           ? { ...current, status: "live" as const, error: Option.none() }
           : current,
       );
-      return;
+      return false;
     }
 
     if (item.kind === "snapshot") {
@@ -438,12 +508,13 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       yield* Ref.update(historyEpoch, (epoch) => epoch + 1);
       yield* SubscriptionRef.set(lastSequence, item.snapshot.snapshotSequence);
       yield* setThread(item.snapshot.thread, pageStateFromSnapshot(item.snapshot.page));
-      return;
+      return true;
     }
 
     const sequence = yield* SubscriptionRef.get(lastSequence);
     if (item.event.sequence <= sequence) {
-      return;
+      // Already applied: no progress, so it must not extend the wait.
+      return false;
     }
     yield* SubscriptionRef.set(lastSequence, item.event.sequence);
 
@@ -451,8 +522,9 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     if (Option.isNone(current.data)) {
       if (item.event.type === "thread.deleted") {
         yield* setDeleted();
+        return true;
       }
-      return;
+      return false;
     }
     if (item.event.type === "thread.reverted") {
       // A revert rewrites loaded history (whole turns disappear), so an
@@ -472,6 +544,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     // The event may have advanced the live state past a parked page's
     // watermark; merge it as soon as that happens.
     yield* tryMergePendingOlderPage();
+    return true;
   });
 
   // Merges a parked older page once the live state has caught up to the
@@ -505,7 +578,18 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   const applyItem = Effect.fn("EnvironmentThreadState.applyItem")(function* (
     item: OrchestrationThreadStreamItem,
   ) {
-    yield* applyLock.withPermits(1)(applyItemLocked(item).pipe(Effect.andThen(remember)));
+    const advanced = yield* applyLock.withPermits(1)(
+      applyItemLocked(item).pipe(Effect.tap(() => remember)),
+    );
+    // Progress restarts the budget: the deadline is there to catch a stream
+    // that went silent, not one still delivering a long replay over a slow
+    // link. Only real progress counts, and only up to the hard cap, so a
+    // chatty stream that lost just its marker still settles.
+    if (!advanced) return;
+    if (!(yield* Ref.get(awaitingCompletion))) return;
+    const now = yield* Clock.currentTimeMillis;
+    if (now >= (yield* Ref.get(completionHardDeadline))) return;
+    yield* armCompletionDeadline;
   });
 
   // Merges an older disjoint page below the currently loaded window. All four
@@ -744,6 +828,16 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
             status: value.status === "deleted" ? value.status : ("live" as const),
             error: Option.none(),
           }));
+        }
+
+        // Armed here, not when this factory started: the prepared-connection
+        // wait and the HTTP snapshot load above are unbounded and the loader
+        // carries its own 6s timeout, so arming earlier would spend most of
+        // the budget before the subscription even opens.
+        if (supportsCompletionMarker) {
+          const now = yield* Clock.currentTimeMillis;
+          yield* Ref.set(completionHardDeadline, now + COMPLETION_MARKER_HARD_CAP_MS);
+          yield* armCompletionDeadline;
         }
 
         return {
