@@ -114,6 +114,10 @@ jobs:
     needs: prepare
     if: needs.prepare.outputs.release == 'true'
     runs-on: macos-15
+    # Unsigned builds finish in minutes; notarization adds a wait on Apple that
+    # can stall. Without this, GitHub's 6h default runs up a macOS runner bill
+    # at a 10x minute multiplier before anyone notices.
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -237,8 +241,10 @@ jobs:
           set -euo pipefail
           dmg="$(find release-mac -maxdepth 1 -name '*.dmg' -print -quit)"
           test -n "$dmg"
-          xcrun stapler validate "$dmg"
 
+          # The notarization ticket is stapled to the .app, not to the DMG that
+          # is built around it afterwards, so the DMG is only a container to
+          # open here -- asserting a ticket on it always fails.
           mount_point="$(mktemp -d)"
           trap 'hdiutil detach "$mount_point" >/dev/null 2>&1 || true' EXIT
           hdiutil attach "$dmg" -nobrowse -readonly -mountpoint "$mount_point" >/dev/null
