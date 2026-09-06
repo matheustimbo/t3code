@@ -122,11 +122,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # arm64 only: an arm64 build cannot run on an Intel Mac anyway, and a
+        # second architecture doubles the exposure to Apple's notary queue,
+        # which is where every macOS release failure here has come from.
         include:
           - arch: arm64
             rust_target: aarch64-apple-darwin
-          - arch: x64
-            rust_target: x86_64-apple-darwin
     steps:
       - name: Checkout fork release
         uses: actions/checkout@v6
@@ -229,10 +230,6 @@ jobs:
           test -n "$(find release-mac -maxdepth 1 -name '*.zip' -print -quit)"
           test -f release-mac/latest-mac.yml
 
-          if [[ "${{ matrix.arch }}" == "x64" ]]; then
-            mv release-mac/latest-mac.yml release-mac/latest-mac-x64.yml
-          fi
-
       # Signing failures are easy to miss: an unsigned or unstapled DMG still
       # builds and uploads, and only fails on a user's machine at first launch.
       - name: Verify signed macOS artifacts
@@ -299,16 +296,6 @@ jobs:
           pattern: fork-*
           merge-multiple: true
           path: release-assets
-
-      - name: Merge macOS updater manifests
-        shell: bash
-        run: |
-          set -euo pipefail
-          node scripts/merge-update-manifests.ts \
-            --platform mac \
-            release-assets/latest-mac.yml \
-            release-assets/latest-mac-x64.yml
-          rm release-assets/latest-mac-x64.yml
 
       - name: Generate fork release notes
         env:
