@@ -126,6 +126,13 @@ jobs:
       # widget target, share extension, push and Sign in with Apple stay enabled.
       T3CODE_IOS_BUNDLE_ID: ${{ vars.IOS_BUNDLE_ID }}
       T3CODE_IOS_TEAM_ID: ${{ vars.IOS_TEAM_ID }}
+      # Keep the fork's iOS build connected to the production T3 Connect
+      # deployment. These are the public values tracked in .env.example;
+      # loadRepoEnv() exposes the Clerk values under Expo's EXPO_PUBLIC_*
+      # aliases before app.config.ts is evaluated.
+      T3CODE_CLERK_PUBLISHABLE_KEY: pk_live_Y2xlcmsudDMuY29kZXMk
+      T3CODE_CLERK_JWT_TEMPLATE: t3-relay
+      T3CODE_RELAY_URL: https://relay.t3.codes
       # TestFlight rejects a build number it has already seen, and app.config.ts
       # sets no ios.buildNumber, so every prebuild would otherwise emit 1.
       IOS_BUILD_NUMBER: ${{ github.run_number }}
@@ -189,6 +196,33 @@ jobs:
           vp_pnpm_bin="$HOME/.vite-plus/package_manager/pnpm/$pnpm_version/pnpm/bin"
           echo "$vp_pnpm_bin" >> "$GITHUB_PATH"
           "$vp_pnpm_bin/pnpm" --version
+
+      - name: Verify T3 Connect public configuration
+        working-directory: apps/mobile
+        env:
+          EXPO_NO_GIT_STATUS: "1"
+        shell: bash
+        run: |
+          set -euo pipefail
+          config_file="$RUNNER_TEMP/t3code-expo-config.json"
+          pnpm exec expo config --json > "$config_file"
+          node - "$config_file" <<'NODE'
+          const fs = require("node:fs");
+          const [configPath] = process.argv.slice(2);
+          const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+          const relayUrl = config.extra?.relay?.url;
+          const publishableKey = config.extra?.clerk?.publishableKey;
+          const jwtTemplate = config.extra?.clerk?.jwtTemplate;
+          if (
+            relayUrl !== "https://relay.t3.codes" ||
+            typeof publishableKey !== "string" ||
+            publishableKey.length === 0 ||
+            jwtTemplate !== "t3-relay"
+          ) {
+            throw new Error("T3 Connect public configuration did not resolve in Expo config");
+          }
+          console.log("T3 Connect public configuration resolved for iOS");
+          NODE
 
       - name: Generate iOS project
         working-directory: apps/mobile
