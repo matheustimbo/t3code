@@ -114,10 +114,11 @@ jobs:
     needs: prepare
     if: needs.prepare.outputs.release == 'true'
     runs-on: macos-15
-    # Unsigned builds finish in minutes; notarization adds a wait on Apple that
-    # can stall. Without this, GitHub's 6h default runs up a macOS runner bill
-    # at a 10x minute multiplier before anyone notices.
-    timeout-minutes: 90
+    # Notarization waits on Apple, which has taken 2h30 to 4h40 per submission
+    # here against a 2-15 minute norm. This only guards against a submission
+    # that never returns -- this repository is public, so macOS runner minutes
+    # are free and a long wait costs nothing but wall clock.
+    timeout-minutes: 300
     strategy:
       fail-fast: false
       matrix:
