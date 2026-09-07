@@ -114,11 +114,10 @@ jobs:
     needs: prepare
     if: needs.prepare.outputs.release == 'true'
     runs-on: macos-15
-    # Notarization waits on Apple, which has taken 2h30 to 4h40 per submission
-    # here against a 2-15 minute norm. This only guards against a submission
-    # that never returns -- this repository is public, so macOS runner minutes
-    # are free and a long wait costs nothing but wall clock.
-    timeout-minutes: 300
+    # Apple has approved prior submissions in as much as 4h40. Give the hook a
+    # bounded five-hour polling window, plus 30 minutes for build and packaging
+    # before the job-level guard ends the runner.
+    timeout-minutes: 330
     strategy:
       fail-fast: false
       matrix:
@@ -166,6 +165,7 @@ jobs:
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          T3CODE_NOTARIZATION_TIMEOUT_MS: "18000000"
           APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
           MACOS_PROVISIONING_PROFILE: ${{ secrets.MACOS_PROVISIONING_PROFILE }}
           # Required: the fork ships no committed .env, so the build cannot fall
@@ -238,23 +238,40 @@ jobs:
         run: |
           set -euo pipefail
           dmg="$(find release-mac -maxdepth 1 -name '*.dmg' -print -quit)"
+          zip="$(find release-mac -maxdepth 1 -name '*.zip' -print -quit)"
           test -n "$dmg"
+          test -n "$zip"
 
-          # The notarization ticket is stapled to the .app, not to the DMG that
-          # is built around it afterwards, so the DMG is only a container to
-          # open here -- asserting a ticket on it always fails.
+          # The ticket is stapled to the .app before electron-builder creates
+          # the DMG and updater ZIP, so verify each extracted app rather than
+          # asserting a ticket on either container.
           mount_point="$(mktemp -d)"
-          trap 'hdiutil detach "$mount_point" >/dev/null 2>&1 || true' EXIT
+          zip_extract="$(mktemp -d)"
+          cleanup() {
+            hdiutil detach "$mount_point" >/dev/null 2>&1 || true
+            rm -rf "$mount_point" "$zip_extract"
+          }
+          trap cleanup EXIT
+
+          verify_app() {
+            local app="$1"
+            codesign --verify --deep --strict --verbose=2 "$app"
+            spctl --assess --type exec --verbose=2 "$app"
+            xcrun stapler validate "$app"
+            codesign --display --verbose=4 "$app" 2>&1 | grep -E '^(Identifier|Authority|TeamIdentifier)='
+          }
+
           hdiutil attach "$dmg" -nobrowse -readonly -mountpoint "$mount_point" >/dev/null
-          app="$(find "$mount_point" -maxdepth 1 -name '*.app' -print -quit)"
-          test -n "$app"
+          dmg_app="$(find "$mount_point" -maxdepth 1 -name '*.app' -print -quit)"
+          test -n "$dmg_app"
+          verify_app "$dmg_app"
 
-          codesign --verify --deep --strict --verbose=2 "$app"
-          spctl --assess --type exec --verbose=2 "$app"
-          xcrun stapler validate "$app"
-          codesign --display --verbose=4 "$app" 2>&1 | grep -E '^(Identifier|Authority|TeamIdentifier)='
+          ditto -x -k "$zip" "$zip_extract"
+          zip_app="$(find "$zip_extract" -name '*.app' -print -quit)"
+          test -n "$zip_app"
+          verify_app "$zip_app"
 
-          echo "Verified signature, Gatekeeper assessment and notarization ticket for ${{ matrix.arch }}." \
+          echo "Verified signed, stapled apps from the DMG and updater ZIP for ${{ matrix.arch }}." \
             >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload desktop packages

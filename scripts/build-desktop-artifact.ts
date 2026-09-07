@@ -2660,10 +2660,17 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   if (platform === "mac") {
     const path = yield* Path.Path;
     const repoRoot = yield* RepoRoot;
+    // electron-builder otherwise notarizes immediately after codesign with a
+    // single long-lived request. The custom afterSign hook submits once and
+    // polls that id resiliently before DMG/ZIP targets package this .app.
+    if (signed) {
+      buildConfig.afterSign = path.join(repoRoot, "scripts/notarize-macos.ts");
+    }
     buildConfig.mac = {
       target: target === "dmg" ? [target, "zip"] : [target],
       icon: "icon.icns",
       category: "public.app-category.developer-tools",
+      notarize: false,
       protocols: [
         {
           name: "T3 Code",
