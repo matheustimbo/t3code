@@ -153,7 +153,7 @@ const DEFAULT_ANNOTATION_THEME: DesktopPreviewAnnotationTheme = {
   fontMono: "ui-monospace, monospace",
 };
 
-export const buildPreviewPictureInPictureDataUrl = (): string => {
+const buildPreviewPictureInPictureDataUrl = (): string => {
   const html = `<!doctype html>
 <html>
   <head>
@@ -534,6 +534,29 @@ export const isPreviewRefreshShortcut = (input: Electron.Input): boolean =>
   (input.meta || input.control) &&
   !input.shift &&
   !input.alt;
+
+export const isPreviewEditingShortcut = (
+  input: Electron.Input,
+  platform: NodeJS.Platform,
+): boolean => {
+  const isMac = platform === "darwin";
+  if (isMac ? !input.meta || input.control : !input.control || input.meta) return false;
+
+  const key = input.key.toLowerCase();
+  // Option changes the DOM key for macOS Paste and Match Style (for example, to ◊).
+  if (isMac && input.alt && input.shift && input.code === "KeyV") return true;
+  if (key === "v" && input.shift) return input.alt === isMac;
+  if (input.alt) return false;
+  if (key === "z") return !input.shift || platform !== "win32";
+  if (input.shift) return false;
+  return (
+    key === "a" ||
+    key === "c" ||
+    key === "v" ||
+    key === "x" ||
+    (key === "y" && platform === "win32")
+  );
+};
 
 const isPreviewInputSignal = (value: unknown): value is PreviewInputSignal => {
   if (typeof value !== "object" || value === null || !("kind" in value)) return false;
@@ -1837,14 +1860,27 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         }).pipe(Effect.ignore),
       );
     };
+    const syncMenuShortcuts = (contents: Electron.WebContents, input: Electron.Input): void => {
+      if (input.type !== "keyDown") return;
+      // Native editing roles must remain available after the page handles the key.
+      // Background automation must not edit whichever other renderer has focus.
+      contents.setIgnoreMenuShortcuts(
+        !isPreviewEditingShortcut(input, hostPlatform) ||
+          webContents.getFocusedWebContents() !== contents,
+      );
+    };
     // A popup opens with Electron's default handler, so the page inside it could
     // otherwise spawn native windows without limit. Nothing in an OAuth flow
     // opens a second popup, so the chain stops at the first one.
     const windowCreated = (window: Electron.BrowserWindow): void => {
       window.webContents.setIgnoreMenuShortcuts(true);
       window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+      window.webContents.on("before-input-event", (_event, input) => {
+        syncMenuShortcuts(window.webContents, input);
+      });
     };
     const beforeInput = (event: Electron.Event, input: Electron.Input): void => {
+      syncMenuShortcuts(wc, input);
       if (isPreviewRefreshShortcut(input)) {
         event.preventDefault();
         runFork(
@@ -1876,8 +1912,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     );
     const install = Effect.fn("PreviewManager.installWebContentsListeners")(function* () {
       yield* attempt({ operation: "attachListeners", tabId, webContentsId: wc.id }, () => {
-        // Preview input belongs to the page, including keys injected through CDP.
-        // Never let it invoke the host application's menu accelerators.
+        // Only focused native editing shortcuts may reach the application menu.
+        // Other preview input, including CDP keys, belongs to the page.
         wc.setIgnoreMenuShortcuts(true);
         wc.on("did-start-navigation", navigationStarted);
         wc.on("did-navigate", syncNavigation);
@@ -4271,7 +4307,7 @@ export class PreviewOperationError extends Schema.TaggedErrorClass<PreviewOperat
   }
 }
 
-export const isPreviewOperationError = Schema.is(PreviewOperationError);
+const isPreviewOperationError = Schema.is(PreviewOperationError);
 
 export class PreviewArtifactPathOutsideDirectoryError extends Schema.TaggedErrorClass<PreviewArtifactPathOutsideDirectoryError>()(
   "PreviewArtifactPathOutsideDirectoryError",
@@ -4472,14 +4508,11 @@ export const PreviewManagerError = Schema.Union([
 ]);
 export type PreviewManagerError = typeof PreviewManagerError.Type;
 
-export const isPreviewManagerError = Schema.is(PreviewManagerError);
-export const isPreviewAutomationControlInterruptedError = Schema.is(
+const isPreviewAutomationControlInterruptedError = Schema.is(
   PreviewAutomationControlInterruptedError,
 );
-export const isPreviewAutomationEvaluationError = Schema.is(PreviewAutomationEvaluationError);
-export const isPreviewAutomationInvalidSelectorError = Schema.is(
-  PreviewAutomationInvalidSelectorError,
-);
+const isPreviewAutomationEvaluationError = Schema.is(PreviewAutomationEvaluationError);
+const isPreviewAutomationInvalidSelectorError = Schema.is(PreviewAutomationInvalidSelectorError);
 
 export class PreviewManager extends Context.Service<
   PreviewManager,
@@ -4592,6 +4625,7 @@ export class PreviewManager extends Context.Service<
   }
 >()("@t3tools/desktop/preview/Manager/PreviewManager") {}
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* PreviewManagerMake() {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const browserSession = yield* BrowserSession.BrowserSession;
