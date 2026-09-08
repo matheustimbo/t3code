@@ -25,7 +25,7 @@ import { makeUnavailableUsageLimits, resolveUsageLimitsAfterProbe } from "./prov
 
 export const USAGE_LIMITS_POLL_INTERVAL = "45 seconds" as const;
 
-export class ProviderUsageLimitsReadError extends Schema.TaggedErrorClass<ProviderUsageLimitsReadError>()(
+export class ProviderUsageLimitsReadError extends Schema.TaggedError<ProviderUsageLimitsReadError>()(
   "ProviderUsageLimitsReadError",
   {
     message: Schema.String,

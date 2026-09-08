@@ -34,7 +34,7 @@ const PROVIDER_LABELS: Readonly<Record<string, string>> = {
   clickup: "ClickUp",
 };
 
-export class TicketProviderResolveError extends Schema.TaggedErrorClass<TicketProviderResolveError>()(
+export class TicketProviderResolveError extends Schema.TaggedError<TicketProviderResolveError>()(
   "TicketProviderResolveError",
   {
     driver: Schema.String,
@@ -56,7 +56,7 @@ export class TicketProviderResolveError extends Schema.TaggedErrorClass<TicketPr
   }
 }
 
-class TicketProviderResponseTooLargeError extends Schema.TaggedErrorClass<TicketProviderResponseTooLargeError>()(
+class TicketProviderResponseTooLargeError extends Schema.TaggedError<TicketProviderResponseTooLargeError>()(
   "TicketProviderResponseTooLargeError",
   {},
 ) {
@@ -65,7 +65,7 @@ class TicketProviderResponseTooLargeError extends Schema.TaggedErrorClass<Ticket
   }
 }
 
-class TicketProviderInvalidResponseError extends Schema.TaggedErrorClass<TicketProviderInvalidResponseError>()(
+class TicketProviderInvalidResponseError extends Schema.TaggedError<TicketProviderInvalidResponseError>()(
   "TicketProviderInvalidResponseError",
   { cause: Schema.Defect() },
 ) {
