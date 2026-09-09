@@ -71,7 +71,10 @@ rl.on("line", (line) => {
     write({ id, result: fixture.turnStart });
     write({ jsonrpc: "2.0", method: "turn/started", params: { threadId: fixture.threadStart.thread.id, turn: fixture.turnStart.turn } });
     if (process.env.T3_CODEX_RECOVERY_COMPLETE === "1") write({ jsonrpc: "2.0", method: "turn/completed", params: { threadId: fixture.threadStart.thread.id, turn: { ...fixture.turnStart.turn, status: "completed" } } });
-    if (process.env.T3_CODEX_RECOVERY_EXIT_CODE !== undefined) process.exit(Number(process.env.T3_CODEX_RECOVERY_EXIT_CODE));
+    if (process.env.T3_CODEX_RECOVERY_EXIT_CODE !== undefined) {
+      const code = Number(process.env.T3_CODEX_RECOVERY_EXIT_CODE);
+      process.stdout.end(() => process.exit(code));
+    }
     return;
   }
   if (id !== undefined) write({ id, result: {} });
