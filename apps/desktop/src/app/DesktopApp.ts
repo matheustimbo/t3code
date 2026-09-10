@@ -155,21 +155,32 @@ const bootstrap = Effect.gen(function* () {
   const appActivation = yield* DesktopAppActivation.DesktopAppActivation;
   yield* logBootstrapInfo("bootstrap start");
 
-  if (environment.isDevelopment && Option.isNone(environment.configuredBackendPort)) {
+  const ownership = pool.ownership;
+  const attached = ownership._tag === "Attached" ? ownership : undefined;
+
+  if (
+    attached === undefined &&
+    environment.isDevelopment &&
+    Option.isNone(environment.configuredBackendPort)
+  ) {
     return yield* new DesktopDevelopmentBackendPortRequiredError();
   }
 
-  const backendPortSelection = yield* resolveDesktopBackendPort(environment.configuredBackendPort);
-  const backendPort = backendPortSelection.port;
-  yield* logBootstrapInfo(
-    backendPortSelection.selectedByScan
-      ? "selected backend port via sequential scan"
-      : "using configured backend port",
-    {
-      port: backendPort,
-      ...(backendPortSelection.selectedByScan ? { startPort: DEFAULT_DESKTOP_BACKEND_PORT } : {}),
-    },
-  );
+  // An attached server already holds its port; scanning for a free one would
+  // pick a different port and defeat the point of attaching.
+  const backendPort = attached
+    ? Number(attached.origin.port || "80")
+    : (yield* resolveDesktopBackendPort(environment.configuredBackendPort)).port;
+
+  if (attached) {
+    yield* logBootstrapInfo("attaching to the server that already owns this state directory", {
+      origin: attached.origin.href,
+      pid: attached.pid,
+      stateDir: environment.stateDir,
+    });
+  } else {
+    yield* logBootstrapInfo("using desktop-owned backend port", { port: backendPort });
+  }
 
   const settings = yield* desktopSettings.get;
   if (settings.serverExposureMode !== environment.defaultDesktopSettings.serverExposureMode) {
@@ -182,11 +193,12 @@ const bootstrap = Effect.gen(function* () {
   const electronProtocol = yield* ElectronProtocol.ElectronProtocol;
   const rendererTarget = environment.isDevelopment
     ? Option.getOrThrow(environment.devServerUrl)
-    : backendConfig.httpBaseUrl;
+    : (attached?.rendererOrigin ?? backendConfig.httpBaseUrl);
+  const backendOrigin = attached?.origin ?? backendConfig.httpBaseUrl;
   yield* electronProtocol.registerDesktopProtocol({
     scheme: ElectronProtocol.getDesktopScheme(environment.isDevelopment),
     targetOrigin: rendererTarget,
-    backendOrigin: backendConfig.httpBaseUrl,
+    backendOrigin,
     clerkFrontendApiHostname: DesktopClerk.desktopClerkFrontendApiHostname,
   });
   yield* logBootstrapInfo("bootstrap resolved backend endpoint", {
@@ -315,12 +327,14 @@ const scopedProgram = Effect.scoped(
     yield* Effect.addFinalizer(() =>
       Effect.gen(function* () {
         const pool = yield* DesktopBackendPool.DesktopBackendPool;
-        // Stop every backend in the pool, not just the primary. The
+        // Stop every backend this app spawned, not just the primary. The
         // electronApp.quit() path can race ahead of the layer-scope
         // cascade, so leaving the WSL instance for its parent scope
         // finalizer means it gets hard-killed by the OS instead of
         // receiving SIGTERM + grace. Stops run concurrently.
-        const instances = yield* pool.list;
+        // An attached backend is excluded: closing our window must not take
+        // down a server that was already serving other clients.
+        const instances = yield* pool.managed;
         yield* Effect.forEach(instances, (instance) => instance.stop(), {
           concurrency: "unbounded",
         });

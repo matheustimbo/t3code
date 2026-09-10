@@ -43,6 +43,8 @@ const defaultWslInstance: DesktopBackendManager.DesktopBackendInstance = {
   id: DesktopBackendManager.BackendInstanceId("wsl:default"),
   label: Effect.succeed("WSL (default distro)"),
   start: Effect.void,
+  ownership: "managed",
+  httpBaseUrl: Effect.succeed(Option.none()),
   stop: () => Effect.void,
   currentConfig: Effect.succeed(Option.some(readyWslConfig)),
   snapshot: Effect.succeed({

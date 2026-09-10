@@ -4,11 +4,26 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
+import { ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import { PRIMARY_LOCAL_ENVIRONMENT_ID } from "@t3tools/contracts";
 
 import * as DesktopBackendPool from "./DesktopBackendPool.ts";
+import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopLocalEnvironmentAuth from "./DesktopLocalEnvironmentAuth.ts";
+
+const environmentLayer = (stateDir = "/home/user/.t3/userdata") =>
+  Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
+    stateDir,
+    backendEntryPath: "/app/server/bin.js",
+  } as unknown as DesktopEnvironment.DesktopEnvironment["Service"]);
+
+const forbiddenSpawnerLayer = Layer.succeed(
+  ChildProcessSpawner.ChildProcessSpawner,
+  ChildProcessSpawner.make(() => Effect.die("unexpected child process spawn")),
+);
 
 const config = {
   executablePath: "/electron",
@@ -65,7 +80,9 @@ describe("DesktopLocalEnvironmentAuth", () => {
         ]),
       } as unknown as DesktopBackendPool.DesktopBackendPool["Service"]);
       const testLayer = DesktopLocalEnvironmentAuth.layer.pipe(
-        Layer.provide(Layer.mergeAll(poolLayer, httpClientLayer)),
+        Layer.provide(
+          Layer.mergeAll(poolLayer, httpClientLayer, environmentLayer(), forbiddenSpawnerLayer),
+        ),
       );
 
       const [first, second] = yield* Effect.gen(function* () {
@@ -76,6 +93,64 @@ describe("DesktopLocalEnvironmentAuth", () => {
       assert.strictEqual(first, "desktop-bearer-token");
       assert.strictEqual(second, "desktop-bearer-token");
       assert.strictEqual(yield* Ref.get(requestCount), 1);
+    }),
+  );
+
+  it.effect("mints a session for an attached server instead of exchanging a token", () =>
+    Effect.gen(function* () {
+      const encoder = new TextEncoder();
+      const spawnedArgs: string[][] = [];
+      const spawnerLayer = Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make((command) => {
+          spawnedArgs.push([...(command as unknown as { args: readonly string[] }).args]);
+          return Effect.succeed({
+            pid: 4242,
+            stdout: Stream.make(encoder.encode("attached-bearer-token\n")),
+            stderr: Stream.empty,
+            exitCode: Effect.succeed(0),
+            kill: () => Effect.void,
+            stdin: Sink.drain,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+            unref: Effect.succeed(Effect.void),
+          } as never);
+        }),
+      );
+      // An attached server never received a bootstrap token from us, so any
+      // HTTP token exchange would be a bug.
+      const httpClientLayer = Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make(() => Effect.die("unexpected bootstrap token exchange")),
+      );
+      const poolLayer = Layer.succeed(DesktopBackendPool.DesktopBackendPool, {
+        list: Effect.succeed([
+          {
+            id: PRIMARY_LOCAL_ENVIRONMENT_ID,
+            label: Effect.succeed("Attached server"),
+            ownership: "attached",
+            currentConfig: Effect.succeed(Option.none()),
+            httpBaseUrl: Effect.succeed(Option.some(new URL("http://127.0.0.1:3773"))),
+          },
+        ]),
+      } as unknown as DesktopBackendPool.DesktopBackendPool["Service"]);
+
+      const token = yield* Effect.gen(function* () {
+        const auth = yield* DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth;
+        return yield* auth.getBearerToken;
+      }).pipe(
+        Effect.provide(
+          DesktopLocalEnvironmentAuth.layer.pipe(
+            Layer.provide(
+              Layer.mergeAll(poolLayer, httpClientLayer, environmentLayer(), spawnerLayer),
+            ),
+          ),
+        ),
+      );
+
+      assert.strictEqual(token, "attached-bearer-token");
+      assert.strictEqual(spawnedArgs.length, 1);
+      assert.deepInclude(spawnedArgs[0] ?? [], "--token-only");
     }),
   );
 });

@@ -258,15 +258,26 @@ export const PRIMARY_INSTANCE_ID: BackendInstanceId = BackendInstanceId(
   PRIMARY_LOCAL_ENVIRONMENT_ID,
 );
 
+export type BackendOwnershipKind = "managed" | "attached";
+
 // One pooled backend instance. Same lifecycle surface as the legacy
 // `DesktopBackendManagerShape`; the id and label give the pool registry
 // + UI something to route on.
 export interface DesktopBackendInstance {
   readonly id: BackendInstanceId;
   readonly label: Effect.Effect<string>;
+  // Who owns the server process behind this instance. "attached" means a
+  // server that was already running when the app launched and that this app
+  // did not spawn, so it must survive our quit and our updates. Mirrors the
+  // managed/external marker the SSH launcher keeps in packages/ssh/src/tunnel.ts.
+  readonly ownership: BackendOwnershipKind;
   readonly start: Effect.Effect<void>;
   readonly stop: (options?: { readonly timeout?: Duration.Duration }) => Effect.Effect<void>;
   readonly currentConfig: Effect.Effect<Option.Option<DesktopBackendStartConfig>>;
+  // Where this backend answers, independent of how it was configured. An
+  // attached instance has an endpoint but no start config, because this app
+  // never resolved one for it.
+  readonly httpBaseUrl: Effect.Effect<Option.Option<URL>>;
   readonly snapshot: Effect.Effect<DesktopBackendSnapshot>;
   // Polls desiredRunning + the instance's own ready flag until the
   // backend reports ready, or the timeout elapses. Returns true on
@@ -672,6 +683,8 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
     })),
   );
   const currentConfig = Ref.get(state).pipe(Effect.map((current) => current.config));
+
+  const httpBaseUrl = currentConfig.pipe(Effect.map(Option.map((config) => config.httpBaseUrl)));
 
   const cancelRestart = Effect.gen(function* () {
     const restartFiber = yield* Ref.modify(state, (current) => [
@@ -1159,10 +1172,95 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
   return {
     id: spec.id,
     label: spec.label,
+    ownership: "managed",
     start,
     stop,
     currentConfig,
+    httpBaseUrl,
     snapshot,
     waitForReady,
   } satisfies DesktopBackendInstance;
 });
+
+/**
+ * A pooled instance backed by a server this app did not start.
+ *
+ * There is no process to spawn, supervise, restart or kill here: the server
+ * was already listening on the state directory when we launched, and killing
+ * it would take down whatever else is using it (an `npx t3` a user is serving
+ * to their phone, another editor, a CI shell). `stop()` therefore only drops
+ * our own readiness — the ownership marker keeps quit and update paths from
+ * treating it as ours.
+ *
+ * Readiness needs no probe: discovery already proved a T3 server answers on
+ * this origin (see DesktopBackendOwnership).
+ */
+export const makeAttachedBackendInstance = Effect.fn("makeAttachedBackendInstance")(
+  function* (spec: {
+    readonly id: BackendInstanceId;
+    readonly label: Effect.Effect<string>;
+    readonly httpBaseUrl: URL;
+    readonly onReady?: (httpBaseUrl: URL) => Effect.Effect<void>;
+    readonly onShutdown?: () => Effect.Effect<void>;
+  }) {
+    const state = yield* Ref.make({ desiredRunning: false, ready: false });
+
+    const start = Effect.gen(function* () {
+      const alreadyRunning = yield* Ref.modify(state, (current) => [
+        current.desiredRunning,
+        { desiredRunning: true, ready: true },
+      ]);
+      if (alreadyRunning) return;
+      yield* spec.onReady?.(spec.httpBaseUrl) ?? Effect.void;
+    });
+
+    const stop = (_options?: { readonly timeout?: Duration.Duration }) =>
+      Effect.gen(function* () {
+        const wasRunning = yield* Ref.modify(state, (current) => [
+          current.desiredRunning,
+          { desiredRunning: false, ready: false },
+        ]);
+        if (!wasRunning) return;
+        yield* spec.onShutdown?.() ?? Effect.void;
+      });
+
+    const snapshot = Ref.get(state).pipe(
+      Effect.map((current): DesktopBackendSnapshot => ({
+        desiredRunning: current.desiredRunning,
+        ready: current.ready,
+        // Deliberately none: the pid belongs to another process owner, and
+        // surfacing it here would invite code into treating it as ours.
+        activePid: Option.none(),
+        restartAttempt: 0,
+        restartScheduled: false,
+      })),
+    );
+
+    const waitForReady = (timeout: Duration.Duration): Effect.Effect<boolean> =>
+      Ref.get(state).pipe(
+        Effect.map((current) => ({
+          done: !current.desiredRunning || current.ready,
+          ready: current.ready,
+        })),
+        Effect.repeat({
+          until: (status) => status.done,
+          schedule: Schedule.spaced(Duration.millis(100)),
+        }),
+        Effect.map((status) => status.ready),
+        Effect.timeoutOption(timeout),
+        Effect.map(Option.getOrElse(() => false)),
+      );
+
+    return {
+      id: spec.id,
+      label: spec.label,
+      ownership: "attached",
+      start,
+      stop,
+      currentConfig: Effect.succeed(Option.none()),
+      httpBaseUrl: Effect.succeed(Option.some(spec.httpBaseUrl)),
+      snapshot,
+      waitForReady,
+    } satisfies DesktopBackendInstance;
+  },
+);

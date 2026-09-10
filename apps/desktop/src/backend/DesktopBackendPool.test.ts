@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/unstable/http";
@@ -16,6 +17,7 @@ import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
 import * as DesktopBackendConfiguration from "./DesktopBackendConfiguration.ts";
+import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopBackendPool from "./DesktopBackendPool.ts";
 import type { DesktopBackendSnapshot, DesktopBackendStartConfig } from "./DesktopBackendManager.ts";
 
@@ -34,6 +36,8 @@ function makeStubInstance(
     id,
     label: Effect.succeed(label),
     start: Effect.void,
+    ownership: "managed",
+    httpBaseUrl: Effect.succeed(Option.none()),
     stop: () => Effect.void,
     currentConfig: Effect.succeed(Option.none<DesktopBackendStartConfig>()),
     snapshot: Effect.succeed(snapshot),
@@ -47,7 +51,22 @@ function makePoolLayer(
   return DesktopBackendPool.layer.pipe(
     Layer.provideMerge(
       Layer.mergeAll(
-        FileSystem.layerNoop({}),
+        FileSystem.layerNoop({
+          // The pool resolves backend ownership at layer init. No published
+          // runtime state means "nothing owns this state dir", i.e. spawn.
+          readFileString: (path: string) =>
+            Effect.fail(
+              PlatformError.systemError({
+                _tag: "NotFound",
+                module: "FileSystem",
+                method: "readFileString",
+                pathOrDescriptor: path,
+              }),
+            ),
+        }),
+        Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
+          stateDir: "/tmp/t3-test/userdata",
+        } as unknown as DesktopEnvironment.DesktopEnvironment["Service"]),
         Layer.succeed(
           ChildProcessSpawner.ChildProcessSpawner,
           ChildProcessSpawner.make(() => Effect.die("unexpected child process spawn")),

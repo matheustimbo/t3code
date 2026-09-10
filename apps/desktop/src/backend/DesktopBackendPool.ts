@@ -95,6 +95,8 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 
 import * as DesktopBackendConfiguration from "./DesktopBackendConfiguration.ts";
 import * as DesktopBackendManager from "./DesktopBackendManager.ts";
+import * as DesktopBackendOwnership from "./DesktopBackendOwnership.ts";
+import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
@@ -146,11 +148,19 @@ export class DesktopBackendPool extends Context.Service<
     // Snapshot of all currently-registered instances. Order is unspecified;
     // callers that need a canonical "primary first" view should sort by id.
     readonly list: Effect.Effect<readonly DesktopBackendInstance[]>;
+    // Only the instances whose server process this app spawned. Quit, update
+    // and restart paths must use this instead of `list`: an attached instance
+    // wraps a server someone else started, and stopping it would take down
+    // whatever else depends on it.
+    readonly managed: Effect.Effect<readonly DesktopBackendInstance[]>;
     // Convenience accessor for the always-registered primary instance.
     // Currently equivalent to `get(PRIMARY_INSTANCE_ID)` unwrapped, but
     // exposed as a typed effect so consumers don't have to handle the
     // Option for the case that's guaranteed to be present.
     readonly primary: Effect.Effect<DesktopBackendInstance>;
+    // How the primary backend was obtained. Startup reads this to decide where
+    // renderer assets come from and to skip claiming a port it must not claim.
+    readonly ownership: DesktopBackendOwnership.DesktopBackendOwnership;
     // Build a fresh DesktopBackendInstance from `spec` and add it to the
     // registry. The pool owns the instance's scope: unregister(id) or pool
     // teardown closes it and runs the instance's auto-stop finalizer. The
@@ -214,6 +224,7 @@ export const layer = Layer.effect(
     const desktopWindow = yield* DesktopWindow.DesktopWindow;
     const electronDialog = yield* ElectronDialog.ElectronDialog;
     const appSettings = yield* DesktopAppSettings.DesktopAppSettings;
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
     // Anchor the pool's lifetime to its layer scope so registered
     // instance scopes can be forked off it. Without this, instance
     // scopes are orphaned: they only close via explicit unregister()
@@ -277,31 +288,50 @@ export const layer = Layer.effect(
       },
     );
 
-    const primary = yield* DesktopBackendManager.makeBackendInstance({
-      id: DesktopBackendManager.PRIMARY_INSTANCE_ID,
-      // Keep this lazy. The pool layer is initialized before startup loads
-      // persisted desktop settings, so resolving the primary label here would
-      // permanently capture DEFAULT_DESKTOP_SETTINGS and mislabel WSL-only
-      // primaries as Windows.
-      label: configuration.resolvePrimaryLabel,
-      configResolve: configuration.resolvePrimary,
-      // Window creation errors propagating out of handleBackendReady must
-      // not block the readiness callback (that would prevent restartAttempt
-      // from being reset), so we absorb them here. The window service only
-      // logs on success, so log the failure here before swallowing it —
-      // otherwise a post-readiness window-open failure vanishes silently and
-      // is near-impossible to diagnose in production.
-      onReady: (httpBaseUrl) =>
-        desktopWindow.handleBackendReady(httpBaseUrl).pipe(
-          Effect.catch((error) =>
-            logBackendPoolWarning("failed to open main window after backend readiness", {
-              error: error.message,
-            }),
-          ),
-        ),
-      onShutdown: () => desktopWindow.handleBackendNotReady,
-      onPreflightFailed: handlePrimaryPreflightFailure,
+    // Decide ownership before building the primary. A server that already owns
+    // this state directory must be attached to, not raced: two servers over one
+    // state.sqlite keep separate in-memory orchestration state and would both
+    // claim the same provider processes, terminals and checkpoint refs.
+    const ownership = yield* DesktopBackendOwnership.resolveBackendOwnership({
+      stateDir: environment.stateDir,
     });
+
+    const onPrimaryReady = (httpBaseUrl: URL) =>
+      desktopWindow.handleBackendReady(httpBaseUrl).pipe(
+        Effect.catch((error) =>
+          logBackendPoolWarning("failed to open main window after backend readiness", {
+            error: error.message,
+          }),
+        ),
+      );
+
+    const primary =
+      ownership._tag === "Attached"
+        ? yield* DesktopBackendManager.makeAttachedBackendInstance({
+            id: DesktopBackendManager.PRIMARY_INSTANCE_ID,
+            label: configuration.resolvePrimaryLabel,
+            httpBaseUrl: ownership.origin,
+            onReady: onPrimaryReady,
+            onShutdown: () => desktopWindow.handleBackendNotReady,
+          })
+        : yield* DesktopBackendManager.makeBackendInstance({
+            id: DesktopBackendManager.PRIMARY_INSTANCE_ID,
+            // Keep this lazy. The pool layer is initialized before startup loads
+            // persisted desktop settings, so resolving the primary label here would
+            // permanently capture DEFAULT_DESKTOP_SETTINGS and mislabel WSL-only
+            // primaries as Windows.
+            label: configuration.resolvePrimaryLabel,
+            configResolve: configuration.resolvePrimary,
+            // Window creation errors propagating out of handleBackendReady must
+            // not block the readiness callback (that would prevent restartAttempt
+            // from being reset), so we absorb them here. The window service only
+            // logs on success, so log the failure here before swallowing it —
+            // otherwise a post-readiness window-open failure vanishes silently and
+            // is near-impossible to diagnose in production.
+            onReady: onPrimaryReady,
+            onShutdown: () => desktopWindow.handleBackendNotReady,
+            onPreflightFailed: handlePrimaryPreflightFailure,
+          });
 
     const instancesRef = yield* SynchronizedRef.make<
       ReadonlyMap<BackendInstanceId, RegisteredInstance>
@@ -421,6 +451,14 @@ export const layer = Layer.effect(
         }).pipe(Effect.ensuring(finish));
       });
 
+    const list = SynchronizedRef.get(instancesRef).pipe(
+      Effect.map((instances) =>
+        Array.from(instances.values()).flatMap((entry) =>
+          entry._tag === "Active" ? [entry.instance] : [],
+        ),
+      ),
+    );
+
     return DesktopBackendPool.of({
       get: (id) =>
         SynchronizedRef.get(instancesRef).pipe(
@@ -429,14 +467,12 @@ export const layer = Layer.effect(
             return entry?._tag === "Active" ? Option.some(entry.instance) : Option.none();
           }),
         ),
-      list: SynchronizedRef.get(instancesRef).pipe(
-        Effect.map((instances) =>
-          Array.from(instances.values()).flatMap((entry) =>
-            entry._tag === "Active" ? [entry.instance] : [],
-          ),
-        ),
+      list,
+      managed: list.pipe(
+        Effect.map((instances) => instances.filter((instance) => instance.ownership === "managed")),
       ),
       primary: Effect.succeed(primary),
+      ownership,
       register,
       unregister,
     });
@@ -466,7 +502,20 @@ export const layerTest = (
       return DesktopBackendPool.of({
         get: (id) => Effect.succeed(Option.fromNullishOr(byId.get(id))),
         list: Effect.succeed(Array.from(byId.values())),
+        managed: Effect.succeed(
+          Array.from(byId.values()).filter((instance) => instance.ownership === "managed"),
+        ),
         primary: Effect.succeed(primary),
+        ownership:
+          primary.ownership === "attached"
+            ? {
+                _tag: "Attached",
+                origin: new URL("http://127.0.0.1:3773"),
+                rendererOrigin: new URL("http://127.0.0.1:3773"),
+                pid: 0,
+                environmentId: "test",
+              }
+            : { _tag: "Owned" },
         register: () => Effect.die("DesktopBackendPool.layerTest does not support register"),
         unregister: () => Effect.die("DesktopBackendPool.layerTest does not support unregister"),
       });

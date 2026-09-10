@@ -8,8 +8,11 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as HttpClient from "effect/unstable/http/HttpClient";
+import { ChildProcessSpawner } from "effect/unstable/process";
 
+import * as DesktopAttachedCredential from "./DesktopAttachedCredential.ts";
 import * as DesktopBackendPool from "./DesktopBackendPool.ts";
+import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 
 export class DesktopLocalEnvironmentAuthBackendNotConfiguredError extends Schema.TaggedError<DesktopLocalEnvironmentAuthBackendNotConfiguredError>()(
   "DesktopLocalEnvironmentAuthBackendNotConfiguredError",
@@ -32,6 +35,7 @@ export class DesktopLocalEnvironmentAuthSessionBootstrapError extends Schema.Tag
 export const DesktopLocalEnvironmentAuthError = Schema.Union([
   DesktopLocalEnvironmentAuthBackendNotConfiguredError,
   DesktopLocalEnvironmentAuthSessionBootstrapError,
+  DesktopAttachedCredential.DesktopAttachedCredentialError,
 ]);
 export type DesktopLocalEnvironmentAuthError = typeof DesktopLocalEnvironmentAuthError.Type;
 
@@ -45,7 +49,9 @@ export class DesktopLocalEnvironmentAuth extends Context.Service<
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const pool = yield* DesktopBackendPool.DesktopBackendPool;
+  const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const httpClient = yield* HttpClient.HttpClient;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const tokenRef = yield* Ref.make(Option.none<string>());
   const mutex = yield* Semaphore.make(1);
 
@@ -59,6 +65,20 @@ export const make = Effect.gen(function* () {
 
         const instances = yield* pool.list;
         const primary = instances.find((instance) => instance.id === PRIMARY_LOCAL_ENVIRONMENT_ID);
+
+        // An attached server never received a bootstrap token from us, so there
+        // is nothing to exchange. Mint a session directly against the state
+        // directory the two processes share instead.
+        if (primary !== undefined && primary.ownership === "attached") {
+          const token = yield* DesktopAttachedCredential.issueAttachedBearerToken({
+            executablePath: process.execPath,
+            entryPath: environment.backendEntryPath,
+            stateDir: environment.stateDir,
+          }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+          yield* Ref.set(tokenRef, Option.some(token));
+          return token;
+        }
+
         const configOption = primary === undefined ? Option.none() : yield* primary.currentConfig;
         if (Option.isNone(configOption)) {
           return yield* new DesktopLocalEnvironmentAuthBackendNotConfiguredError();

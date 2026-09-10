@@ -95,6 +95,23 @@ export const getLocalEnvironmentBootstraps = DesktopIpc.makeSyncIpcMethod({
     const bootstraps: DesktopEnvironmentBootstrap[] = [];
     for (const instance of instances) {
       const isPrimary = instance.id === PRIMARY_LOCAL_ENVIRONMENT_ID;
+      // An attached backend has an endpoint but no start config, because this
+      // app never resolved one for a server it did not spawn. It also carries
+      // no bootstrap token: the renderer gets its bearer from
+      // getLocalEnvironmentBearerToken, which mints one against the shared
+      // state directory instead of replaying a token we injected at spawn.
+      if (instance.ownership === "attached") {
+        const endpoint = yield* instance.httpBaseUrl;
+        if (Option.isNone(endpoint)) continue;
+        bootstraps.push({
+          id: instance.id,
+          label: yield* instance.label,
+          runningDistro: null,
+          httpBaseUrl: endpoint.value.href,
+          wsBaseUrl: toWebSocketBaseUrl(endpoint.value),
+        });
+        continue;
+      }
       const config = yield* instance.currentConfig;
       const snapshot = yield* instance.snapshot;
       // A secondary backend (e.g. a parallel WSL backend) that hasn't produced

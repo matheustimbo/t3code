@@ -518,7 +518,8 @@ export const make = Effect.gen(function* () {
 
     yield* Ref.set(desktopState.quitting, false);
     yield* Effect.gen(function* () {
-      const instances = yield* pool.list;
+      // Only restart what we stopped: an attached backend was never stopped.
+      const instances = yield* pool.managed;
       const restartExit = yield* Effect.forEach(instances, (instance) => instance.start, {
         concurrency: "unbounded",
         discard: true,
@@ -586,14 +587,15 @@ export const make = Effect.gen(function* () {
         yield* Ref.set(desktopState.quitting, true);
 
         return yield* Effect.gen(function* () {
-          // Stop every backend in the pool, not just the primary. With
+          // Stop every backend this app spawned, not just the primary. With
           // parallel WSL + Windows backends, leaving the WSL instance up
           // means quitAndInstall's app.quit() exits before the pool's
           // scope cascade has a chance to run its stop finalizer, so the
           // WSL child gets hard-killed by the OS instead of receiving
           // SIGTERM + grace. Stops run concurrently with the same 5s
-          // budget the primary had on its own.
-          const instances = yield* pool.list;
+          // budget the primary had on its own. An attached backend is not
+          // ours to stop, and updating this app does not update it.
+          const instances = yield* pool.managed;
           yield* Effect.forEach(
             instances,
             (instance) => instance.stop({ timeout: Duration.seconds(5) }),

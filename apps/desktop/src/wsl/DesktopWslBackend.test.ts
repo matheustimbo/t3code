@@ -26,6 +26,8 @@ function makeStubInstance(input: {
   return {
     id: input.id,
     label: Effect.succeed(input.label),
+    ownership: "managed",
+    httpBaseUrl: Effect.succeed(Option.none()),
     start: input.start ?? Effect.void,
     stop: () => Effect.void,
     currentConfig: Effect.succeed(Option.none<DesktopBackendStartConfig>()),
@@ -104,6 +106,8 @@ describe("DesktopWslBackend", () => {
         ),
       list: Effect.succeed([primary]),
       primary: Effect.succeed(primary),
+      managed: Effect.succeed([primary]),
+      ownership: { _tag: "Owned" },
       register: (spec) =>
         Effect.sync(() => {
           registeredSpec = spec;
