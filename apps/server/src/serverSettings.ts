@@ -1070,18 +1070,16 @@ const make = Effect.gen(function* () {
         }
         for (const sourceId of Object.keys(current.usageLimitSources)) {
           if (sourceId in next.usageLimitSources) continue;
-          yield* secretStore
-            .remove(usageLimitSourceSecretName(sourceId))
-            .pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ServerSettingsError({
-                    settingsPath,
-                    operation: "remove-stale-secret",
-                    cause,
-                  }),
-              ),
-            );
+          yield* secretStore.remove(usageLimitSourceSecretName(sourceId)).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ServerSettingsError({
+                  settingsPath,
+                  operation: "remove-stale-secret",
+                  cause,
+                }),
+            ),
+          );
         }
         return {
           ...next,
