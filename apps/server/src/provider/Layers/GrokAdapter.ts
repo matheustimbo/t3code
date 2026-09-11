@@ -990,7 +990,14 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
           const acp = yield* makeGrokAcpRuntime({
             grokSettings,
             owner: { threadId: input.threadId },
-            ...(options?.environment ? { environment: options.environment } : {}),
+            ...(options?.environment || mcpSession?.agentDeviceEnvironment
+              ? {
+                  environment: McpProviderSession.withAgentDeviceEnvironment(
+                    options?.environment ?? process.env,
+                    mcpSession,
+                  ),
+                }
+              : {}),
             childProcessSpawner,
             cwd,
             runtimeMode: input.runtimeMode,
