@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { applyComposerSkillModePrefix, serializeComposerFileLink } from "./composerTrigger.ts";
+import {
+  applyComposerSkillModePrefix,
+  serializeComposerFileLink,
+  startsWithProviderSlashCommand,
+} from "./composerTrigger.ts";
 
 describe("serializeComposerFileLink", () => {
   it("uses the basename as the markdown label", () => {
@@ -90,5 +94,23 @@ describe("applyComposerSkillModePrefix", () => {
     expect(
       applyComposerSkillModePrefix("fix the flaky test", { name: "review", label: "Review" }),
     ).toBe("$review fix the flaky test");
+  });
+});
+
+describe("startsWithProviderSlashCommand", () => {
+  it("recognizes a bare command", () => {
+    expect(startsWithProviderSlashCommand("/compact")).toBe(true);
+  });
+
+  it("recognizes a command carrying arguments", () => {
+    expect(startsWithProviderSlashCommand("/plugin:skill do the thing")).toBe(true);
+  });
+
+  it("ignores an absolute path", () => {
+    expect(startsWithProviderSlashCommand("/home/theo/app.ts crashed")).toBe(false);
+  });
+
+  it("ignores prose", () => {
+    expect(startsWithProviderSlashCommand("fix the flaky test")).toBe(false);
   });
 });
