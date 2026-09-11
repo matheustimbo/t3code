@@ -115,6 +115,45 @@ export function detectComposerTrigger(
   };
 }
 
+export interface ComposerSkillMode {
+  /** Provider skill name — the token body of the `$name` mention. */
+  name: string;
+  /** Display label shown on the composer chip. */
+  label: string;
+}
+
+export function applyComposerSkillModePrefix(
+  text: string,
+  mode: ComposerSkillMode | null | undefined,
+): string {
+  const name = mode?.name.trim();
+  if (!name) {
+    return text;
+  }
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return text;
+  }
+  // A recalled or resent prompt already carries the mention, so prefixing it
+  // again would double it. The token has to end at a boundary, since
+  // "$reviewer" names a different skill than "$review".
+  const mention = `$${name}`;
+  if (text.startsWith(mention)) {
+    const next = text.charAt(mention.length);
+    if (next === "" || isWhitespace(next)) {
+      return text;
+    }
+  }
+  // Command names come from arbitrary file names ("/deploy.prod",
+  // "/plugin:skill"), so any first token without a second slash counts as
+  // one, and prefixing it would leave prose the provider never runs. An
+  // absolute path like "/home/theo/app.ts" is not a command and keeps it.
+  if (/^\/[^\s/]+(?:\s|$)/u.test(trimmed)) {
+    return text;
+  }
+  return `$${name} ${text}`;
+}
+
 export function replaceTextRange(
   text: string,
   rangeStart: number,
