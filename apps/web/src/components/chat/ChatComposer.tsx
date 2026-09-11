@@ -850,6 +850,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import {
   BotIcon,
+  BoxIcon,
   CircleAlertIcon,
   PaperclipIcon,
   PencilRulerIcon,
@@ -1000,6 +1001,36 @@ function useRestingComposerControlsLayout(host: HTMLDivElement | null) {
 
   return { controlsRef, hiddenBlockCount: layout.hiddenCount, controlsVisible: layout.visible };
 }
+
+const ComposerSkillModeChip = memo(function ComposerSkillModeChip(props: {
+  skillMode: ComposerSkillMode;
+  size: "sm" | "xs";
+  onRemove: () => void;
+}) {
+  const removeLabel = `Remove ${props.skillMode.label} skill mode`;
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <ComposerControl
+            size={props.size}
+            className="shrink-0 whitespace-nowrap"
+            type="button"
+            onClick={props.onRemove}
+            aria-label={removeLabel}
+          />
+        }
+      >
+        <ComposerControlIcon icon={BoxIcon} size={props.size} />
+        <span className="max-w-32 truncate">{props.skillMode.label}</span>
+        <ComposerControlIcon icon={XIcon} size={props.size} className="opacity-60" />
+      </TooltipTrigger>
+      <TooltipPopup side="top">
+        {`Every message starts with $${props.skillMode.name}. Click to remove.`}
+      </TooltipPopup>
+    </Tooltip>
+  );
+});
 
 const ComposerFooterModeControls = memo(function ComposerFooterModeControls(props: {
   showInteractionModeToggle: boolean;
@@ -2882,6 +2913,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     ],
   );
 
+  const clearComposerSkillMode = useCallback(() => {
+    setComposerDraftSkillMode(composerDraftTarget, null);
+  }, [composerDraftTarget, setComposerDraftSkillMode]);
+
   const { onUsageLimitsCommand } = props;
   const onSelectComposerItem = useCallback(
     (item: ComposerCommandItem) => {
@@ -4157,6 +4192,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           size="xs"
           className="@max-[400px]/composer-surface:hidden"
           data-resting-controls-separator="true"
+        />
+      ) : null}
+      {composerSkillMode ? (
+        <ComposerSkillModeChip
+          skillMode={composerSkillMode}
+          size={composerControlsInStrip ? "xs" : "sm"}
+          onRemove={clearComposerSkillMode}
         />
       ) : null}
       <ProviderModelPicker
