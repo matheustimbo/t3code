@@ -1018,6 +1018,7 @@ const ComposerSkillModeChip = memo(function ComposerSkillModeChip(props: {
             type="button"
             onClick={props.onRemove}
             aria-label={removeLabel}
+            data-composer-skill-mode-chip="true"
           />
         }
       >
