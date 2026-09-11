@@ -122,6 +122,17 @@ export interface ComposerSkillMode {
   label: string;
 }
 
+/**
+ * Whether the text opens with a `/command` the provider expands itself.
+ * Anything prepended to one leaves prose the provider never runs, so every
+ * prompt prefix has to skip it. Command names come from arbitrary file names
+ * ("/deploy.prod", "/plugin:skill"), so any first token without a second
+ * slash counts; an absolute path like "/home/theo/app.ts" does not.
+ */
+export function startsWithProviderSlashCommand(text: string): boolean {
+  return /^\/[^\s/]+(?:\s|$)/u.test(text.trim());
+}
+
 export function applyComposerSkillModePrefix(
   text: string,
   mode: ComposerSkillMode | null | undefined,
@@ -138,17 +149,13 @@ export function applyComposerSkillModePrefix(
   // again would double it. The token has to end at a boundary, since
   // "$reviewer" names a different skill than "$review".
   const mention = `$${name}`;
-  if (text.startsWith(mention)) {
-    const next = text.charAt(mention.length);
+  if (trimmed.startsWith(mention)) {
+    const next = trimmed.charAt(mention.length);
     if (next === "" || isWhitespace(next)) {
       return text;
     }
   }
-  // Command names come from arbitrary file names ("/deploy.prod",
-  // "/plugin:skill"), so any first token without a second slash counts as
-  // one, and prefixing it would leave prose the provider never runs. An
-  // absolute path like "/home/theo/app.ts" is not a command and keeps it.
-  if (/^\/[^\s/]+(?:\s|$)/u.test(trimmed)) {
+  if (startsWithProviderSlashCommand(trimmed)) {
     return text;
   }
   return `$${name} ${text}`;
