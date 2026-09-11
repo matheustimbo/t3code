@@ -129,6 +129,7 @@ describe("ComposerCommandMenu", () => {
     expect(markup).toContain("Mode");
     // The modifier glyph is platform-dependent; the key name is not.
     expect(markup).toContain("Enter");
+    expect(markup).not.toContain(">App Skill</span>");
     expect(markup).not.toContain('data-slot="badge"');
   });
 });
