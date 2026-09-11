@@ -27,10 +27,7 @@ import {
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
 } from "@t3tools/contracts";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
-import {
-  type ComposerSkillMode,
-  serializeComposerFileLink,
-} from "@t3tools/shared/composerTrigger";
+import { type ComposerSkillMode, serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
 import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
 import {
@@ -1642,9 +1639,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   );
   const setComposerDraftSkillMode = useComposerDraftStore((store) => store.setSkillMode);
   const getComposerDraft = useComposerDraftStore((store) => store.getComposerDraft);
-  const composerSkillMode = useComposerDraftStore(
-    (store) => store.getComposerDraft(composerDraftTarget)?.skillMode ?? null,
-  );
+  const composerSkillMode = composerDraft.skillMode;
 
   useEffect(() => {
     if (!attachmentUploadsCapabilityKnown) {
