@@ -10,6 +10,7 @@ import type {
   OrchestrationSession,
   OrchestrationThread,
   OrchestrationThreadActivity,
+  QueuedMessageRef,
   ThreadPullRequestLink,
   TurnId,
 } from "@t3tools/contracts";
@@ -87,6 +88,31 @@ function isResolvableContextWindowActivity(activity: OrchestrationThreadActivity
       : null;
   const usedTokens = payload?.usedTokens;
   return typeof usedTokens === "number" && Number.isFinite(usedTokens) && usedTokens >= 0;
+}
+
+/**
+ * The queue is empty on almost every thread, and these run on every message
+ * and every turn start. Returning the same array and the same message objects
+ * when nothing changed is what keeps the timeline's row memoization alive; a
+ * fresh array each event re-renders the whole list.
+ */
+function dropQueuedMessage(
+  queuedMessages: ReadonlyArray<QueuedMessageRef>,
+  messageId: MessageId,
+): ReadonlyArray<QueuedMessageRef> {
+  return queuedMessages.some((entry) => entry.messageId === messageId)
+    ? queuedMessages.filter((entry) => entry.messageId !== messageId)
+    : queuedMessages;
+}
+
+function setMessageQueued(
+  messages: OrchestrationThread["messages"],
+  messageId: MessageId,
+  queued: boolean,
+): OrchestrationThread["messages"] {
+  return messages.some((entry) => entry.id === messageId && entry.queued !== queued)
+    ? messages.map((entry) => (entry.id === messageId ? { ...entry, queued } : entry))
+    : messages;
 }
 
 /**
@@ -346,12 +372,8 @@ export function applyThreadDetailEvent(
             : {}),
           runtimeMode: event.payload.runtimeMode,
           interactionMode: event.payload.interactionMode,
-          messages: thread.messages.map((entry) =>
-            entry.id === event.payload.messageId ? { ...entry, queued: false } : entry,
-          ),
-          queuedMessages: (thread.queuedMessages ?? []).filter(
-            (entry) => entry.messageId !== event.payload.messageId,
-          ),
+          messages: setMessageQueued(thread.messages, event.payload.messageId, false),
+          queuedMessages: dropQueuedMessage(thread.queuedMessages ?? [], event.payload.messageId),
           updatedAt: event.occurredAt,
         },
       };
@@ -427,7 +449,7 @@ export function applyThreadDetailEvent(
                   createdAt: event.payload.createdAt,
                 },
               ]
-          : existingQueuedMessages.filter((entry) => entry.messageId !== event.payload.messageId);
+          : dropQueuedMessage(existingQueuedMessages, event.payload.messageId);
       const previousLatestUserMessageAt = thread.latestUserMessageAt ?? null;
       const latestUserMessageAt =
         event.payload.role === "user" &&
@@ -524,9 +546,7 @@ export function applyThreadDetailEvent(
         kind: "updated",
         thread: {
           ...thread,
-          messages: thread.messages.map((entry) =>
-            entry.id === event.payload.messageId ? { ...entry, queued: true } : entry,
-          ),
+          messages: setMessageQueued(thread.messages, event.payload.messageId, true),
           queuedMessages,
           updatedAt: event.occurredAt,
         },
@@ -538,12 +558,8 @@ export function applyThreadDetailEvent(
         kind: "updated",
         thread: {
           ...thread,
-          messages: thread.messages.map((entry) =>
-            entry.id === event.payload.messageId ? { ...entry, queued: false } : entry,
-          ),
-          queuedMessages: (thread.queuedMessages ?? []).filter(
-            (entry) => entry.messageId !== event.payload.messageId,
-          ),
+          messages: setMessageQueued(thread.messages, event.payload.messageId, false),
+          queuedMessages: dropQueuedMessage(thread.queuedMessages ?? [], event.payload.messageId),
           updatedAt: event.occurredAt,
         },
       };

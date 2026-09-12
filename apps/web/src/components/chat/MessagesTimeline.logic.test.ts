@@ -55,6 +55,7 @@ describe("streaming row projection", () => {
         createdAt: time(0),
         updatedAt: time(0),
         streaming: false,
+        queued: false,
       },
       {
         id: MessageId.make("history-assistant"),
@@ -64,6 +65,7 @@ describe("streaming row projection", () => {
         createdAt: time(3),
         updatedAt: time(4),
         streaming: false,
+        queued: false,
       },
       {
         id: MessageId.make("live-user"),
@@ -73,6 +75,7 @@ describe("streaming row projection", () => {
         createdAt: time(5),
         updatedAt: time(5),
         streaming: false,
+        queued: false,
       },
       {
         id: MessageId.make("live-assistant"),
@@ -82,6 +85,7 @@ describe("streaming row projection", () => {
         createdAt: time(7),
         updatedAt: time(7),
         streaming: true,
+        queued: false,
       },
     ];
     const work: WorkLogEntry[] = [
@@ -386,6 +390,7 @@ describe("streaming row projection", () => {
       id: ThreadId.make("streaming-thread"),
       projectId: ProjectId.make("project"),
       title: "Long thread",
+      latestUserMessageAt: null,
       modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
       runtimeMode: "full-access",
       interactionMode: "default",
