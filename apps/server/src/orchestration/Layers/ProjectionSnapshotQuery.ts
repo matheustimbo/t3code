@@ -118,12 +118,14 @@ const ProjectionThreadMessageDbRowSchema = ProjectionThreadMessage.mapFields(
     isStreaming: Schema.Number,
     attachments: Schema.NullOr(Schema.fromJsonString(Schema.Array(ChatAttachment))),
     queuedTurnStart: Schema.NullOr(Schema.fromJsonString(QueuedTurnStart)),
+    queuedRevision: Schema.Number,
   }),
 );
 const ProjectionQueuedMessageDbRowSchema = Schema.Struct({
   threadId: ThreadId,
   messageId: MessageId,
   queuedTurnStart: Schema.fromJsonString(QueuedTurnStart),
+  queuedRevision: Schema.Number,
   createdAt: IsoDateTime,
 });
 const ProjectionTurnStartMessageDbRowSchema = ProjectionThreadMessageDbRowSchema.mapFields(
@@ -701,6 +703,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           text,
           attachments_json AS "attachments",
           queued_turn_start_json AS "queuedTurnStart",
+          queued_revision AS "queuedRevision",
           is_streaming AS "isStreaming",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
@@ -718,6 +721,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           thread_id AS "threadId",
           message_id AS "messageId",
           queued_turn_start_json AS "queuedTurnStart",
+          queued_revision AS "queuedRevision",
           created_at AS "createdAt"
         FROM projection_thread_messages
         WHERE queued_turn_start_json IS NOT NULL
@@ -1319,6 +1323,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         text,
         attachments_json AS "attachments",
         queued_turn_start_json AS "queuedTurnStart",
+        queued_revision AS "queuedRevision",
         is_streaming AS "isStreaming",
         created_at AS "createdAt",
         updated_at AS "updatedAt",
@@ -1352,6 +1357,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           text,
           attachments_json AS "attachments",
           queued_turn_start_json AS "queuedTurnStart",
+          queued_revision AS "queuedRevision",
           is_streaming AS "isStreaming",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
@@ -1370,6 +1376,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           thread_id AS "threadId",
           message_id AS "messageId",
           queued_turn_start_json AS "queuedTurnStart",
+          queued_revision AS "queuedRevision",
           created_at AS "createdAt"
         FROM projection_thread_messages
         WHERE thread_id = ${threadId}
@@ -1748,6 +1755,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           text,
           attachments_json AS "attachments",
           queued_turn_start_json AS "queuedTurnStart",
+          queued_revision AS "queuedRevision",
           is_streaming AS "isStreaming",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
@@ -2181,6 +2189,7 @@ pending_approval_requests AS (
                 queuedMessages.push({
                   messageId: row.messageId,
                   queuedTurnStart: row.queuedTurnStart,
+                  revision: row.queuedRevision,
                   createdAt: row.createdAt,
                 });
                 queuedMessagesByThread.set(row.threadId, queuedMessages);
@@ -2570,6 +2579,7 @@ pending_approval_requests AS (
                 threadQueuedMessages.push({
                   messageId: row.messageId,
                   queuedTurnStart: row.queuedTurnStart,
+                  revision: row.queuedRevision,
                   createdAt: row.createdAt,
                 });
                 queuedMessagesByThread.set(row.threadId, threadQueuedMessages);
@@ -3602,6 +3612,7 @@ pending_approval_requests AS (
         queuedMessages: queuedMessageRows.map((row) => ({
           messageId: row.messageId,
           queuedTurnStart: row.queuedTurnStart,
+          revision: row.queuedRevision,
           createdAt: row.createdAt,
         })),
         proposedPlans: proposedPlanRows.map(mapProposedPlanRow),

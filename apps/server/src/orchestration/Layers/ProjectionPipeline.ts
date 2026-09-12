@@ -1176,6 +1176,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               text: event.payload.text,
               ...(attachments !== undefined ? { attachments: [...attachments] } : {}),
               queuedTurnStart: event.payload.queuedTurnStart ?? null,
+              queuedRevision: 0,
               createdAt: event.payload.createdAt,
               updatedAt: event.payload.updatedAt,
             });
@@ -1205,6 +1206,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             text: nextText,
             ...(nextAttachments !== undefined ? { attachments: [...nextAttachments] } : {}),
             queuedTurnStart: event.payload.queuedTurnStart ?? null,
+            queuedRevision: previousMessage?.queuedRevision ?? 0,
             isStreaming: false,
             createdAt: previousMessage?.createdAt ?? event.payload.createdAt,
             updatedAt: event.payload.updatedAt,

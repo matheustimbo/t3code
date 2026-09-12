@@ -14,6 +14,7 @@ import {
   HasProjectionThreadAssistantMessageInput,
   ProjectionThreadMessageRepository,
   type ProjectionThreadMessageRepositoryShape,
+  DeleteProjectionThreadMessageInput,
   DeleteProjectionThreadMessagesInput,
   ListProjectionThreadMessagesInput,
   ProjectionThreadMessage,
@@ -24,6 +25,7 @@ const ProjectionThreadMessageDbRowSchema = ProjectionThreadMessage.mapFields(
     isStreaming: Schema.Number,
     attachments: Schema.NullOr(Schema.fromJsonString(Schema.Array(ChatAttachment))),
     queuedTurnStart: Schema.NullOr(Schema.fromJsonString(QueuedTurnStart)),
+    queuedRevision: Schema.Number,
   }),
 );
 const ProjectionThreadMessageExistsDbRowSchema = Schema.Struct({ exists: Schema.Number });
@@ -43,6 +45,7 @@ function toProjectionThreadMessage(
     updatedAt: row.updatedAt,
     ...(row.attachments !== null ? { attachments: row.attachments } : {}),
     queuedTurnStart: row.queuedTurnStart,
+    queuedRevision: row.queuedRevision,
   };
 }
 
@@ -65,6 +68,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           text,
           attachments_json,
           queued_turn_start_json,
+          queued_revision,
           is_streaming,
           created_at,
           updated_at
@@ -84,6 +88,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
             )
           ),
           ${nextQueuedTurnStartJson},
+          ${row.queuedRevision},
           ${row.isStreaming ? 1 : 0},
           ${row.createdAt},
           ${row.updatedAt}
@@ -99,6 +104,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
             projection_thread_messages.attachments_json
           ),
           queued_turn_start_json = excluded.queued_turn_start_json,
+          queued_revision = excluded.queued_revision,
           is_streaming = excluded.is_streaming,
           created_at = excluded.created_at,
           updated_at = excluded.updated_at
@@ -120,6 +126,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           text,
           attachments_json,
           queued_turn_start_json,
+          queued_revision,
           is_streaming,
           created_at,
           updated_at
@@ -132,6 +139,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           ${row.text},
           ${nextAttachmentsJson},
           ${row.queuedTurnStart === null ? null : JSON.stringify(row.queuedTurnStart)},
+          ${row.queuedRevision},
           1,
           ${row.createdAt},
           ${row.updatedAt}
@@ -147,6 +155,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
             projection_thread_messages.attachments_json
           ),
           queued_turn_start_json = excluded.queued_turn_start_json,
+          queued_revision = excluded.queued_revision,
           is_streaming = 1,
           updated_at = excluded.updated_at
       `;
@@ -166,6 +175,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           text,
           attachments_json AS "attachments",
           queued_turn_start_json AS "queuedTurnStart",
+          queued_revision AS "queuedRevision",
           is_streaming AS "isStreaming",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
@@ -205,6 +215,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           text,
           attachments_json AS "attachments",
           queued_turn_start_json AS "queuedTurnStart",
+          queued_revision AS "queuedRevision",
           is_streaming AS "isStreaming",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
@@ -227,6 +238,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           text,
           attachments_json AS "attachments",
           queued_turn_start_json AS "queuedTurnStart",
+          queued_revision AS "queuedRevision",
           is_streaming AS "isStreaming",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
@@ -269,6 +281,14 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
         DELETE FROM projection_thread_messages
         WHERE thread_id = ${threadId}
       `,
+  });
+
+  const deleteProjectionThreadMessageRow = SqlSchema.void({
+    Request: DeleteProjectionThreadMessageInput,
+    execute: ({ messageId }) => sql`
+      DELETE FROM projection_thread_messages
+      WHERE message_id = ${messageId}
+    `,
   });
 
   const upsert: ProjectionThreadMessageRepositoryShape["upsert"] = (row) =>
@@ -347,6 +367,13 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
       ),
     );
 
+  const deleteByMessageId: ProjectionThreadMessageRepositoryShape["deleteByMessageId"] = (input) =>
+    deleteProjectionThreadMessageRow(input).pipe(
+      Effect.mapError(
+        toPersistenceSqlError("ProjectionThreadMessageRepository.deleteByMessageId:query"),
+      ),
+    );
+
   return {
     upsert,
     appendStreaming,
@@ -357,6 +384,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
     countQueuedByThreadId,
     getLatestUserMessageAt,
     deleteByThreadId,
+    deleteByMessageId,
   } satisfies ProjectionThreadMessageRepositoryShape;
 });
 

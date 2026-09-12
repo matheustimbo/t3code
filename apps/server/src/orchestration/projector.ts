@@ -825,6 +825,7 @@ export function projectEvent(
                     messageId: payload.messageId,
                     queuedTurnStart: payload.queuedTurnStart,
                     createdAt: payload.createdAt,
+                    revision: 0,
                   },
                 ]
               : existingQueuedMessages;
@@ -899,6 +900,7 @@ export function projectEvent(
                   createdAt:
                     thread.messages.find((entry) => entry.id === payload.messageId)?.createdAt ??
                     payload.updatedAt,
+                  revision: 0,
                 },
               ];
           return {

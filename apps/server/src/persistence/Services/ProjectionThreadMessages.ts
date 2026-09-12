@@ -9,6 +9,7 @@
 import {
   ChatAttachment,
   MessageId,
+  NonNegativeInt,
   OrchestrationMessageRole,
   QueuedTurnStart,
   ThreadId,
@@ -31,6 +32,7 @@ export const ProjectionThreadMessage = Schema.Struct({
   text: Schema.String,
   attachments: Schema.optional(Schema.Array(ChatAttachment)),
   queuedTurnStart: Schema.NullOr(QueuedTurnStart),
+  queuedRevision: NonNegativeInt,
   isStreaming: Schema.Boolean,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -65,6 +67,9 @@ export const DeleteProjectionThreadMessagesInput = Schema.Struct({
   threadId: ThreadId,
 });
 export type DeleteProjectionThreadMessagesInput = typeof DeleteProjectionThreadMessagesInput.Type;
+
+export const DeleteProjectionThreadMessageInput = Schema.Struct({ messageId: MessageId });
+export type DeleteProjectionThreadMessageInput = typeof DeleteProjectionThreadMessageInput.Type;
 
 /**
  * ProjectionThreadMessageRepositoryShape - Service API for projected thread messages.
@@ -127,6 +132,12 @@ export interface ProjectionThreadMessageRepositoryShape {
    */
   readonly deleteByThreadId: (
     input: DeleteProjectionThreadMessagesInput,
+  ) => Effect.Effect<void, ProjectionRepositoryError>;
+
+  /** Delete one projected message. `deleteByThreadId` is the thread-teardown path;
+      this is the only way to remove a single row. */
+  readonly deleteByMessageId: (
+    input: DeleteProjectionThreadMessageInput,
   ) => Effect.Effect<void, ProjectionRepositoryError>;
 }
 

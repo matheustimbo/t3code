@@ -112,11 +112,13 @@ function makeQueuedThread(overrides: Partial<OrchestrationThread> = {}): Orchest
         messageId: firstMessageId,
         queuedTurnStart: { titleSeed: "A" },
         createdAt: firstCreatedAt,
+        revision: 0,
       },
       {
         messageId: secondMessageId,
         queuedTurnStart: { titleSeed: "B" },
         createdAt: secondCreatedAt,
+        revision: 0,
       },
     ],
     ...overrides,
@@ -347,6 +349,7 @@ it.layer(NodeServices.layer)("queued turn starts", (it) => {
           messageId,
           queuedTurnStart: { titleSeed: "first" },
           createdAt: NOW,
+          revision: 0,
         },
       ]);
       assert.strictEqual(afterSecond.threads[0]?.messages[0]?.queued, true);

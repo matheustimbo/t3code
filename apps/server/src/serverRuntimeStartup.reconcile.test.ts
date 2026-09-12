@@ -125,6 +125,7 @@ it.effect("cancels queued messages left unsent by a restart", () =>
           messageId: MessageId.make("message-queued-restart"),
           queuedTurnStart: {},
           createdAt: updatedAt,
+          revision: 0,
         },
       ],
     };
