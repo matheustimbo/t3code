@@ -32,6 +32,7 @@ const baseThread: OrchestrationThread = {
   branch: null,
   worktreePath: null,
   latestTurn: null,
+  latestUserMessageAt: null,
   createdAt: "2026-04-01T00:00:00.000Z",
   updatedAt: "2026-04-01T00:00:00.000Z",
   archivedAt: null,
@@ -40,6 +41,7 @@ const baseThread: OrchestrationThread = {
   pullRequests: [],
   deletedAt: null,
   messages: [],
+  queuedMessages: [],
   proposedPlans: [],
   activities: [],
   checkpoints: [],
@@ -598,6 +600,96 @@ describe("applyThreadDetailEvent", () => {
       if (result.kind === "updated") {
         expect(result.thread.messages).toHaveLength(1);
         expect(result.thread.messages[0]?.text).toBe("Hello, world!");
+      }
+    });
+
+    it("tracks queued messages and clears them when their turn starts", () => {
+      const queuedTurnStart = { titleSeed: "Queued title" };
+      const sent = applyThreadDetailEvent(baseThread, {
+        ...baseEventFields,
+        sequence: 6,
+        occurredAt: "2026-04-01T06:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.message-sent",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          messageId: MessageId.make("queued-message"),
+          role: "user",
+          text: "queued text",
+          turnId: null,
+          streaming: false,
+          queuedTurnStart,
+          createdAt: "2026-04-01T06:00:00.000Z",
+          updatedAt: "2026-04-01T06:00:00.000Z",
+        },
+      });
+      expect(sent.kind).toBe("updated");
+      if (sent.kind !== "updated") return;
+      expect(sent.thread.messages[0]).toMatchObject({ queued: true, text: "queued text" });
+      expect(sent.thread.queuedMessages).toEqual([
+        {
+          messageId: MessageId.make("queued-message"),
+          queuedTurnStart,
+          createdAt: "2026-04-01T06:00:00.000Z",
+        },
+      ]);
+
+      const requeued = applyThreadDetailEvent(sent.thread, {
+        ...baseEventFields,
+        sequence: 7,
+        occurredAt: "2026-04-01T06:01:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.message-requeued",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          messageId: MessageId.make("queued-message"),
+          queuedTurnStart,
+          updatedAt: "2026-04-01T06:01:00.000Z",
+        },
+      });
+      expect(requeued.kind).toBe("updated");
+      if (requeued.kind !== "updated") return;
+      expect(requeued.thread.queuedMessages).toHaveLength(1);
+
+      const started = applyThreadDetailEvent(requeued.thread, {
+        ...baseEventFields,
+        sequence: 8,
+        occurredAt: "2026-04-01T06:02:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.turn-start-requested",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          messageId: MessageId.make("queued-message"),
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          createdAt: "2026-04-01T06:02:00.000Z",
+        },
+      });
+      expect(started.kind).toBe("updated");
+      if (started.kind !== "updated") return;
+      expect(started.thread.messages[0]?.queued).toBe(false);
+      expect(started.thread.queuedMessages).toEqual([]);
+
+      const canceled = applyThreadDetailEvent(requeued.thread, {
+        ...baseEventFields,
+        sequence: 9,
+        occurredAt: "2026-04-01T06:03:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.queued-message-cancelled",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          messageId: MessageId.make("queued-message"),
+          updatedAt: "2026-04-01T06:03:00.000Z",
+        },
+      });
+      expect(canceled.kind).toBe("updated");
+      if (canceled.kind === "updated") {
+        expect(canceled.thread.messages[0]?.queued).toBe(false);
+        expect(canceled.thread.queuedMessages).toEqual([]);
       }
     });
 

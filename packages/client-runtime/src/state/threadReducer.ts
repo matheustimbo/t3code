@@ -124,6 +124,7 @@ export function applyThreadDetailEvent(
           worktreePath: event.payload.worktreePath,
           branchPullRequest: null,
           latestTurn: null,
+          latestUserMessageAt: null,
           createdAt: event.payload.createdAt,
           updatedAt: event.payload.updatedAt,
           archivedAt: null,
@@ -136,6 +137,7 @@ export function applyThreadDetailEvent(
           deletedAt: null,
           pullRequests: [],
           messages: [],
+          queuedMessages: [],
           proposedPlans: [],
           activities: [],
           checkpoints: [],
@@ -344,6 +346,12 @@ export function applyThreadDetailEvent(
             : {}),
           runtimeMode: event.payload.runtimeMode,
           interactionMode: event.payload.interactionMode,
+          messages: thread.messages.map((entry) =>
+            entry.id === event.payload.messageId ? { ...entry, queued: false } : entry,
+          ),
+          queuedMessages: (thread.queuedMessages ?? []).filter(
+            (entry) => entry.messageId !== event.payload.messageId,
+          ),
           updatedAt: event.occurredAt,
         },
       };
@@ -382,6 +390,7 @@ export function applyThreadDetailEvent(
           : {}),
         turnId: event.payload.turnId,
         streaming: event.payload.streaming,
+        queued: event.payload.queuedTurnStart !== undefined,
         createdAt: event.payload.createdAt,
         updatedAt: event.payload.updatedAt,
       };
@@ -400,10 +409,33 @@ export function applyThreadDetailEvent(
           streaming: message.streaming,
           ...(message.turnId !== undefined ? { turnId: message.turnId } : {}),
           ...(message.streaming ? {} : { updatedAt: message.updatedAt }),
+          queued: message.queued,
           ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
         };
       });
       if (!found) messages.push(message);
+      const existingQueuedMessages = thread.queuedMessages ?? [];
+      const queuedMessages =
+        event.payload.queuedTurnStart !== undefined
+          ? existingQueuedMessages.some((entry) => entry.messageId === event.payload.messageId)
+            ? existingQueuedMessages
+            : [
+                ...existingQueuedMessages,
+                {
+                  messageId: event.payload.messageId,
+                  queuedTurnStart: event.payload.queuedTurnStart,
+                  createdAt: event.payload.createdAt,
+                },
+              ]
+          : existingQueuedMessages.filter((entry) => entry.messageId !== event.payload.messageId);
+      const previousLatestUserMessageAt = thread.latestUserMessageAt ?? null;
+      const latestUserMessageAt =
+        event.payload.role === "user" &&
+        !isImportedAgentSessionMessageId(event.payload.messageId) &&
+        (previousLatestUserMessageAt === null ||
+          event.payload.createdAt > previousLatestUserMessageAt)
+          ? event.payload.createdAt
+          : previousLatestUserMessageAt;
       // Update latestTurn for assistant messages bound to a turn. A completed
       // assistant message only settles the turn once the session is no longer
       // running it — providers may emit several assistant messages per turn
@@ -463,12 +495,58 @@ export function applyThreadDetailEvent(
         thread: {
           ...thread,
           messages,
+          queuedMessages,
           checkpoints,
           latestTurn,
+          latestUserMessageAt,
           updatedAt: event.occurredAt,
         },
       };
     }
+
+    case "thread.message-requeued": {
+      const existingQueuedMessages = thread.queuedMessages ?? [];
+      const queuedMessages = existingQueuedMessages.some(
+        (entry) => entry.messageId === event.payload.messageId,
+      )
+        ? existingQueuedMessages
+        : [
+            ...existingQueuedMessages,
+            {
+              messageId: event.payload.messageId,
+              queuedTurnStart: event.payload.queuedTurnStart,
+              createdAt:
+                thread.messages.find((entry) => entry.id === event.payload.messageId)?.createdAt ??
+                event.payload.updatedAt,
+            },
+          ];
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          messages: thread.messages.map((entry) =>
+            entry.id === event.payload.messageId ? { ...entry, queued: true } : entry,
+          ),
+          queuedMessages,
+          updatedAt: event.occurredAt,
+        },
+      };
+    }
+
+    case "thread.queued-message-cancelled":
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          messages: thread.messages.map((entry) =>
+            entry.id === event.payload.messageId ? { ...entry, queued: false } : entry,
+          ),
+          queuedMessages: (thread.queuedMessages ?? []).filter(
+            (entry) => entry.messageId !== event.payload.messageId,
+          ),
+          updatedAt: event.occurredAt,
+        },
+      };
 
     // ── Session ─────────────────────────────────────────────────────
     case "thread.session-set": {

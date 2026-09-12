@@ -14,6 +14,7 @@ import {
   OrchestrationSession,
   OrchestrationThread,
 } from "@t3tools/contracts";
+import type { QueuedMessageRef } from "@t3tools/contracts";
 import {
   legacyLinkedPullRequestOf,
   legacyThreadPullRequestKey,
@@ -52,6 +53,9 @@ import {
   ThreadRevertedPayload,
   ThreadSessionSetPayload,
   ThreadTurnDiffCompletedPayload,
+  ThreadTurnStartRequestedPayload,
+  ThreadMessageRequeuedPayload,
+  ThreadQueuedMessageCancelledPayload,
 } from "./Schemas.ts";
 
 type ThreadPatch = Partial<Omit<OrchestrationThread, "id" | "projectId">>;
@@ -435,6 +439,7 @@ export function projectEvent(
             pullRequests: [],
             branchPullRequest: null,
             latestTurn: null,
+            latestUserMessageAt: null,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
             archivedAt: null,
@@ -446,6 +451,7 @@ export function projectEvent(
             snoozedAt: null,
             deletedAt: null,
             messages: [],
+            queuedMessages: [],
             activities: [],
             checkpoints: [],
             session: null,
@@ -774,6 +780,7 @@ export function projectEvent(
             ...(payload.attachments !== undefined ? { attachments: payload.attachments } : {}),
             turnId: payload.turnId,
             streaming: payload.streaming,
+            queued: payload.queuedTurnStart !== undefined,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
           },
@@ -795,6 +802,7 @@ export function projectEvent(
                     streaming: message.streaming,
                     updatedAt: message.updatedAt,
                     turnId: message.turnId,
+                    queued: message.queued,
                     ...(message.attachments !== undefined
                       ? { attachments: message.attachments }
                       : {}),
@@ -803,15 +811,135 @@ export function projectEvent(
             )
           : [...thread.messages, message];
         const cappedMessages = messages.slice(-MAX_THREAD_MESSAGES);
+        const existingQueuedMessages = thread.queuedMessages ?? [];
+        const existingQueuedMessage = existingQueuedMessages.find(
+          (entry) => entry.messageId === payload.messageId,
+        );
+        const queuedMessages: ReadonlyArray<QueuedMessageRef> =
+          payload.queuedTurnStart === undefined
+            ? existingQueuedMessages.filter((entry) => entry.messageId !== payload.messageId)
+            : existingQueuedMessage === undefined
+              ? [
+                  ...existingQueuedMessages,
+                  {
+                    messageId: payload.messageId,
+                    queuedTurnStart: payload.queuedTurnStart,
+                    createdAt: payload.createdAt,
+                  },
+                ]
+              : existingQueuedMessages;
+        const previousLatestUserMessageAt = thread.latestUserMessageAt ?? null;
+        const latestUserMessageAt =
+          payload.role === "user" &&
+          !isImportedAgentSessionMessageId(payload.messageId) &&
+          (previousLatestUserMessageAt === null || payload.createdAt > previousLatestUserMessageAt)
+            ? payload.createdAt
+            : previousLatestUserMessageAt;
 
         return {
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
             messages: cappedMessages,
+            queuedMessages,
+            latestUserMessageAt,
             updatedAt: event.occurredAt,
           }),
         };
       });
+
+    case "thread.turn-start-requested":
+      return decodeForEvent(
+        ThreadTurnStartRequestedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) {
+            return nextBase;
+          }
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              messages: thread.messages.map((entry) =>
+                entry.id === payload.messageId ? { ...entry, queued: false } : entry,
+              ),
+              queuedMessages: (thread.queuedMessages ?? []).filter(
+                (entry) => entry.messageId !== payload.messageId,
+              ),
+              updatedAt: event.occurredAt,
+            }),
+          };
+        }),
+      );
+
+    case "thread.message-requeued":
+      return decodeForEvent(
+        ThreadMessageRequeuedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) {
+            return nextBase;
+          }
+          const existingQueuedMessages = thread.queuedMessages ?? [];
+          const queuedMessages = existingQueuedMessages.some(
+            (entry) => entry.messageId === payload.messageId,
+          )
+            ? existingQueuedMessages
+            : [
+                ...existingQueuedMessages,
+                {
+                  messageId: payload.messageId,
+                  queuedTurnStart: payload.queuedTurnStart,
+                  createdAt:
+                    thread.messages.find((entry) => entry.id === payload.messageId)?.createdAt ??
+                    payload.updatedAt,
+                },
+              ];
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              messages: thread.messages.map((entry) =>
+                entry.id === payload.messageId ? { ...entry, queued: true } : entry,
+              ),
+              queuedMessages,
+              updatedAt: event.occurredAt,
+            }),
+          };
+        }),
+      );
+
+    case "thread.queued-message-cancelled":
+      return decodeForEvent(
+        ThreadQueuedMessageCancelledPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) {
+            return nextBase;
+          }
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              messages: thread.messages.map((entry) =>
+                entry.id === payload.messageId ? { ...entry, queued: false } : entry,
+              ),
+              queuedMessages: (thread.queuedMessages ?? []).filter(
+                (entry) => entry.messageId !== payload.messageId,
+              ),
+              updatedAt: event.occurredAt,
+            }),
+          };
+        }),
+      );
 
     case "thread.session-set":
       return Effect.gen(function* () {
