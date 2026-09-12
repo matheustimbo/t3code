@@ -257,7 +257,13 @@ const PersistedComposerThreadDraftState = Schema.Struct({
   modelSelectionExplicit: Schema.optionalKey(Schema.Boolean),
   runtimeMode: Schema.optionalKey(RuntimeMode),
   interactionMode: Schema.optionalKey(ProviderInteractionMode),
-  skillMode: Schema.optionalKey(Schema.Struct({ name: Schema.String, label: Schema.String })),
+  skillMode: Schema.optionalKey(
+    Schema.Struct({
+      kind: Schema.Literals(["skill", "slash-command"]),
+      name: Schema.String,
+      label: Schema.String,
+    }),
+  ),
 });
 type PersistedComposerThreadDraftState = typeof PersistedComposerThreadDraftState.Type;
 
@@ -1953,7 +1959,16 @@ function normalizePersistedDraftsByThreadId(
       draftCandidate.skillMode &&
       typeof draftCandidate.skillMode.name === "string" &&
       typeof draftCandidate.skillMode.label === "string"
-        ? { name: draftCandidate.skillMode.name, label: draftCandidate.skillMode.label }
+        ? {
+            // A draft pinned before slash commands could be modes carries no
+            // kind, and could only ever have held a skill.
+            kind:
+              draftCandidate.skillMode.kind === "slash-command"
+                ? ("slash-command" as const)
+                : ("skill" as const),
+            name: draftCandidate.skillMode.name,
+            label: draftCandidate.skillMode.label,
+          }
         : null;
     const prompt = ensureInlineTerminalContextPlaceholders(
       promptCandidate,
@@ -3327,6 +3342,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               (base.skillMode === null && nextSkillMode === null) ||
               (base.skillMode !== null &&
                 nextSkillMode !== null &&
+                base.skillMode.kind === nextSkillMode.kind &&
                 base.skillMode.name === nextSkillMode.name &&
                 base.skillMode.label === nextSkillMode.label);
             if (skillModeUnchanged) {

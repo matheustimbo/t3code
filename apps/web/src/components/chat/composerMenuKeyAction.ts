@@ -15,12 +15,16 @@ export function resolveComposerMenuKeyAction(params: {
     return { kind: "highlight", direction: params.key };
   }
 
-  if (params.key === "Enter" && params.altKey && params.activeItemType === "skill") {
+  if (
+    params.key === "Enter" &&
+    params.altKey &&
+    (params.activeItemType === "skill" || params.activeItemType === "provider-slash-command")
+  ) {
     return { kind: "pin-mode" };
   }
 
-  // Alt+Enter on any other row still selects, because only a skill row has
-  // something to pin.
+  // Alt+Enter on any other row still selects, because only a provider entry
+  // point has something to pin.
   if ((params.key === "Enter" || params.key === "Tab") && params.activeItemType !== null) {
     return { kind: "select" };
   }

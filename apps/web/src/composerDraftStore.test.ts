@@ -2847,6 +2847,7 @@ describe("composerDraftStore skill mode", () => {
     vi.useFakeTimers();
     try {
       useComposerDraftStore.getState().setSkillMode(threadRef, {
+        kind: "skill",
         name: "review",
         label: "Review",
       });
@@ -2855,6 +2856,7 @@ describe("composerDraftStore skill mode", () => {
       resetComposerDraftStore();
       await useComposerDraftStore.persist.rehydrate();
       expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.skillMode).toEqual({
+        kind: "skill",
         name: "review",
         label: "Review",
       });
@@ -2871,10 +2873,61 @@ describe("composerDraftStore skill mode", () => {
     }
   });
 
+  it("round-trips a slash-command mode and reads a kindless legacy mode as a skill", async () => {
+    await useComposerDraftStore.persist.clearStorage();
+    vi.useFakeTimers();
+    try {
+      const storage = useComposerDraftStore.persist.getOptions().storage;
+      expect(storage).toBeDefined();
+      const reseed = async (mutate: (skillMode: Record<string, string>) => void) => {
+        useComposerDraftStore.getState().setSkillMode(threadRef, {
+          kind: "skill",
+          name: "review",
+          label: "Review",
+        });
+        await vi.advanceTimersByTimeAsync(300);
+        const persisted = (await storage?.getItem(COMPOSER_DRAFT_STORAGE_KEY)) as {
+          version: number;
+          state: { draftsByThreadKey: Record<string, { skillMode?: Record<string, string> }> };
+        } | null;
+        expect(persisted).not.toBeNull();
+        for (const draft of Object.values(persisted!.state.draftsByThreadKey)) {
+          if (draft.skillMode) mutate(draft.skillMode);
+        }
+        storage?.setItem(COMPOSER_DRAFT_STORAGE_KEY, persisted as never);
+        await vi.advanceTimersByTimeAsync(300);
+        resetComposerDraftStore();
+        await useComposerDraftStore.persist.rehydrate();
+      };
+
+      await reseed((skillMode) => {
+        skillMode.kind = "slash-command";
+      });
+      expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.skillMode).toEqual({
+        kind: "slash-command",
+        name: "review",
+        label: "Review",
+      });
+
+      await reseed((skillMode) => {
+        delete skillMode.kind;
+      });
+      expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.skillMode).toEqual({
+        kind: "skill",
+        name: "review",
+        label: "Review",
+      });
+    } finally {
+      vi.useRealTimers();
+      await useComposerDraftStore.persist.clearStorage();
+    }
+  });
+
   it("does not count a skill mode as user content", async () => {
     vi.useFakeTimers();
     try {
       useComposerDraftStore.getState().setSkillMode(threadRef, {
+        kind: "skill",
         name: "review",
         label: "Review",
       });
