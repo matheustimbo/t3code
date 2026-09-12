@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
@@ -251,6 +252,79 @@ it.effect("decodes thread.turn.start defaults for provider and runtime mode", ()
     assert.strictEqual(parsed.modelSelection, undefined);
     assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
     assert.strictEqual(parsed.interactionMode, DEFAULT_PROVIDER_INTERACTION_MODE);
+    assert.strictEqual(parsed.delivery, undefined);
+  }),
+);
+
+it.effect("rejects queued thread.turn.start bootstrap payloads at decode", () =>
+  Effect.gen(function* () {
+    const input = {
+      type: "thread.turn.start" as const,
+      commandId: "cmd-queued-bootstrap",
+      threadId: "thread-1",
+      message: {
+        messageId: "message-queued-bootstrap",
+        role: "user" as const,
+        text: "hello",
+        attachments: [],
+      },
+      bootstrap: { runSetupScript: true },
+      delivery: "queued" as const,
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+    const serverResult = yield* Effect.exit(decodeThreadTurnStartCommand(input));
+    assert.isTrue(Exit.isFailure(serverResult));
+    if (Exit.isFailure(serverResult)) {
+      assert.isTrue(
+        Cause.pretty(serverResult.cause).includes("a queued send cannot bootstrap a thread"),
+      );
+    }
+
+    const clientResult = yield* Effect.exit(
+      decodeClientOrchestrationCommand({
+        ...input,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      }),
+    );
+    assert.isTrue(Exit.isFailure(clientResult));
+    if (Exit.isFailure(clientResult)) {
+      assert.isTrue(
+        Cause.pretty(clientResult.cause).includes("a queued send cannot bootstrap a thread"),
+      );
+    }
+  }),
+);
+
+it.effect("keeps queue lifecycle commands out of the client command union", () =>
+  Effect.gen(function* () {
+    const commands: ReadonlyArray<unknown> = [
+      {
+        type: "thread.message.requeue" as const,
+        commandId: "cmd-requeue",
+        threadId: "thread-1",
+        messageId: "message-1",
+        queuedTurnStart: {},
+        createdAt: "2026-01-01T00:00:00.000Z",
+      },
+      {
+        type: "thread.queued-message.cancel" as const,
+        commandId: "cmd-cancel",
+        threadId: "thread-1",
+        messageId: "message-1",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      },
+      {
+        type: "thread.queue.drain" as const,
+        commandId: "cmd-drain",
+        threadId: "thread-1",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      },
+    ];
+    for (const command of commands) {
+      assert.deepStrictEqual(yield* decodeOrchestrationCommand(command), command);
+      assert.ok(yield* decodeClientOrchestrationCommand(command).pipe(Effect.flip));
+    }
   }),
 );
 
