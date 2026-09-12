@@ -1451,6 +1451,27 @@ describe("mobile composer drafts", () => {
     });
   });
 
+  it("keeps a pinned skill mode when the sent content is cleared", () => {
+    const draftKey = "environment-1:thread-1";
+    const draft: ComposerDraft = {
+      text: "send this",
+      attachments: [],
+      skillMode: {
+        kind: "slash-command",
+        name: "pstack:poteto-mode",
+        label: "/pstack:poteto-mode",
+      },
+    };
+
+    expect(clearComposerDraftContentState({ [draftKey]: draft }, draftKey)).toEqual({
+      [draftKey]: {
+        skillMode: draft.skillMode,
+        text: "",
+        attachments: [],
+      },
+    });
+  });
+
   it("drops draft-local model and workspace selections after sending a new task", () => {
     const draftKey = "new-task:environment-1:project-1";
     const draft: ComposerDraft = {

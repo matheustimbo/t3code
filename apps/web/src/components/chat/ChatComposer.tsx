@@ -894,6 +894,8 @@ import {
   formatProviderSkillDisplayName,
   getProviderSlashCommandsForSlashMenu,
   getProviderSkillsForSlashMenu,
+  providerSkillComposerMode,
+  providerSlashCommandComposerMode,
   resolveProviderSkillsForCwd,
   resolveProviderSlashCommandsForCwd,
 } from "@t3tools/client-runtime/providerSkills";
@@ -2876,12 +2878,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       setComposerDraftSkillMode(
         composerDraftTarget,
         item.type === "skill"
-          ? {
-              kind: "skill",
-              name: item.skill.name,
-              label: formatProviderSkillDisplayName(item.skill),
-            }
-          : { kind: "slash-command", name: item.command.name, label: `/${item.command.name}` },
+          ? providerSkillComposerMode(item.skill)
+          : providerSlashCommandComposerMode(item.command),
       );
       const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
         expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),

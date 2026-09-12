@@ -1,9 +1,13 @@
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
+import { applyComposerSkillModePrefix } from "@t3tools/shared/composerTrigger";
+
 import {
   dedupeProviderSkillsByName,
   formatProviderSkillDisplayName,
+  providerSkillComposerMode,
+  providerSlashCommandComposerMode,
   getProviderSlashCommandsForSlashMenu,
   getProviderSkillsForSlashMenu,
   resolveProviderSkillsForCwd,
@@ -250,5 +254,21 @@ describe("workspace provider snapshots", () => {
   it("keeps the machine snapshot before this cwd has a provider snapshot", () => {
     expect(resolveProviderSkillsForCwd(provider, "/workspace/project-b")).toEqual(provider.skills);
     expect(resolveProviderSlashCommandsForCwd(provider, null)).toEqual(provider.slashCommands);
+  });
+});
+
+describe("composer modes built from picker rows", () => {
+  it("sends a skill as a mention and shows its display name", () => {
+    const mode = providerSkillComposerMode({ name: "poteto-mode", displayName: "Poteto Mode" });
+
+    expect(mode.label).toBe("Poteto Mode");
+    expect(applyComposerSkillModePrefix("ship it", mode)).toBe("$poteto-mode ship it");
+  });
+
+  it("sends a provider slash command as the command that runs it", () => {
+    const mode = providerSlashCommandComposerMode({ name: "pstack:poteto-mode" });
+
+    expect(mode.label).toBe("/pstack:poteto-mode");
+    expect(applyComposerSkillModePrefix("ship it", mode)).toBe("/pstack:poteto-mode ship it");
   });
 });
