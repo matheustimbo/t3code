@@ -113,6 +113,11 @@ message in that thread with it, until you click the chip to remove it. Skills
 lead with `$name` and provider commands with `/name`, so a command mode runs on
 every message the way it would if you typed it.
 
+On mobile, tap **Mode** on a skill or provider command in the menu to pin it.
+The chip sits above the message field and stays there while the composer is
+collapsed; tap it to remove the mode. Pinning a mode is not available on
+**New task**, since that draft ends when the thread starts.
+
 Send `/compact` in an existing conversation to reduce context usage when the
 provider supports it. Web and desktop also offer compaction from the context meter.
 
