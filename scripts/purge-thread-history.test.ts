@@ -10,7 +10,35 @@ import {
   finalizeThreadPurge,
   purgeThreadHistory,
   restoreThreadPurge,
+  THREAD_TABLES,
 } from "./purge-thread-history.ts";
+
+const migrationsDirectory = NodePath.resolve(
+  import.meta.dirname,
+  "../apps/server/src/persistence/Migrations",
+);
+const createTablePattern =
+  /CREATE TABLE IF NOT EXISTS\s+([a-z_][a-z0-9_]*)\s*\(([\s\S]*?)\)\s*;?\s*`/gi;
+const threadIdColumnPattern = /^\s*thread_id\b/im;
+const migrationThreadTableExclusions = [
+  // The root table is selected and deleted separately from its dependent tables.
+  "projection_threads",
+];
+
+function migrationThreadTables() {
+  const migrationFiles = NodeFS.readdirSync(migrationsDirectory)
+    .filter((file) => /^\d{3}_.+\.ts$/u.test(file) && !file.endsWith(".test.ts"))
+    .toSorted();
+
+  return migrationFiles.flatMap((file) => {
+    const source = NodeFS.readFileSync(NodePath.join(migrationsDirectory, file), "utf8");
+    return [...source.matchAll(createTablePattern)].flatMap((match) => {
+      const table = match[1];
+      const columns = match[2];
+      return table && columns && threadIdColumnPattern.test(columns) ? [table] : [];
+    });
+  });
+}
 
 function seed(databasePath: string) {
   const database = new NodeSqlite.DatabaseSync(databasePath);
@@ -53,6 +81,18 @@ function seed(databasePath: string) {
 }
 
 describe("purgeThreadHistory", () => {
+  it("keeps every migration thread table covered by the purge", () => {
+    const coveredTables = new Set([...THREAD_TABLES, ...migrationThreadTableExclusions]);
+    const uncoveredTables = [
+      ...new Set(migrationThreadTables().filter((table) => !coveredTables.has(table))),
+    ].toSorted();
+
+    expect(
+      uncoveredTables,
+      `Migration tables with a thread_id column are missing from THREAD_TABLES: ${uncoveredTables.join(", ")}`,
+    ).toEqual([]);
+  });
+
   it("can inventory a live-style database through a read-only connection without creating a backup", () => {
     const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-purge-dry-run-test-"));
     const databasePath = NodePath.join(root, "state.sqlite");

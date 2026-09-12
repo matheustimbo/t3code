@@ -57,12 +57,13 @@ interface ThreadPurgeRecoveryJournal {
   readonly preRestoreDatabasePath?: string;
 }
 
-const THREAD_TABLES = [
+export const THREAD_TABLES = [
   "projection_pending_approvals",
   "projection_thread_sessions",
   "projection_thread_messages",
   "projection_thread_activities",
   "projection_thread_proposed_plans",
+  "projection_thread_pull_requests",
   "projection_turns",
   "provider_session_runtime",
   "checkpoint_diff_blobs",
