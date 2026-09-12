@@ -221,21 +221,33 @@ export function ComposerActionButton(props: {
   readonly accessibilityLabel: string;
   readonly disabled?: boolean;
   readonly icon: ComponentProps<typeof SymbolView>["name"];
+  /** Widens the circle into a pill and shows the text. Omit for icon only. */
+  readonly label?: string;
   readonly onPress: () => void;
   readonly variant?: "primary" | "danger";
 }) {
+  const foregroundClassName =
+    props.variant === "danger"
+      ? "text-danger-foreground"
+      : props.disabled
+        ? "text-foreground-muted"
+        : "text-primary-foreground";
   return (
     <Pressable
       accessibilityLabel={props.accessibilityLabel}
       accessibilityRole="button"
       accessibilityState={{ disabled: props.disabled }}
-      className="size-[44px] shrink-0 items-center justify-center active:opacity-70"
+      className={cn(
+        "h-[44px] shrink-0 items-center justify-center active:opacity-70",
+        props.label ? "px-1" : "w-[44px]",
+      )}
       disabled={props.disabled}
       onPress={props.onPress}
     >
       <View
         className={cn(
-          "size-[30px] items-center justify-center rounded-full",
+          "h-[30px] flex-row items-center justify-center rounded-full",
+          props.label ? "gap-1 px-3" : "w-[30px]",
           props.variant === "danger"
             ? "bg-danger"
             : props.disabled
@@ -252,6 +264,15 @@ export function ComposerActionButton(props: {
           }
           type="monochrome"
         />
+        {props.label ? (
+          <Text
+            className={cn("shrink text-sm font-t3-bold", foregroundClassName)}
+            ellipsizeMode="tail"
+            numberOfLines={1}
+          >
+            {props.label}
+          </Text>
+        ) : null}
       </View>
     </Pressable>
   );

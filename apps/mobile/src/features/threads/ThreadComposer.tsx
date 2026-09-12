@@ -1,5 +1,6 @@
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { useAtomValue } from "@effect/atom-react";
+import { resolveSendWhileRunning } from "@t3tools/client-runtime/composer/send-while-running";
 import type {
   EnvironmentId,
   MessageId,
@@ -299,10 +300,33 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     });
   // Every send goes through the outbox; the label says whether it leaves now
   // or waits (for the connection, an earlier queued message, or an upload).
-  const sendLabel =
+  const outboxSendLabel =
     props.connectionState !== "connected" || props.queueCount > 0 || attachmentsUploading
       ? "Queue"
       : "Send";
+  const sessionProviderStatus = useMemo(() => {
+    const instanceId =
+      props.selectedThread.session?.providerInstanceId ??
+      props.selectedThread.modelSelection.instanceId;
+    return props.serverConfig?.providers.find((p) => p.instanceId === instanceId) ?? null;
+  }, [
+    props.serverConfig,
+    props.selectedThread.session?.providerInstanceId,
+    props.selectedThread.modelSelection.instanceId,
+  ]);
+  const sendWhileRunning = useMemo(
+    () =>
+      resolveSendWhileRunning({
+        isRunning: props.selectedThread.session?.status === "running",
+        provider: sessionProviderStatus,
+      }),
+    [props.selectedThread.session?.status, sessionProviderStatus],
+  );
+  // The outbox label describes real delivery, so it outranks the provider
+  // wording whenever the send is not leaving right now.
+  const runningSendLabel =
+    outboxSendLabel === "Send" && sendWhileRunning !== null ? sendWhileRunning.label : null;
+  const sendLabel = runningSendLabel ?? outboxSendLabel;
   const currentModelSelection = props.selectedThread.modelSelection;
   const currentRuntimeMode = props.selectedThread.runtimeMode;
   const modelUnavailable =
@@ -839,6 +863,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                       variant="primary"
                       disabled={!canSend}
                       onPress={handleSend}
+                      {...(runningSendLabel ? { label: runningSendLabel } : {})}
                     />
                   ) : null}
                 </View>
