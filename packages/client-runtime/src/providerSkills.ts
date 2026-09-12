@@ -3,6 +3,7 @@ import type {
   ServerProviderSkill,
   ServerProviderSlashCommand,
 } from "@t3tools/contracts";
+import type { ComposerSkillMode } from "@t3tools/shared/composerTrigger";
 
 export type ProviderSkillSourceKind = "app" | "repo" | "project" | "personal" | "system" | "other";
 
@@ -54,6 +55,22 @@ export function isProviderSkillUserInvocable(
   skill: Pick<ServerProviderSkill, "enabled" | "userInvocable">,
 ): boolean {
   return skill.enabled && skill.userInvocable !== false;
+}
+
+/**
+ * The composer mode a picker row pins. Both surfaces build it here so the chip
+ * label and the mention they send cannot drift apart.
+ */
+export function providerSkillComposerMode(
+  skill: Pick<ServerProviderSkill, "name" | "displayName">,
+): ComposerSkillMode {
+  return { kind: "skill", name: skill.name, label: formatProviderSkillDisplayName(skill) };
+}
+
+export function providerSlashCommandComposerMode(
+  command: Pick<ServerProviderSlashCommand, "name">,
+): ComposerSkillMode {
+  return { kind: "slash-command", name: command.name, label: `/${command.name}` };
 }
 
 export function getProviderSkillsForSlashMenu(

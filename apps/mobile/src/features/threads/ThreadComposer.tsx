@@ -74,6 +74,9 @@ import {
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import type { RemoteClientConnectionState } from "../../lib/connection";
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
+import type { ComposerSkillMode } from "@t3tools/shared/composerTrigger";
+
+import { ComposerSkillModeChip } from "../../components/ComposerSkillModeChip";
 import { ComposerCommandPopover } from "./ComposerCommandPopover";
 import { useComposerCommandMenu } from "./use-composer-command-menu";
 import {
@@ -136,6 +139,9 @@ export interface ThreadComposerProps {
   readonly onUpdateModelSelection: (modelSelection: ModelSelection) => void;
   readonly onUpdateRuntimeMode: (runtimeMode: RuntimeMode) => void;
   readonly onUpdateInteractionMode: (interactionMode: ProviderInteractionMode) => void;
+  readonly skillMode: ComposerSkillMode | null;
+  readonly onPinSkillMode: (skillMode: ComposerSkillMode) => void;
+  readonly onClearSkillMode: () => void;
   readonly onExpandedChange?: (expanded: boolean) => void;
   /** Fires on editor focus/blur; hosts use it to vet stale keyboard state. */
   readonly onEditorFocusChange?: (focused: boolean) => void;
@@ -359,6 +365,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     // With attachments aboard the pick just inserts the text, so it sends as a prompt.
     onUsageLimits:
       usageLimitsOffered && props.draftAttachments.length === 0 ? openUsageLimits : undefined,
+    onPinSkillMode: props.onPinSkillMode,
   });
   const voiceInput = useVoiceInputController({
     ownerKey: composerOwnerKey,
@@ -605,6 +612,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
               triggerKind={composerMenu.trigger.kind}
               isLoading={composerMenu.isLoading}
               onSelect={composerMenu.onSelect}
+              {...(composerMenu.onPinMode ? { onPinMode: composerMenu.onPinMode } : {})}
             />
           </View>
         ) : null}
@@ -647,6 +655,14 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 onPickMedia={props.onPickDraftMedia}
                 onPickFiles={props.onPickDraftFiles}
               />
+            ) : null}
+            {props.skillMode ? (
+              <View className={isExpanded ? "px-[14px] pb-2" : "px-[6px] pb-1.5"}>
+                <ComposerSkillModeChip
+                  skillMode={props.skillMode}
+                  onRemove={props.onClearSkillMode}
+                />
+              </View>
             ) : null}
             {isExpanded && props.draftAttachments.length > 0 ? (
               <Animated.View

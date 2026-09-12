@@ -1,3 +1,4 @@
+import type { ComposerSkillMode } from "@t3tools/shared/composerTrigger";
 import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import {
   appendCodexArtifactTemplateUsePrompt,
@@ -162,6 +163,9 @@ export interface ThreadDetailScreenProps {
   readonly onUpdateThreadModelSelection: (modelSelection: ModelSelection) => void;
   readonly onUpdateThreadRuntimeMode: (runtimeMode: RuntimeMode) => void;
   readonly onUpdateThreadInteractionMode: (interactionMode: ProviderInteractionMode) => void;
+  readonly skillMode: ComposerSkillMode | null;
+  readonly onPinSkillMode: (skillMode: ComposerSkillMode) => void;
+  readonly onClearSkillMode: () => void;
   readonly onRespondToApproval: (
     requestId: ApprovalRequestId,
     decision: ProviderApprovalDecision,
@@ -1056,6 +1060,9 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                     onUpdateModelSelection={props.onUpdateThreadModelSelection}
                     onUpdateRuntimeMode={props.onUpdateThreadRuntimeMode}
                     onUpdateInteractionMode={props.onUpdateThreadInteractionMode}
+                    skillMode={props.skillMode}
+                    onPinSkillMode={props.onPinSkillMode}
+                    onClearSkillMode={props.onClearSkillMode}
                     onExpandedChange={setComposerExpanded}
                     onEditorFocusChange={handleComposerFocusChange}
                   />
