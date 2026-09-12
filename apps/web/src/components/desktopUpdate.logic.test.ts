@@ -296,8 +296,8 @@ describe("desktop update UI helpers", () => {
 });
 
 describe("canCheckForUpdate", () => {
-  it("returns false for null state", () => {
-    expect(canCheckForUpdate(null)).toBe(false);
+  it("returns true for an unknown state so the check can repair it", () => {
+    expect(canCheckForUpdate(null)).toBe(true);
   });
 
   it("returns false when updates are disabled", () => {
