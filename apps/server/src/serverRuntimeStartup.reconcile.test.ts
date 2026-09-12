@@ -4,6 +4,7 @@ import {
   type OrchestrationSessionStatus,
   ProviderDriverKind,
   ProviderInstanceId,
+  MessageId,
   type ProviderSendTurnInput,
   ThreadId,
   TurnId,
@@ -114,6 +115,68 @@ const runReconciliation = (input: {
       ),
     ),
   );
+
+it.effect("cancels queued messages left unsent by a restart", () =>
+  Effect.gen(function* () {
+    const thread = {
+      ...makeThread("thread-queued-restart", "ready"),
+      queuedMessages: [
+        {
+          messageId: MessageId.make("message-queued-restart"),
+          queuedTurnStart: {},
+          createdAt: updatedAt,
+        },
+      ],
+    };
+    const dispatched: OrchestrationCommand[] = [];
+
+    yield* runReconciliation({
+      threads: [thread],
+      directory: {
+        getBinding: () => Effect.die("unused"),
+        upsert: () => Effect.die("unused"),
+        recordImportedTranscript: () => Effect.die("unused"),
+        getProvider: () => Effect.die("unused"),
+        listThreadIds: () => Effect.die("unused"),
+        listBindings: () => Effect.succeed([]),
+      },
+      dispatch: (command) =>
+        Effect.sync(() => dispatched.push(command)).pipe(
+          Effect.as({ sequence: dispatched.length }),
+        ),
+    });
+
+    assert.deepStrictEqual(
+      dispatched.map((command) =>
+        command.type === "thread.queued-message.cancel"
+          ? { type: command.type, messageId: command.messageId }
+          : command.type === "thread.activity.append"
+            ? {
+                type: command.type,
+                kind: command.activity.kind,
+                summary: command.activity.summary,
+                payload: command.activity.payload,
+              }
+            : null,
+      ),
+      [
+        {
+          type: "thread.queued-message.cancel",
+          messageId: MessageId.make("message-queued-restart"),
+        },
+        {
+          type: "thread.activity.append",
+          kind: "provider.turn.start.failed",
+          summary: "Queued message was not sent",
+          payload: {
+            requestId: "message-queued-restart",
+            detail: "T3 Code restarted before this message was sent. Send it again to continue.",
+          },
+        },
+      ],
+    );
+  }),
+);
 
 it.effect("marks active running sessions that have persisted resume state", () => {
   const active = makeThread("thread-mark-active", "running", TurnId.make("turn-mark-active"));
