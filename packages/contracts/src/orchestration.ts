@@ -533,6 +533,11 @@ export const QueuedMessageRef = Schema.Struct({
   messageId: MessageId,
   queuedTurnStart: QueuedTurnStart,
   createdAt: IsoDateTime,
+  /** Bumped by each accepted edit, starting at 0 when the message is queued.
+      An editing client sends the value it read here so a stale device cannot
+      clobber a newer edit made on another device. Defaulted for older servers,
+      which never edit and so are always at 0. */
+  revision: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
 });
 export type QueuedMessageRef = typeof QueuedMessageRef.Type;
 
@@ -1320,6 +1325,28 @@ const ThreadQueuedMessageCancelCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+/** Edit is text-only by design: it cannot orphan an attachment, so it needs
+    none of the normalization or cleanup a turn start does. */
+const ThreadQueuedMessageEditCommand = Schema.Struct({
+  type: Schema.Literal("thread.queued-message.edit"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  messageId: MessageId,
+  /** Read off the message being edited, never invented by the caller. */
+  expectedRevision: NonNegativeInt,
+  text: Schema.String,
+  createdAt: IsoDateTime,
+});
+
+const ThreadQueuedMessageDropCommand = Schema.Struct({
+  type: Schema.Literal("thread.queued-message.drop"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  messageId: MessageId,
+  expectedRevision: NonNegativeInt,
+  createdAt: IsoDateTime,
+});
+
 const ThreadQueueDrainCommand = Schema.Struct({
   type: Schema.Literal("thread.queue.drain"),
   commandId: CommandId,
@@ -1410,6 +1437,8 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadTurnStartCommand,
   ThreadMessageRequeueCommand,
   ThreadQueuedMessageCancelCommand,
+  ThreadQueuedMessageEditCommand,
+  ThreadQueuedMessageDropCommand,
   ThreadQueueDrainCommand,
   ThreadTurnInterruptCommand,
   ThreadApprovalRespondCommand,
@@ -1443,6 +1472,8 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadRuntimeModeSetCommand,
   ThreadInteractionModeSetCommand,
   ClientThreadTurnStartCommand,
+  ThreadQueuedMessageEditCommand,
+  ThreadQueuedMessageDropCommand,
   ThreadTurnInterruptCommand,
   ThreadApprovalRespondCommand,
   ThreadUserInputRespondCommand,
@@ -1613,6 +1644,8 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.message-sent",
   "thread.message-requeued",
   "thread.queued-message-cancelled",
+  "thread.queued-message-edited",
+  "thread.queued-message-dropped",
   "thread.turn-start-requested",
   "thread.turn-interrupt-requested",
   "thread.approval-response-requested",
@@ -1826,11 +1859,34 @@ export const ThreadMessageRequeuedPayload = Schema.Struct({
   updatedAt: IsoDateTime,
 });
 
+// Cancel is server-internal: it removes the queue entry but keeps the message
+// row for resend. Drop is client-originated and deletes the message row.
 export const ThreadQueuedMessageCancelledPayload = Schema.Struct({
   threadId: ThreadId,
   messageId: MessageId,
   updatedAt: IsoDateTime,
 });
+
+export const ThreadQueuedMessageEditedPayload = Schema.Struct({
+  threadId: ThreadId,
+  messageId: MessageId,
+  text: Schema.String,
+  revision: NonNegativeInt,
+  updatedAt: IsoDateTime,
+});
+
+export const ThreadQueuedMessageDroppedPayload = Schema.Struct({
+  threadId: ThreadId,
+  messageId: MessageId,
+  updatedAt: IsoDateTime,
+});
+
+export const QueuedMessageUnavailableReason = Schema.Literals([
+  "already-sent",
+  "not-queued",
+  "stale-revision",
+]);
+export type QueuedMessageUnavailableReason = typeof QueuedMessageUnavailableReason.Type;
 
 export const ThreadTurnStartRequestedPayload = Schema.Struct({
   threadId: ThreadId,
@@ -2058,6 +2114,16 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.queued-message-cancelled"),
     payload: ThreadQueuedMessageCancelledPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.queued-message-edited"),
+    payload: ThreadQueuedMessageEditedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.queued-message-dropped"),
+    payload: ThreadQueuedMessageDroppedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,
@@ -2340,6 +2406,7 @@ export class OrchestrationDispatchCommandError extends Schema.TaggedError<Orches
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect()),
     bootstrapThreadDisposition: Schema.optional(Schema.Literal("deleted")),
+    queuedMessageUnavailableReason: Schema.optional(QueuedMessageUnavailableReason),
   },
 ) {}
 
