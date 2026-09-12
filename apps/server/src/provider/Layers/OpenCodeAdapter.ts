@@ -63,10 +63,21 @@ import {
 import * as Option from "effect/Option";
 
 /**
- * The adapter reuses the T3 turn id and its own comment calls this a steer, but
- * the dispatch runs inside a one-permit `promptSemaphore`, so OpenCode holds
- * the new prompt until the running one is done. Session lookup and model
- * validation happen before the permit, so a rejected send still fails fast.
+ * UNPROVEN, and deliberately recorded as such. What we can prove from this repo:
+ * nothing here cancels the running prompt, so a second send never destroys work
+ * in progress, and `session.promptAsync` is `POST /session/{id}/prompt_async`,
+ * which the SDK types as `204 Prompt accepted`. That return lands on submission,
+ * not on turn completion, so `promptSemaphore` serializes submissions and
+ * releases while the turn is still running. It does NOT hold the new prompt
+ * until the old one finishes, unlike Cursor, whose permit wraps a join on the
+ * turn itself.
+ *
+ * So the second prompt reaches the opencode server mid-turn and that server
+ * decides whether to fold it into the running turn or run it next. The server
+ * is not in this repo and the adapter test drives a mock, so neither branch is
+ * provable here. `provider-queue` is the conservative choice because it is the
+ * one that does not promise the agent will read the message while it works.
+ * Settle it against a real opencode server before trusting the label.
  */
 export const OPENCODE_CONCURRENT_SEND: ProviderConcurrentSend = "provider-queue";
 
