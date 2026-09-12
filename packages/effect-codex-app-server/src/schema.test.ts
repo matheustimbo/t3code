@@ -193,10 +193,7 @@ it("accepts Codex misalignment policy errors for historical and live turns", () 
   assert.equal(isThreadRollbackResponse({ thread: failedThread }), true);
   assert.equal(isThreadForkResponse(forkLikeResponse), true);
   const decodedResume = decodeThreadResumeResponse(resumeLikeResponse);
-  assert.equal(
-    decodedResume.thread.turns[0]?.error?.codexErrorInfo,
-    "misalignmentPolicyViolation",
-  );
+  assert.equal(decodedResume.thread.turns[0]?.error?.codexErrorInfo, "misalignmentPolicyViolation");
   assert.equal(
     isTurnCompletedNotification({
       threadId: "thread-1",
