@@ -43,6 +43,8 @@ function makeReadModel(input: {
         worktreePath: null,
         pullRequests: [],
         latestTurn: null,
+        latestUserMessageAt:
+          input.messages?.findLast((message) => message.role === "user")?.createdAt ?? null,
         createdAt: NOW,
         updatedAt: NOW,
         archivedAt: input.archivedAt ?? null,

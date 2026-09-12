@@ -49,6 +49,8 @@ function makeReadModel(
         worktreePath: null,
         pullRequests: [],
         latestTurn: null,
+        latestUserMessageAt:
+          messages.findLast((message) => message.role === "user")?.createdAt ?? null,
         createdAt: NOW,
         updatedAt: NOW,
         archivedAt,
