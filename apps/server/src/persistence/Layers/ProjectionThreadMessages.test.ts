@@ -24,6 +24,7 @@ layer("ProjectionThreadMessageRepository", (it) => {
         turnId: null,
         role: "user",
         text: "Imported prompt",
+        queuedTurnStart: null,
         isStreaming: false,
         createdAt: "2026-02-28T19:05:06.000Z",
         updatedAt: "2026-02-28T19:05:06.000Z",
@@ -43,6 +44,7 @@ layer("ProjectionThreadMessageRepository", (it) => {
           turnId: null,
           ...message,
           text: "Message body",
+          queuedTurnStart: null,
           isStreaming: false,
           updatedAt: "2026-02-28T19:06:00.000Z",
         });
@@ -53,6 +55,7 @@ layer("ProjectionThreadMessageRepository", (it) => {
         turnId: null,
         role: "user",
         text: "Other thread",
+        queuedTurnStart: null,
         isStreaming: false,
         createdAt: "2026-02-28T19:05:05.000Z",
         updatedAt: "2026-02-28T19:05:05.000Z",
@@ -90,6 +93,7 @@ layer("ProjectionThreadMessageRepository", (it) => {
         role: "assistant",
         text: "hello",
         attachments,
+        queuedTurnStart: null,
         createdAt,
         updatedAt: createdAt,
       });
@@ -99,6 +103,7 @@ layer("ProjectionThreadMessageRepository", (it) => {
         turnId: null,
         role: "assistant",
         text: " world",
+        queuedTurnStart: null,
         createdAt: "2026-02-28T19:05:01.000Z",
         updatedAt: "2026-02-28T19:05:01.000Z",
       });
@@ -116,6 +121,7 @@ layer("ProjectionThreadMessageRepository", (it) => {
         role: "assistant",
         text: "",
         attachments: [],
+        queuedTurnStart: null,
         createdAt: "2026-02-28T19:05:02.000Z",
         updatedAt: "2026-02-28T19:05:02.000Z",
       });
@@ -156,6 +162,7 @@ layer("ProjectionThreadMessageRepository", (it) => {
         role: "user",
         text: "initial",
         attachments: persistedAttachments,
+        queuedTurnStart: null,
         isStreaming: false,
         createdAt,
         updatedAt,
@@ -167,6 +174,7 @@ layer("ProjectionThreadMessageRepository", (it) => {
         turnId: null,
         role: "user",
         text: "updated",
+        queuedTurnStart: null,
         isStreaming: false,
         createdAt,
         updatedAt: "2026-02-28T19:00:02.000Z",
@@ -183,6 +191,34 @@ layer("ProjectionThreadMessageRepository", (it) => {
         assert.equal(rowById.value.text, "updated");
         assert.deepEqual(rowById.value.attachments, persistedAttachments);
       }
+    }),
+  );
+
+  it.effect("orders queued messages by receipt row when timestamps tie", () =>
+    Effect.gen(function* () {
+      const repository = yield* ProjectionThreadMessageRepository;
+      const threadId = ThreadId.make("thread-queued-fifo");
+      const createdAt = "2026-02-28T19:00:00.000Z";
+      for (const messageId of ["queued-second", "queued-first"]) {
+        yield* repository.upsert({
+          messageId: MessageId.make(messageId),
+          threadId,
+          turnId: null,
+          role: "user",
+          text: messageId,
+          queuedTurnStart: { titleSeed: messageId },
+          isStreaming: false,
+          createdAt,
+          updatedAt: createdAt,
+        });
+      }
+
+      const queued = yield* repository.listQueuedByThreadId({ threadId });
+      assert.deepEqual(
+        queued.map((message) => message.messageId),
+        ["queued-second", "queued-first"],
+      );
+      assert.equal(yield* repository.countQueuedByThreadId({ threadId }), 2);
     }),
   );
 
@@ -208,6 +244,7 @@ layer("ProjectionThreadMessageRepository", (it) => {
             sizeBytes: 5,
           },
         ],
+        queuedTurnStart: null,
         isStreaming: false,
         createdAt,
         updatedAt: "2026-02-28T19:10:01.000Z",
@@ -220,6 +257,7 @@ layer("ProjectionThreadMessageRepository", (it) => {
         role: "assistant",
         text: "cleared",
         attachments: [],
+        queuedTurnStart: null,
         isStreaming: false,
         createdAt,
         updatedAt: "2026-02-28T19:10:02.000Z",
@@ -245,6 +283,7 @@ layer("ProjectionThreadMessageRepository", (it) => {
         turnId,
         role: "assistant",
         text: "large text that the existence query must not select",
+        queuedTurnStart: null,
         isStreaming: false,
         createdAt,
         updatedAt: createdAt,

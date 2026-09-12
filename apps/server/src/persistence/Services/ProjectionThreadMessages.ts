@@ -10,6 +10,7 @@ import {
   ChatAttachment,
   MessageId,
   OrchestrationMessageRole,
+  QueuedTurnStart,
   ThreadId,
   TurnId,
   IsoDateTime,
@@ -29,6 +30,7 @@ export const ProjectionThreadMessage = Schema.Struct({
   role: OrchestrationMessageRole,
   text: Schema.String,
   attachments: Schema.optional(Schema.Array(ChatAttachment)),
+  queuedTurnStart: Schema.NullOr(QueuedTurnStart),
   isStreaming: Schema.Boolean,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -104,6 +106,16 @@ export interface ProjectionThreadMessageRepositoryShape {
   readonly listByThreadId: (
     input: ListProjectionThreadMessagesInput,
   ) => Effect.Effect<ReadonlyArray<ProjectionThreadMessage>, ProjectionRepositoryError>;
+
+  /** List queued messages in server-assigned FIFO order. */
+  readonly listQueuedByThreadId: (
+    input: ListProjectionThreadMessagesInput,
+  ) => Effect.Effect<ReadonlyArray<ProjectionThreadMessage>, ProjectionRepositoryError>;
+
+  /** Count queued messages without hydrating message bodies. */
+  readonly countQueuedByThreadId: (
+    input: ListProjectionThreadMessagesInput,
+  ) => Effect.Effect<number, ProjectionRepositoryError>;
 
   /** Read the latest user-message timestamp without loading message bodies. */
   readonly getLatestUserMessageAt: (
