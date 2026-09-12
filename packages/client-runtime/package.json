@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./composer/send-while-running": {
+      "types": "./src/composer/sendWhileRunning.ts",
+      "default": "./src/composer/sendWhileRunning.ts"
+    },
     "./load-balancing": {
       "types": "./src/load-balancing.ts",
       "default": "./src/load-balancing.ts"
