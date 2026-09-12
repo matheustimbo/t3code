@@ -39,51 +39,72 @@ describe("applyComposerSkillModePrefix", () => {
 
   it("returns the text unchanged when the mode name is blank", () => {
     expect(
-      applyComposerSkillModePrefix("fix the flaky test", { name: "   ", label: "Review" }),
+      applyComposerSkillModePrefix("fix the flaky test", {
+        kind: "skill",
+        name: "   ",
+        label: "Review",
+      }),
     ).toBe("fix the flaky test");
   });
 
   it("returns empty text unchanged", () => {
-    expect(applyComposerSkillModePrefix("", { name: "review", label: "Review" })).toBe("");
+    expect(
+      applyComposerSkillModePrefix("", { kind: "skill", name: "review", label: "Review" }),
+    ).toBe("");
   });
 
   it("returns whitespace-only text unchanged, preserving the original whitespace", () => {
-    expect(applyComposerSkillModePrefix("   ", { name: "review", label: "Review" })).toBe("   ");
+    expect(
+      applyComposerSkillModePrefix("   ", { kind: "skill", name: "review", label: "Review" }),
+    ).toBe("   ");
   });
 
   it("does not double-prefix text that already starts with the mention", () => {
     expect(
-      applyComposerSkillModePrefix("$review the diff", { name: "review", label: "Review" }),
+      applyComposerSkillModePrefix("$review the diff", {
+        kind: "skill",
+        name: "review",
+        label: "Review",
+      }),
     ).toBe("$review the diff");
   });
 
   it("does not double-prefix an exact, standalone mention token", () => {
-    expect(applyComposerSkillModePrefix("$review", { name: "review", label: "Review" })).toBe(
-      "$review",
-    );
+    expect(
+      applyComposerSkillModePrefix("$review", { kind: "skill", name: "review", label: "Review" }),
+    ).toBe("$review");
   });
 
   it("prefixes text that merely shares the mention as a prefix of a longer token", () => {
     expect(
-      applyComposerSkillModePrefix("$reviewer look", { name: "review", label: "Review" }),
+      applyComposerSkillModePrefix("$reviewer look", {
+        kind: "skill",
+        name: "review",
+        label: "Review",
+      }),
     ).toBe("$review $reviewer look");
   });
 
   it("does not prefix a provider slash command", () => {
-    expect(applyComposerSkillModePrefix("/compact", { name: "review", label: "Review" })).toBe(
-      "/compact",
-    );
+    expect(
+      applyComposerSkillModePrefix("/compact", { kind: "skill", name: "review", label: "Review" }),
+    ).toBe("/compact");
   });
 
   it("does not prefix a slash command surrounded by whitespace, preserving the original", () => {
     expect(
-      applyComposerSkillModePrefix(" /review src/x.ts ", { name: "review", label: "Review" }),
+      applyComposerSkillModePrefix(" /review src/x.ts ", {
+        kind: "skill",
+        name: "review",
+        label: "Review",
+      }),
     ).toBe(" /review src/x.ts ");
   });
 
   it("prefixes an absolute path that is not a slash command", () => {
     expect(
       applyComposerSkillModePrefix("/home/theo/app.ts crashed", {
+        kind: "skill",
         name: "review",
         label: "Review",
       }),
@@ -92,8 +113,42 @@ describe("applyComposerSkillModePrefix", () => {
 
   it("prefixes a plain prompt", () => {
     expect(
-      applyComposerSkillModePrefix("fix the flaky test", { name: "review", label: "Review" }),
+      applyComposerSkillModePrefix("fix the flaky test", {
+        kind: "skill",
+        name: "review",
+        label: "Review",
+      }),
     ).toBe("$review fix the flaky test");
+  });
+
+  it("opens a prompt with the command when the mode is a slash command", () => {
+    expect(
+      applyComposerSkillModePrefix("fix the flaky test", {
+        kind: "slash-command",
+        name: "pstack:poteto-mode",
+        label: "/pstack:poteto-mode",
+      }),
+    ).toBe("/pstack:poteto-mode fix the flaky test");
+  });
+
+  it("does not double-prefix a prompt that already opens with the pinned command", () => {
+    expect(
+      applyComposerSkillModePrefix("/pstack:poteto-mode ship it", {
+        kind: "slash-command",
+        name: "pstack:poteto-mode",
+        label: "/pstack:poteto-mode",
+      }),
+    ).toBe("/pstack:poteto-mode ship it");
+  });
+
+  it("yields to a different command the prompt already opens with", () => {
+    expect(
+      applyComposerSkillModePrefix("/compact", {
+        kind: "slash-command",
+        name: "pstack:poteto-mode",
+        label: "/pstack:poteto-mode",
+      }),
+    ).toBe("/compact");
   });
 });
 

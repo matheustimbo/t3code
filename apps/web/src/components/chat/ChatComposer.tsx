@@ -28,7 +28,11 @@ import {
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
 } from "@t3tools/contracts";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
-import { type ComposerSkillMode, serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
+import {
+  type ComposerSkillMode,
+  composerSkillModeMention,
+  serializeComposerFileLink,
+} from "@t3tools/shared/composerTrigger";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
 import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
 import {
@@ -176,7 +180,12 @@ import { measureRestingComposerControls } from "./restingComposerControlsMeasure
 import { observeResponsiveBreakpointFade, usePanelAnimationSettings } from "../../panelAnimations";
 import { type ComposerPromptEditorHandle, ComposerPromptEditor } from "../ComposerPromptEditor";
 import { ProviderModelPicker } from "./ProviderModelPicker";
-import { type ComposerCommandItem, ComposerCommandMenu } from "./ComposerCommandMenu";
+import {
+  type ComposerCommandItem,
+  ComposerCommandMenu,
+  type ComposerPinnableItem,
+  isComposerPinnableItem,
+} from "./ComposerCommandMenu";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
@@ -885,6 +894,8 @@ import {
   formatProviderSkillDisplayName,
   getProviderSlashCommandsForSlashMenu,
   getProviderSkillsForSlashMenu,
+  providerSkillComposerMode,
+  providerSlashCommandComposerMode,
   resolveProviderSkillsForCwd,
   resolveProviderSlashCommandsForCwd,
 } from "@t3tools/client-runtime/providerSkills";
@@ -973,7 +984,7 @@ const ComposerSkillModeChip = memo(function ComposerSkillModeChip(props: {
   size: "sm" | "xs";
   onRemove: () => void;
 }) {
-  const removeLabel = `Remove ${props.skillMode.label} skill mode`;
+  const removeLabel = `Remove pinned mode ${props.skillMode.label}`;
   return (
     <Tooltip>
       <TooltipTrigger
@@ -993,7 +1004,7 @@ const ComposerSkillModeChip = memo(function ComposerSkillModeChip(props: {
         <ComposerControlIcon icon={XIcon} size={props.size} className="opacity-60" />
       </TooltipTrigger>
       <TooltipPopup side="top">
-        {`Every message starts with $${props.skillMode.name}. Click to remove.`}
+        {`Every message starts with ${composerSkillModeMention(props.skillMode)}. Click to remove.`}
       </TooltipPopup>
     </Tooltip>
   );
@@ -2861,13 +2872,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   }, [readComposerSnapshot]);
 
   const pinComposerSkillMode = useCallback(
-    (item: Extract<ComposerCommandItem, { type: "skill" }>) => {
+    (item: ComposerPinnableItem) => {
       const { snapshot, trigger } = resolveActiveComposerTrigger();
       if (!trigger) return;
-      setComposerDraftSkillMode(composerDraftTarget, {
-        name: item.skill.name,
-        label: formatProviderSkillDisplayName(item.skill),
-      });
+      setComposerDraftSkillMode(
+        composerDraftTarget,
+        item.type === "skill"
+          ? providerSkillComposerMode(item.skill)
+          : providerSlashCommandComposerMode(item.command),
+      );
       const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
         expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
       });
@@ -3277,7 +3290,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         nudgeComposerMenuHighlight(action.direction);
         return true;
       }
-      if (action?.kind === "pin-mode" && selectedItem?.type === "skill") {
+      if (action?.kind === "pin-mode" && isComposerPinnableItem(selectedItem)) {
         pinComposerSkillMode(selectedItem);
         return true;
       }

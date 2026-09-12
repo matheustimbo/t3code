@@ -4,6 +4,7 @@ import {
   detectComposerTrigger,
   replaceTextRange,
   serializeComposerFileLink,
+  type ComposerSkillMode,
   type ComposerTrigger,
 } from "@t3tools/shared/composerTrigger";
 import {
@@ -15,6 +16,8 @@ import {
   dedupeProviderSkillsByName,
   getProviderSkillsForSlashMenu,
   isProviderSkillUserInvocable,
+  providerSkillComposerMode,
+  providerSlashCommandComposerMode,
   resolveProviderSkillsForCwd,
 } from "@t3tools/client-runtime/providerSkills";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -23,7 +26,7 @@ import type { ComposerEditorSelection } from "../../components/ComposerEditor";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useComposerPathSearch } from "../../state/queries";
-import type { ComposerCommandItem } from "./ComposerCommandPopover";
+import type { ComposerCommandItem, ComposerPinnableItem } from "./ComposerCommandPopover";
 import { matchesSlashSkillQuery } from "./composerSlashSkillSearch";
 
 const WORKSPACE_SNAPSHOT_RETRY_COOLDOWN_MS = 10_000;
@@ -156,6 +159,7 @@ export function useComposerCommandMenu({
   onChangeDraftMessage,
   onUpdateInteractionMode,
   onUsageLimits,
+  onPinSkillMode,
 }: {
   readonly draftMessage: string;
   readonly ownerKey: string | null;
@@ -171,6 +175,7 @@ export function useComposerCommandMenu({
   readonly onUpdateInteractionMode?: (mode: ProviderInteractionMode) => void;
   /** Picking /usage-limits is the action itself; the draft keeps nothing of it. */
   readonly onUsageLimits?: () => void;
+  readonly onPinSkillMode?: (mode: ComposerSkillMode) => void;
 }) {
   const [selection, setSelection] = useState(() => composerSelectionAtEnd(draftMessage));
   const previousOwnerKeyRef = useRef(ownerKey);
@@ -448,6 +453,23 @@ export function useComposerCommandMenu({
     ],
   );
 
+  const onPinMode = useCallback(
+    (item: ComposerPinnableItem) => {
+      if (!trigger || !onPinSkillMode) return;
+      onPinSkillMode(
+        item.type === "skill"
+          ? providerSkillComposerMode(item.skill)
+          : providerSlashCommandComposerMode(item.command),
+      );
+      // The trigger text did its job once the mode is pinned, so it comes out
+      // the same way a pick would have consumed it.
+      const cleared = replaceTextRange(draftMessage, trigger.rangeStart, trigger.rangeEnd, "");
+      setSelection({ start: cleared.cursor, end: cleared.cursor });
+      onChangeDraftMessage(cleared.text);
+    },
+    [draftMessage, onChangeDraftMessage, onPinSkillMode, trigger],
+  );
+
   return {
     selection,
     onSelectionChange,
@@ -456,5 +478,6 @@ export function useComposerCommandMenu({
     skills,
     isLoading: pathSearch.isPending,
     onSelect,
+    ...(onPinSkillMode ? { onPinMode } : {}),
   };
 }

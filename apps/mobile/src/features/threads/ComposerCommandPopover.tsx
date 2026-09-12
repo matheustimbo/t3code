@@ -42,11 +42,26 @@ export type ComposerCommandItem =
       readonly description: string;
     };
 
+export type ComposerPinnableItem = Extract<
+  ComposerCommandItem,
+  { type: "skill" | "provider-slash-command" }
+>;
+
+/**
+ * Whether a row names a provider entry point a mode can repeat. Skills qualify,
+ * and so do provider slash commands, because Claude Code lists plugin skills
+ * only under `/`. The client's own `/model` and a path do not.
+ */
+export function isComposerPinnableItem(item: ComposerCommandItem): item is ComposerPinnableItem {
+  return item.type === "skill" || item.type === "provider-slash-command";
+}
+
 interface ComposerCommandPopoverProps {
   readonly items: ReadonlyArray<ComposerCommandItem>;
   readonly triggerKind: ComposerTriggerKind | null;
   readonly isLoading: boolean;
   readonly onSelect: (item: ComposerCommandItem) => void;
+  readonly onPinMode?: (item: ComposerPinnableItem) => void;
 }
 
 function PopoverSurface(props: { readonly children: React.ReactNode; readonly style?: ViewStyle }) {
@@ -120,6 +135,7 @@ function emptyText(triggerKind: ComposerTriggerKind | null, isLoading: boolean):
 const CommandRow = memo(function CommandRow(props: {
   readonly item: ComposerCommandItem;
   readonly onPress: () => void;
+  readonly onPinMode?: () => void;
   readonly isLast: boolean;
   readonly isSlashSkill: boolean;
 }) {
@@ -157,6 +173,23 @@ const CommandRow = memo(function CommandRow(props: {
           {props.item.description}
         </Text>
       ) : null}
+      {props.onPinMode ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Use ${props.item.label} as a mode`}
+          accessibilityHint="Starts every message in this thread with it"
+          // The row is the outer press target, so the pill has to claim the
+          // touch before it bubbles or tapping Mode would insert instead.
+          onPress={(event) => {
+            event.stopPropagation();
+            props.onPinMode?.();
+          }}
+          hitSlop={8}
+          className="ml-auto shrink-0 rounded-md bg-subtle px-2 py-1 active:opacity-60"
+        >
+          <Text className="text-2xs font-t3-medium text-foreground-muted">Mode</Text>
+        </Pressable>
+      ) : null}
     </Pressable>
   );
 });
@@ -181,15 +214,21 @@ export const ComposerCommandPopover = memo(function ComposerCommandPopover(
           keyboardShouldPersistTaps="always"
           showsVerticalScrollIndicator={false}
         >
-          {props.items.map((item, index) => (
-            <CommandRow
-              key={item.id}
-              item={item}
-              onPress={() => props.onSelect(item)}
-              isLast={index === props.items.length - 1}
-              isSlashSkill={props.triggerKind === "slash-command" && item.type === "skill"}
-            />
-          ))}
+          {props.items.map((item, index) => {
+            const onPinMode = props.onPinMode;
+            return (
+              <CommandRow
+                key={item.id}
+                item={item}
+                onPress={() => props.onSelect(item)}
+                {...(onPinMode && isComposerPinnableItem(item)
+                  ? { onPinMode: () => onPinMode(item) }
+                  : {})}
+                isLast={index === props.items.length - 1}
+                isSlashSkill={props.triggerKind === "slash-command" && item.type === "skill"}
+              />
+            );
+          })}
         </ScrollView>
       ) : (
         <View className="px-3.5 py-2.5">

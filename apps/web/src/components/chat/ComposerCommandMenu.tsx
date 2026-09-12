@@ -70,6 +70,22 @@ export type ComposerCommandItem =
       description: string;
     };
 
+export type ComposerPinnableItem = Extract<
+  ComposerCommandItem,
+  { type: "skill" | "provider-slash-command" }
+>;
+
+/**
+ * Whether a menu row names a provider entry point a mode can repeat. Skills
+ * qualify, and so do provider slash commands, because Claude Code lists plugin
+ * skills only under `/`. The client's own `/model` and a path do not.
+ */
+export function isComposerPinnableItem(
+  item: ComposerCommandItem | null | undefined,
+): item is ComposerPinnableItem {
+  return item?.type === "skill" || item?.type === "provider-slash-command";
+}
+
 export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
   items: ComposerCommandItem[];
   resolvedTheme: "light" | "dark";
@@ -194,7 +210,7 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
         <span className="min-w-0 max-w-[48ch] flex-1 truncate text-left text-secondary-label text-xs">
           {props.item.description}
         </span>
-        {props.isActive && props.item.type === "skill" ? (
+        {props.isActive && isComposerPinnableItem(props.item) ? (
           <span className="ms-auto flex shrink-0 items-center gap-1.5 text-secondary-label text-xs">
             Mode
             <Kbd className="h-4 min-w-0 rounded-sm px-1.5 text-[10px]">
