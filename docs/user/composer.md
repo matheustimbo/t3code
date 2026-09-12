@@ -119,9 +119,11 @@ Provider commands must start the message to run. T3 Code commands such as
 `/model` and `/plan`, and skill mentions, work on any line.
 
 On web and desktop, press `Option+Enter` on macOS or `Alt+Enter` on Windows and
-Linux while a skill is highlighted in either menu to pin it as a mode. A pinned
-skill appears as a chip in the composer and starts every message in that thread
-with its mention, until you click the chip to remove it.
+Linux while a skill or a provider command is highlighted in either menu to pin
+it as a mode. A pinned mode appears as a chip in the composer and starts every
+message in that thread with it, until you click the chip to remove it. Skills
+lead with `$name` and provider commands with `/name`, so a command mode runs on
+every message the way it would if you typed it.
 
 Send `/compact` in an existing conversation to reduce context usage when the
 provider supports it. Web and desktop also offer compaction from the context meter.
