@@ -42,9 +42,9 @@ describe("resolveComposerMenuKeyAction", () => {
       { kind: "select" },
     ],
     [
-      "Alt+Enter on a provider slash command selects",
+      "Alt+Enter on a provider slash command pins the mode",
       { key: "Enter", altKey: true, itemCount: 1, activeItemType: "provider-slash-command" },
-      { kind: "select" },
+      { kind: "pin-mode" },
     ],
     [
       "plain Enter on a skill selects",
