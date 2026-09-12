@@ -31,6 +31,7 @@ import {
   type ClaudeSettings,
   EventId,
   type ProviderApprovalDecision,
+  type ProviderConcurrentSend,
   ProviderDriverKind,
   ProviderInstanceId,
   type ModelSelection,
@@ -116,6 +117,14 @@ import { type ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
 const decodeUnknownJsonStringExit = Schema.decodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
+
+/**
+ * Claude reads a mid-turn message: `sendTurn` keeps the live turn state and
+ * offers the message into the running SDK prompt queue, so no turn boundary is
+ * created and the agent loop picks it up while it works. Only a real turn is
+ * steered; a leftover synthetic turn is completed first.
+ */
+export const CLAUDE_CONCURRENT_SEND: ProviderConcurrentSend = "steer";
 
 const PROVIDER = ProviderDriverKind.make("claudeAgent");
 
@@ -5165,6 +5174,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     provider: PROVIDER,
     capabilities: {
       sessionModelSwitch: "in-session",
+      concurrentSend: CLAUDE_CONCURRENT_SEND,
     },
     compaction: { type: "slash-command", command: "/compact" },
     startSession,

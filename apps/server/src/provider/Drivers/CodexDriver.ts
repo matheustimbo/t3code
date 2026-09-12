@@ -36,7 +36,7 @@ import { ServerConfig } from "../../config.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderDriverError } from "../Errors.ts";
-import { makeCodexAdapter } from "../Layers/CodexAdapter.ts";
+import { CODEX_CONCURRENT_SEND, makeCodexAdapter } from "../Layers/CodexAdapter.ts";
 import {
   CODEX_RESET_CREDIT_TIMEOUT,
   CodexResetCreditCoordinator,
@@ -143,6 +143,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         displayName,
         accentColor,
         continuationGroupKey: continuationIdentity.continuationKey,
+        concurrentSend: CODEX_CONCURRENT_SEND,
       });
       yield* materializeCodexShadowHome(homeLayout).pipe(
         Effect.mapError(

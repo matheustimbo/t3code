@@ -234,7 +234,8 @@ it.effect.each(
         ...makeProviderService(),
         getCapabilities: (instanceId) =>
           Effect.succeed({
-            sessionModelSwitch: "in-session",
+            sessionModelSwitch: "in-session" as const,
+            concurrentSend: "steer" as const,
             ...(instanceId === providerInstanceId ? { promptlessTurnContinuation: true } : {}),
           }),
         sendTurn: (input) =>
@@ -833,6 +834,7 @@ for (const preparedStatus of [
           getCapabilities: () =>
             Effect.succeed({
               sessionModelSwitch: "in-session" as const,
+              concurrentSend: "steer" as const,
               promptlessTurnContinuation: true,
             }),
           sendTurn: (input: ProviderSendTurnInput) =>
@@ -939,7 +941,11 @@ it.effect("settles failed opt-in recovery without retrying the provider turn", (
       providerService: {
         ...makeProviderService(),
         getCapabilities: () =>
-          Effect.succeed({ sessionModelSwitch: "in-session", promptlessTurnContinuation: true }),
+          Effect.succeed({
+            sessionModelSwitch: "in-session",
+            concurrentSend: "steer",
+            promptlessTurnContinuation: true,
+          } as const),
         sendTurn: (input) =>
           Effect.gen(function* () {
             sends.push(input);

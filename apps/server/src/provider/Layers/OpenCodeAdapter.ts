@@ -1,6 +1,7 @@
 import {
   EventId,
   type OpenCodeSettings,
+  type ProviderConcurrentSend,
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderRuntimeEvent,
@@ -60,6 +61,14 @@ import {
   type OpenCodeServerConnection,
 } from "../opencodeRuntime.ts";
 import * as Option from "effect/Option";
+
+/**
+ * The adapter reuses the T3 turn id and its own comment calls this a steer, but
+ * the dispatch runs inside a one-permit `promptSemaphore`, so OpenCode holds
+ * the new prompt until the running one is done. Session lookup and model
+ * validation happen before the permit, so a rejected send still fails fast.
+ */
+export const OPENCODE_CONCURRENT_SEND: ProviderConcurrentSend = "provider-queue";
 
 const PROVIDER = ProviderDriverKind.make("opencode");
 
@@ -3854,6 +3863,7 @@ export function makeOpenCodeAdapter(
       provider: PROVIDER,
       capabilities: {
         sessionModelSwitch: "in-session",
+        concurrentSend: OPENCODE_CONCURRENT_SEND,
       },
       startSession,
       sendTurn,

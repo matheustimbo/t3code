@@ -12,6 +12,7 @@ import {
   type CanonicalItemType,
   type CanonicalRequestType,
   type CodexSettings,
+  type ProviderConcurrentSend,
   ProviderDriverKind,
   type ProviderEvent,
   ProviderInstanceId,
@@ -83,6 +84,13 @@ const isCodexSessionRuntimeThreadIdMissingError = Schema.is(
   CodexSessionRuntimeThreadIdMissingError,
 );
 const isCodexResumeCursorSchema = Schema.is(CodexResumeCursorSchema);
+
+/**
+ * A second native `turn/start` while a turn runs comes back with a queued turn
+ * id, and `CodexSessionRuntime` keeps the older `activeTurnId`. Codex starts the
+ * new prompt only once the running one finishes.
+ */
+export const CODEX_CONCURRENT_SEND: ProviderConcurrentSend = "provider-queue";
 
 const PROVIDER = ProviderDriverKind.make("codex");
 
@@ -2715,6 +2723,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     capabilities: {
       sessionModelSwitch: "in-session",
       promptlessTurnContinuation: true,
+      concurrentSend: CODEX_CONCURRENT_SEND,
     },
     startSession,
     sendTurn,

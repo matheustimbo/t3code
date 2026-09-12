@@ -10,6 +10,7 @@
 import type {
   ApprovalRequestId,
   ProviderApprovalDecision,
+  ProviderConcurrentSend,
   ProviderDriverKind,
   ProviderUserInputAnswers,
   ProviderRuntimeEvent,
@@ -52,6 +53,11 @@ export interface ProviderAdapterCapabilities {
   readonly promptlessTurnContinuation?: boolean;
   /** False when native conversation history cannot be rewound. */
   readonly supportsConversationRollback?: boolean;
+  /**
+   * What happens to a message the user sends while one of this adapter's turns
+   * is running. Required so a new adapter cannot compile without stating it.
+   */
+  readonly concurrentSend: ProviderConcurrentSend;
 }
 
 export interface ProviderThreadTurnSnapshot {
