@@ -115,11 +115,23 @@ export function detectComposerTrigger(
   };
 }
 
+/**
+ * How the provider starts the pinned entry point. A skill answers to a `$name`
+ * mention in prose; a provider slash command only answers to `/name`, which is
+ * how Claude Code exposes plugin commands that never reach its skill list.
+ */
+export type ComposerSkillModeKind = "skill" | "slash-command";
+
 export interface ComposerSkillMode {
-  /** Provider skill name — the token body of the `$name` mention. */
+  kind: ComposerSkillModeKind;
+  /** Provider skill or slash command name, without its sigil. */
   name: string;
   /** Display label shown on the composer chip. */
   label: string;
+}
+
+export function composerSkillModeMention(mode: ComposerSkillMode): string {
+  return `${mode.kind === "slash-command" ? "/" : "$"}${mode.name.trim()}`;
 }
 
 /**
@@ -137,8 +149,7 @@ export function applyComposerSkillModePrefix(
   text: string,
   mode: ComposerSkillMode | null | undefined,
 ): string {
-  const name = mode?.name.trim();
-  if (!name) {
+  if (!mode?.name.trim()) {
     return text;
   }
   const trimmed = text.trim();
@@ -148,17 +159,19 @@ export function applyComposerSkillModePrefix(
   // A recalled or resent prompt already carries the mention, so prefixing it
   // again would double it. The token has to end at a boundary, since
   // "$reviewer" names a different skill than "$review".
-  const mention = `$${name}`;
+  const mention = composerSkillModeMention(mode);
   if (trimmed.startsWith(mention)) {
     const next = trimmed.charAt(mention.length);
     if (next === "" || isWhitespace(next)) {
       return text;
     }
   }
+  // Only one command can lead a message, so a slash-command mode yields to
+  // whichever one the prompt was typed with.
   if (startsWithProviderSlashCommand(trimmed)) {
     return text;
   }
-  return `$${name} ${text}`;
+  return `${mention} ${text}`;
 }
 
 export function replaceTextRange(
