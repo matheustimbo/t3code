@@ -429,7 +429,9 @@ export const make = Effect.gen(function* () {
               errorTag: error._tag,
               channel: error.channel,
             });
-            return true;
+            // `checked` means the check reached a verdict. A feed that never
+            // answers has not, and callers surface or retry only on false.
+            return false;
           }),
         }),
       );
