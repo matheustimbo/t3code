@@ -303,7 +303,7 @@ describe.skipIf(HostProcessPlatform.defaultValue() === "win32")(
           "empty-success",
           "success",
           "failed-with-path",
-          "existing-cli",
+          "ignores-path-cli",
           "node-override",
         ] as const
       ).map((mode) => ({ packageManager, mode })),
@@ -336,7 +336,7 @@ process.stdout.write(JSON.stringify(process.argv.slice(2)) + "\\n");
 const fs = require("node:fs");
 fs.appendFileSync(process.env.T3_TEST_CALLS, JSON.stringify(process.argv.slice(2)) + "\\n");
 const mode = process.env.T3_TEST_MODE;
-if (mode === "success" || mode === "failed-with-path") {
+if (mode === "success" || mode === "failed-with-path" || mode === "ignores-path-cli") {
   process.stdout.write(process.env.T3_TEST_CLI + "\\n");
 }
 if (mode === "etarget" || mode === "failed-with-path") {
@@ -349,7 +349,19 @@ if (mode === "etarget" || mode === "failed-with-path") {
 `,
         );
         yield* fs.chmod(path.join(bin, packageManager), 0o700);
-        if (mode === "existing-cli") yield* fs.symlink(cliPath, path.join(bin, "t3"));
+        // This fork ships its own server package, so a `t3` already on the remote PATH is
+        // someone else's build. It must never short-circuit the pinned install, and this
+        // decoy prints a different argv so the assertions below catch it if it ever runs.
+        if (mode === "ignores-path-cli") {
+          const pathCli = path.join(bin, "t3");
+          yield* fs.writeFileString(
+            pathCli,
+            `#!/usr/bin/env node
+process.stdout.write(JSON.stringify(["path-cli"]) + "\\n");
+`,
+          );
+          yield* fs.chmod(pathCli, 0o700);
+        }
 
         const child = yield* spawner.spawn(
           ChildProcess.make("/bin/sh", ["-s", "--", ...args], {
@@ -411,7 +423,7 @@ if (mode === "etarget" || mode === "failed-with-path") {
           "-c",
           "command -v t3",
         ];
-        const usesInstaller = mode !== "existing-cli" && mode !== "node-override";
+        const usesInstaller = mode !== "node-override";
         const calls = yield* fs.readFileString(callsPath);
         if (usesInstaller) {
           assert.deepEqual(
