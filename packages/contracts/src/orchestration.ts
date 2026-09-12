@@ -732,7 +732,12 @@ export const OrchestrationThread = Schema.Struct({
   ),
   branchPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
-  latestUserMessageAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  // Same type as the shell's field, not an optional widening of it, so a thread
+  // still satisfies every shell-shaped Pick the clients sort and group by.
+  // Defaulted rather than required so payloads from older servers still decode.
+  latestUserMessageAt: Schema.NullOr(IsoDateTime).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   archivedAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),

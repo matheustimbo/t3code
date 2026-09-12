@@ -397,6 +397,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           id: ThreadId.make("thread-1"),
           projectId: asProjectId("project-1"),
           title: "Thread 1",
+          latestUserMessageAt: "2026-02-24T00:00:04.000Z",
           titleRevision: 0,
           modelSelection: {
             instanceId: ProviderInstanceId.make("codex"),
@@ -440,10 +441,12 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
               text: "hello from projection",
               turnId: asTurnId("turn-1"),
               streaming: false,
+              queued: false,
               createdAt: "2026-02-24T00:00:04.000Z",
               updatedAt: "2026-02-24T00:00:05.000Z",
             },
           ],
+          queuedMessages: [],
           proposedPlans: [
             {
               id: "plan-1",
@@ -573,6 +576,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           hasPendingApprovals: true,
           hasPendingUserInput: false,
           hasActionableProposedPlan: false,
+          queuedMessageCount: 0,
           backgroundLiveness: null,
           planProgress: null,
         },
@@ -770,6 +774,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             text: "Read these notes",
             turnId: null,
             streaming: false,
+            queued: false,
             createdAt,
             updatedAt: createdAt,
             attachments,

@@ -957,6 +957,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     branch: null,
     worktreePath: null,
     ...overrides,
+    latestUserMessageAt: overrides.latestUserMessageAt ?? null,
   };
 }
 

@@ -31,6 +31,7 @@ const thread: OrchestrationThread = {
   branch: null,
   worktreePath: null,
   latestTurn: null,
+  latestUserMessageAt: null,
   createdAt: timestamp,
   updatedAt: timestamp,
   archivedAt: null,

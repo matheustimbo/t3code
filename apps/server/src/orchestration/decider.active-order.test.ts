@@ -30,6 +30,7 @@ function makeReadModel(overrides: Partial<OrchestrationThread> = {}): Orchestrat
         id: THREAD_ID,
         projectId: ProjectId.make("project-1"),
         title: "Thread",
+        latestUserMessageAt: null,
         modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
         runtimeMode: "full-access",
         interactionMode: "default",

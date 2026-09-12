@@ -340,6 +340,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     pullRequests: [],
     activities: [],
     ...overrides,
+    latestUserMessageAt: overrides.latestUserMessageAt ?? null,
   };
 }
 

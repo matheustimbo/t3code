@@ -475,6 +475,7 @@ export function buildLocalDraftThread(
     environmentId: draftThread.environmentId,
     projectId: draftThread.projectId,
     title: "New thread",
+    latestUserMessageAt: null,
     modelSelection: fallbackModelSelection,
     runtimeMode: draftThread.runtimeMode,
     interactionMode: draftThread.interactionMode,
