@@ -8,6 +8,7 @@ import {
 import { feedbackBannerItem } from "./chat/ComposerFeedback";
 import { usageLimitsBannerItem } from "./chat/ComposerUsageLimits";
 import { derivePendingRequests } from "@t3tools/client-runtime/pending-requests";
+import { resolveSendWhileRunning } from "@t3tools/client-runtime/composer/send-while-running";
 import {
   questionAttachmentDraftId,
   questionAttachmentDraftPrefix,
@@ -2637,6 +2638,16 @@ export default function ChatView(props: ChatViewProps) {
     conversationProviderStatus !== null &&
     conversationProviderStatus.supportsConversationRollback !== false;
   const phase = derivePhase(activeThread?.session ?? null);
+  // Named from the session's provider, not the composer's selection: the
+  // running turn belongs to whoever is running it.
+  const sendWhileRunning = useMemo(
+    () =>
+      resolveSendWhileRunning({
+        isRunning: phase === "running",
+        provider: conversationProviderStatus,
+      }),
+    [conversationProviderStatus, phase],
+  );
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
   const latestCheckpointCompletedAt = activeThread?.checkpoints.at(-1)?.completedAt ?? null;
   const workspaceMutationId = useMemo(() => {
@@ -8707,6 +8718,7 @@ export default function ChatView(props: ChatViewProps) {
                             forceExpandedOnMobile={forceExpandedMobileComposer && isDraftHeroState}
                             projectSelectionRequired={isLocalDraftThread && activeProject === null}
                             phase={phase}
+                            sendWhileRunning={sendWhileRunning}
                             isConnecting={isConnecting}
                             isSendBusy={isSendBusy}
                             sendDisabledReason={

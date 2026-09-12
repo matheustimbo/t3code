@@ -1,3 +1,4 @@
+import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
@@ -14,6 +15,9 @@ vi.mock("../SidebarStageBackdrop", () => ({
   StageBackdropButtonArt: ({ variant }: { variant: string }) => `stage-${variant}`,
   useSidebarStageBackdropVariant: (enabled = true) => (enabled ? stageArtworkState.variant : null),
 }));
+
+import { resolveSendWhileRunning } from "@t3tools/client-runtime/composer/send-while-running";
+import type { SendWhileRunningAffordance } from "@t3tools/client-runtime/composer/send-while-running";
 
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 
@@ -44,21 +48,27 @@ function renderPendingActions(isRunning: boolean) {
   );
 }
 
-function renderRunningActions(showSendWhileRunning: boolean, hasSendableContent: boolean) {
+function renderRunningActions(input: {
+  sendWhileRunning: SendWhileRunningAffordance | null;
+  hasSendableContent: boolean;
+  compact?: boolean;
+  showEnterHint?: boolean;
+}) {
   return renderToStaticMarkup(
     createElement(ComposerPrimaryActions, {
-      compact: true,
+      compact: input.compact ?? true,
       pendingAction: null,
       isRunning: true,
       showPlanFollowUpPrompt: false,
-      promptHasText: hasSendableContent,
+      promptHasText: input.hasSendableContent,
       isSendBusy: false,
       sendDisabledReason: null,
       isConnecting: false,
       isEnvironmentUnavailable: false,
       isPreparingWorktree: false,
-      hasSendableContent,
-      showSendWhileRunning,
+      hasSendableContent: input.hasSendableContent,
+      sendWhileRunning: input.sendWhileRunning,
+      showEnterHint: input.showEnterHint ?? false,
       onPreviousPendingQuestion: () => {},
       onInterrupt: () => {},
       onImplementPlanInNewThread: () => {},
@@ -86,6 +96,24 @@ function renderSendButton(sendDisabledReason: string | null = null) {
     }),
   );
 }
+
+const steerAffordance = resolveSendWhileRunning({
+  isRunning: true,
+  provider: {
+    instanceId: ProviderInstanceId.make("claudeAgent"),
+    driver: ProviderDriverKind.make("claudeAgent"),
+    concurrentSend: "steer",
+  },
+})!;
+
+const unsupportedAffordance = resolveSendWhileRunning({
+  isRunning: true,
+  provider: {
+    instanceId: ProviderInstanceId.make("cursor"),
+    driver: ProviderDriverKind.make("cursor"),
+    concurrentSend: "unsupported",
+  },
+})!;
 
 afterEach(() => {
   stageArtworkState.mode = "none";
@@ -125,25 +153,53 @@ describe("ComposerPrimaryActions", () => {
     expect(markup).not.toContain("stage-nightly");
   });
 
-  it("only renders stop while running when Enter-to-send is available", () => {
-    const markup = renderRunningActions(false, true);
+  it("names what a second send does, on the button face, alongside stop", () => {
+    const markup = renderRunningActions({
+      sendWhileRunning: steerAffordance,
+      hasSendableContent: true,
+      compact: false,
+      showEnterHint: true,
+    });
 
     expect(markup).toContain('aria-label="Stop generation"');
-    expect(markup).not.toContain('aria-label="Send message"');
-  });
-
-  it("renders send alongside stop while running when Enter-to-send is unavailable", () => {
-    const markup = renderRunningActions(true, true);
-
-    expect(markup).toContain('aria-label="Stop generation"');
-    expect(markup).toContain('aria-label="Send message"');
+    expect(markup).toContain("Steer");
     expect(markup).toContain('type="submit"');
   });
 
+  it("carries the label in the accessible name when the composer is narrow", () => {
+    const markup = renderRunningActions({
+      sendWhileRunning: steerAffordance,
+      hasSendableContent: true,
+    });
+
+    expect(markup).toContain('aria-label="Steer"');
+    expect(markup).not.toContain(">Steer<");
+  });
+
+  it("disables the action and says why when the provider cannot take a send", () => {
+    const markup = renderRunningActions({
+      sendWhileRunning: unsupportedAffordance,
+      hasSendableContent: true,
+    });
+
+    expect(markup).toContain("disabled");
+    expect(markup).toContain('aria-label="Cursor cannot take a message while it is working."');
+  });
+
   it("keeps stop as the only action while running with an empty composer", () => {
-    const markup = renderRunningActions(true, false);
+    const markup = renderRunningActions({
+      sendWhileRunning: steerAffordance,
+      hasSendableContent: false,
+    });
 
     expect(markup).toContain('aria-label="Stop generation"');
-    expect(markup).not.toContain('aria-label="Send message"');
+    expect(markup).not.toContain("Steer");
+  });
+
+  it("keeps stop as the only action when no affordance is resolved", () => {
+    const markup = renderRunningActions({ sendWhileRunning: null, hasSendableContent: true });
+
+    expect(markup).toContain('aria-label="Stop generation"');
+    expect(markup).not.toContain('type="submit"');
   });
 });
