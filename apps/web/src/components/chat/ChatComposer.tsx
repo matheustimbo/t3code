@@ -1,3 +1,4 @@
+import { runtimeModeConfig, runtimeModeOptions } from "./runtimeModeConfig";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import {
   questionAttachmentDraftId,
@@ -27,7 +28,11 @@ import {
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
 } from "@t3tools/contracts";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
-import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
+import {
+  type ComposerSkillMode,
+  composerSkillModeMention,
+  serializeComposerFileLink,
+} from "@t3tools/shared/composerTrigger";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
 import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
 import {
@@ -175,7 +180,12 @@ import { measureRestingComposerControls } from "./restingComposerControlsMeasure
 import { observeResponsiveBreakpointFade, usePanelAnimationSettings } from "../../panelAnimations";
 import { type ComposerPromptEditorHandle, ComposerPromptEditor } from "../ComposerPromptEditor";
 import { ProviderModelPicker } from "./ProviderModelPicker";
-import { type ComposerCommandItem, ComposerCommandMenu } from "./ComposerCommandMenu";
+import {
+  type ComposerCommandItem,
+  ComposerCommandMenu,
+  type ComposerPinnableItem,
+  isComposerPinnableItem,
+} from "./ComposerCommandMenu";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
 import type { SendWhileRunningAffordance } from "@t3tools/client-runtime/composer/send-while-running";
@@ -189,6 +199,7 @@ import {
   ComposerControlSeparator,
   ComposerSelectControl,
 } from "./ComposerControl";
+import { resolveComposerMenuKeyAction } from "./composerMenuKeyAction";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
 import {
   searchSlashCommandItems,
@@ -847,15 +858,11 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import {
   BotIcon,
+  BoxIcon,
   CircleAlertIcon,
   PaperclipIcon,
   PencilRulerIcon,
   PlayIcon,
-  type LucideIcon,
-  LockIcon,
-  LockOpenIcon,
-  PenLineIcon,
-  SparklesIcon,
   XIcon,
 } from "lucide-react";
 import { proposedPlanTitle } from "../../proposedPlan";
@@ -888,6 +895,8 @@ import {
   formatProviderSkillDisplayName,
   getProviderSlashCommandsForSlashMenu,
   getProviderSkillsForSlashMenu,
+  providerSkillComposerMode,
+  providerSlashCommandComposerMode,
   resolveProviderSkillsForCwd,
   resolveProviderSlashCommandsForCwd,
 } from "@t3tools/client-runtime/providerSkills";
@@ -899,33 +908,6 @@ import type { ReviewCommentContext } from "../../reviewCommentContext";
 
 const WORKSPACE_SNAPSHOT_RETRY_COOLDOWN_MS = 10_000;
 
-const runtimeModeConfig: Record<
-  RuntimeMode,
-  { label: string; description: string; icon: LucideIcon }
-> = {
-  "approval-required": {
-    label: "Supervised",
-    description: "Ask before commands and file changes.",
-    icon: LockIcon,
-  },
-  "auto-accept-edits": {
-    label: "Auto-accept edits",
-    description: "Auto-approve edits, ask before other actions.",
-    icon: PenLineIcon,
-  },
-  auto: {
-    label: "Auto",
-    description: "Supported providers approve routine actions; others still ask.",
-    icon: SparklesIcon,
-  },
-  "full-access": {
-    label: "Full access",
-    description: "Allow commands and edits without prompts.",
-    icon: LockOpenIcon,
-  },
-};
-
-const runtimeModeOptions = Object.keys(runtimeModeConfig) as RuntimeMode[];
 const extendReplacementRangeForTrailingSpace = (
   text: string,
   rangeEnd: number,
@@ -997,6 +979,37 @@ function useRestingComposerControlsLayout(host: HTMLDivElement | null) {
 
   return { controlsRef, hiddenBlockCount: layout.hiddenCount, controlsVisible: layout.visible };
 }
+
+const ComposerSkillModeChip = memo(function ComposerSkillModeChip(props: {
+  skillMode: ComposerSkillMode;
+  size: "sm" | "xs";
+  onRemove: () => void;
+}) {
+  const removeLabel = `Remove pinned mode ${props.skillMode.label}`;
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <ComposerControl
+            size={props.size}
+            className="shrink-0 whitespace-nowrap"
+            type="button"
+            onClick={props.onRemove}
+            aria-label={removeLabel}
+            data-composer-skill-mode-chip="true"
+          />
+        }
+      >
+        <ComposerControlIcon icon={BoxIcon} size={props.size} />
+        <span className="max-w-32 truncate">{props.skillMode.label}</span>
+        <ComposerControlIcon icon={XIcon} size={props.size} className="opacity-60" />
+      </TooltipTrigger>
+      <TooltipPopup side="top">
+        {`Every message starts with ${composerSkillModeMention(props.skillMode)}. Click to remove.`}
+      </TooltipPopup>
+    </Tooltip>
+  );
+});
 
 const ComposerFooterModeControls = memo(function ComposerFooterModeControls(props: {
   showInteractionModeToggle: boolean;
@@ -1191,6 +1204,7 @@ export interface ChatComposerHandle {
   restoreAfterTimelineReachedEnd: () => void;
   collapseForTimelineScrollKey: (key: string) => void;
   addDroppedFiles: (files: File[]) => void;
+  hasPendingAttachments: () => boolean;
   insertTextAtEnd: (text: string, options?: { ensureLeadingBoundary?: boolean }) => boolean;
   citeAssistantText: (
     citation: AssistantCitation,
@@ -1232,6 +1246,7 @@ export interface ChatComposerHandle {
     selectedProviderModels: ReadonlyArray<ServerProvider["models"][number]>;
     interactionMode: ProviderInteractionMode;
     interactionModeEnabled: boolean;
+    skillMode: ComposerSkillMode | null;
   };
   /** Validate the fully composed text immediately before a provider turn starts. */
   validateProviderInput: (providerInput: string) => boolean;
@@ -1272,6 +1287,7 @@ export interface ChatComposerProps {
   sendWhileRunning: SendWhileRunningAffordance | null;
   isConnecting: boolean;
   isSendBusy: boolean;
+  isRevertingCheckpoint?: boolean;
   sendDisabledReason: string | null;
   isPreparingWorktree: boolean;
   bannerItems: readonly ComposerBannerStackItem[];
@@ -1421,6 +1437,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     sendWhileRunning,
     isConnecting,
     isSendBusy,
+    isRevertingCheckpoint = false,
     sendDisabledReason: externalSendDisabledReason,
     isPreparingWorktree,
     environmentUnavailable,
@@ -1610,7 +1627,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const syncComposerDraftPersistedAttachments = useComposerDraftStore(
     (store) => store.syncPersistedAttachments,
   );
+  const setComposerDraftSkillMode = useComposerDraftStore((store) => store.setSkillMode);
   const getComposerDraft = useComposerDraftStore((store) => store.getComposerDraft);
+  const composerSkillMode = composerDraft.skillMode;
 
   useEffect(() => {
     if (!attachmentUploadsCapabilityKnown) {
@@ -2008,6 +2027,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
    * the next draft.
    */
   const pendingImageCompressionsRef = useRef<Map<string, number>>(new Map());
+  const isRevertingCheckpointRef = useRef(isRevertingCheckpoint);
+  isRevertingCheckpointRef.current = isRevertingCheckpoint;
 
   // ------------------------------------------------------------------
   // Derived: composer send state
@@ -2857,6 +2878,35 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     };
   }, [readComposerSnapshot]);
 
+  const pinComposerSkillMode = useCallback(
+    (item: ComposerPinnableItem) => {
+      const { snapshot, trigger } = resolveActiveComposerTrigger();
+      if (!trigger) return;
+      setComposerDraftSkillMode(
+        composerDraftTarget,
+        item.type === "skill"
+          ? providerSkillComposerMode(item.skill)
+          : providerSlashCommandComposerMode(item.command),
+      );
+      const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+        expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+      });
+      if (applied) {
+        setComposerHighlightedItemId(null);
+      }
+    },
+    [
+      applyPromptReplacement,
+      composerDraftTarget,
+      resolveActiveComposerTrigger,
+      setComposerDraftSkillMode,
+    ],
+  );
+
+  const clearComposerSkillMode = useCallback(() => {
+    setComposerDraftSkillMode(composerDraftTarget, null);
+  }, [composerDraftTarget, setComposerDraftSkillMode]);
+
   const { onUsageLimitsCommand } = props;
   const onSelectComposerItem = useCallback(
     (item: ComposerCommandItem) => {
@@ -3237,15 +3287,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (menuIsActive) {
       const currentItems = composerMenuItemsRef.current;
       const selectedItem = activeComposerMenuItemRef.current ?? currentItems[0];
-      if (key === "ArrowDown" && currentItems.length > 0) {
-        nudgeComposerMenuHighlight("ArrowDown");
+      const action = resolveComposerMenuKeyAction({
+        key,
+        altKey: event.altKey,
+        itemCount: currentItems.length,
+        activeItemType: selectedItem?.type ?? null,
+      });
+      if (action?.kind === "highlight") {
+        nudgeComposerMenuHighlight(action.direction);
         return true;
       }
-      if (key === "ArrowUp" && currentItems.length > 0) {
-        nudgeComposerMenuHighlight("ArrowUp");
+      if (action?.kind === "pin-mode" && isComposerPinnableItem(selectedItem)) {
+        pinComposerSkillMode(selectedItem);
         return true;
       }
-      if ((key === "Enter" || key === "Tab") && selectedItem) {
+      if (action?.kind === "select" && selectedItem) {
         onSelectComposerItem(selectedItem);
         return true;
       }
@@ -3331,7 +3387,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       // A thread switch during the verify await would mix the new thread's
       // prompt with this invocation's captured target. Nothing was taken yet,
       // so abort and leave the entry restorable where the user now is.
-      if (composerTargetKey(composerDraftTarget) !== composerDraftTargetKeyRef.current) {
+      if (
+        isRevertingCheckpointRef.current ||
+        composerTargetKey(composerDraftTarget) !== composerDraftTargetKeyRef.current
+      ) {
         return;
       }
 
@@ -4128,6 +4187,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           data-resting-controls-separator="true"
         />
       ) : null}
+      {composerSkillMode ? (
+        <ComposerSkillModeChip
+          skillMode={composerSkillMode}
+          size={composerControlsInStrip ? "xs" : "sm"}
+          onRemove={clearComposerSkillMode}
+        />
+      ) : null}
       <ProviderModelPicker
         isComposerOwned
         disabled={providerCatalogPending}
@@ -4308,7 +4374,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       // even when the composer is in a state that can't stash.
       event.preventDefault();
       event.stopPropagation();
-      if (isCommandPaletteOpen()) {
+      if (isCommandPaletteOpen() || isRevertingCheckpoint) {
         return;
       }
       if (pendingUserInputs.length > 0 && !isComposerApprovalState) {
@@ -4330,6 +4396,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     pendingUserInputs.length,
     projectSelectionRequired,
     stashCurrentPrompt,
+    isRevertingCheckpoint,
     terminalOpen,
   ]);
 
@@ -4337,7 +4404,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // Callbacks: attachments
   // ------------------------------------------------------------------
   const addComposerAttachments = async (files: File[]) => {
-    if (!activeThreadId || files.length === 0) return;
+    if (!activeThreadId || files.length === 0 || isRevertingCheckpointRef.current) return;
     if (
       pendingUserInputs.length > 0 &&
       (!supportsQuestionAttachments ||
@@ -4752,6 +4819,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         void addComposerAttachments(files);
         focusComposer();
       },
+      hasPendingAttachments: () =>
+        (pendingImageCompressionsRef.current.get(attachmentTargetKey) ?? 0) > 0,
       insertTextAtEnd: insertComposerTextAtEnd,
       citeAssistantText: (citation, sourceAnchor) =>
         insertComposerText(
@@ -4842,6 +4911,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         selectedProviderModels,
         interactionMode,
         interactionModeEnabled: planModeUiEnabled,
+        skillMode: composerSkillMode,
       }),
       validateProviderInput: (providerInput: string) => {
         const validationMessage = getComposerSubmissionValidationMessage({
@@ -4890,6 +4960,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       selectedProviderModels,
       interactionMode,
       planModeUiEnabled,
+      composerSkillMode,
       compactThreadContext,
       restoreAfterTimelineReachedEnd,
       getTimelineScrollableNode,

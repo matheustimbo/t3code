@@ -238,7 +238,7 @@ function SidebarUpdateControl() {
 
   const handleAction = useCallback(async () => {
     const bridge = window.desktopBridge;
-    if (!bridge || !state) return;
+    if (!bridge) return;
     if (isInteractionDisabled) return;
 
     setIsActionPending(true);
@@ -274,7 +274,7 @@ function SidebarUpdateControl() {
       return;
     }
 
-    if (action === "install") {
+    if (action === "install" && state) {
       let confirmed = false;
       try {
         confirmed = await ensureLocalApi().dialogs.confirm(

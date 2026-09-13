@@ -409,6 +409,31 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
+  it.effect("reports a failed check as unchecked so callers can surface it", () => {
+    const updaterError = new ElectronUpdater.ElectronUpdaterCheckForUpdatesError({
+      channel: "nightly",
+      cause: new Error("HTTP 404: nightly-mac.yml"),
+    });
+    const harness = makeHarness({ checkForUpdates: Effect.fail(updaterError) });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+
+        const result = yield* updates.check("web-ui");
+
+        assert.isFalse(result.checked);
+        assert.equal(result.state.status, "error");
+        assert.equal(result.state.errorContext, "check");
+        assert.equal(
+          result.state.message,
+          "Electron updater failed to check for updates on channel nightly.",
+        );
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
   it.effect("logs bounded updater failure context without exposing the cause", () => {
     const cause = new Error(
       "request failed for https://user:secret@example.com/update?token=secret",

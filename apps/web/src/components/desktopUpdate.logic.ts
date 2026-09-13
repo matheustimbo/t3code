@@ -123,7 +123,10 @@ export function shouldToastDesktopUpdateActionResult(result: DesktopUpdateAction
 }
 
 export function canCheckForUpdate(state: DesktopUpdateState | null): boolean {
-  if (!state || !state.enabled) return false;
+  // An unknown state is the one case a check can repair: the RPC answers with the
+  // authoritative state. Disabling the control here would strand the renderer.
+  if (!state) return true;
+  if (!state.enabled) return false;
   return (
     state.status !== "checking" && state.status !== "downloading" && state.status !== "disabled"
   );

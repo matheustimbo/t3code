@@ -115,6 +115,65 @@ export function detectComposerTrigger(
   };
 }
 
+/**
+ * How the provider starts the pinned entry point. A skill answers to a `$name`
+ * mention in prose; a provider slash command only answers to `/name`, which is
+ * how Claude Code exposes plugin commands that never reach its skill list.
+ */
+export type ComposerSkillModeKind = "skill" | "slash-command";
+
+export interface ComposerSkillMode {
+  kind: ComposerSkillModeKind;
+  /** Provider skill or slash command name, without its sigil. */
+  name: string;
+  /** Display label shown on the composer chip. */
+  label: string;
+}
+
+export function composerSkillModeMention(mode: ComposerSkillMode): string {
+  return `${mode.kind === "slash-command" ? "/" : "$"}${mode.name.trim()}`;
+}
+
+/**
+ * Whether the text opens with a `/command` the provider expands itself.
+ * Anything prepended to one leaves prose the provider never runs, so every
+ * prompt prefix has to skip it. Command names come from arbitrary file names
+ * ("/deploy.prod", "/plugin:skill"), so any first token without a second
+ * slash counts; an absolute path like "/home/theo/app.ts" does not.
+ */
+export function startsWithProviderSlashCommand(text: string): boolean {
+  return /^\/[^\s/]+(?:\s|$)/u.test(text.trim());
+}
+
+export function applyComposerSkillModePrefix(
+  text: string,
+  mode: ComposerSkillMode | null | undefined,
+): string {
+  if (!mode?.name.trim()) {
+    return text;
+  }
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return text;
+  }
+  // A recalled or resent prompt already carries the mention, so prefixing it
+  // again would double it. The token has to end at a boundary, since
+  // "$reviewer" names a different skill than "$review".
+  const mention = composerSkillModeMention(mode);
+  if (trimmed.startsWith(mention)) {
+    const next = trimmed.charAt(mention.length);
+    if (next === "" || isWhitespace(next)) {
+      return text;
+    }
+  }
+  // Only one command can lead a message, so a slash-command mode yields to
+  // whichever one the prompt was typed with.
+  if (startsWithProviderSlashCommand(trimmed)) {
+    return text;
+  }
+  return `${mention} ${text}`;
+}
+
 export function replaceTextRange(
   text: string,
   rangeStart: number,

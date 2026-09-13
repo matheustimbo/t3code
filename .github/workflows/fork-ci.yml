@@ -1,0 +1,107 @@
+# The upstream `CI` workflow runs on Blacksmith runners this fork cannot reach,
+# so its jobs queue until they are cancelled and have never once completed here.
+# This is the fork's own gate on standard GitHub-hosted runners. It is a
+# separate file rather than a patch to `ci.yml` so upstream can keep evolving
+# that workflow without conflicting with the fork on every sync.
+name: Fork CI
+
+on:
+  pull_request:
+  push:
+    branches: [fork-main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fork-ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  typecheck:
+    name: Typecheck
+    if: github.repository == 'matheustimbo/t3code'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      - name: Ensure Electron runtime is installed
+        run: vp run --filter @t3tools/desktop ensure:electron
+
+      - name: Typecheck
+        run: vpr typecheck
+
+      - name: Format
+        run: vp fmt --check
+
+      - name: Lint
+        run: vp lint
+
+  test_server:
+    name: Test Server ${{ matrix.shard }}
+    if: github.repository == 'matheustimbo/t3code'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      # apps/server has no Electron dependency, so it skips that download.
+      - name: Test
+        run: vp run --filter t3 test --shard ${{ matrix.shard }}/${{ strategy.job-total }}
+
+  test_rest:
+    name: Test
+    if: github.repository == 'matheustimbo/t3code'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      - name: Ensure Electron runtime is installed
+        run: vp run --filter @t3tools/desktop ensure:electron
+
+      # Plain apt: the upstream job rewrites a Blacksmith-only mirror list that
+      # does not exist on a GitHub-hosted runner.
+      - name: Install browser secret helper build libraries
+        run: sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config
+
+      - name: Test
+        run: vp run --parallel --concurrency-limit 4 --filter '!t3' --filter '!@t3tools/monorepo' test

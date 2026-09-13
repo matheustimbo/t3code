@@ -20,11 +20,22 @@ import {
 import { memo, useLayoutEffect, useRef } from "react";
 
 import { type ComposerSlashCommand, type ComposerTriggerKind } from "../../composer-logic";
+import { formatShortcutLabel } from "../../keybindings";
 import { cn } from "~/lib/utils";
 import { Badge } from "../ui/badge";
 import { Command, CommandGroup, CommandItem, CommandList } from "../ui/command";
+import { Kbd } from "../ui/kbd";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 import { ComposerBanner } from "./ComposerBanner";
+
+const PIN_SKILL_MODE_SHORTCUT_LABEL = formatShortcutLabel({
+  key: "enter",
+  metaKey: false,
+  ctrlKey: false,
+  shiftKey: false,
+  altKey: true,
+  modKey: false,
+});
 
 export type ComposerCommandItem =
   | {
@@ -58,6 +69,22 @@ export type ComposerCommandItem =
       label: string;
       description: string;
     };
+
+export type ComposerPinnableItem = Extract<
+  ComposerCommandItem,
+  { type: "skill" | "provider-slash-command" }
+>;
+
+/**
+ * Whether a menu row names a provider entry point a mode can repeat. Skills
+ * qualify, and so do provider slash commands, because Claude Code lists plugin
+ * skills only under `/`. The client's own `/model` and a path do not.
+ */
+export function isComposerPinnableItem(
+  item: ComposerCommandItem | null | undefined,
+): item is ComposerPinnableItem {
+  return item?.type === "skill" || item?.type === "provider-slash-command";
+}
 
 export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
   items: ComposerCommandItem[];
@@ -183,7 +210,14 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
         <span className="min-w-0 max-w-[48ch] flex-1 truncate text-left text-secondary-label text-xs">
           {props.item.description}
         </span>
-        {skillSourceKind ? (
+        {props.isActive && isComposerPinnableItem(props.item) ? (
+          <span className="ms-auto flex shrink-0 items-center gap-1.5 text-secondary-label text-xs">
+            Mode
+            <Kbd className="h-4 min-w-0 rounded-sm px-1.5 text-[10px]">
+              {PIN_SKILL_MODE_SHORTCUT_LABEL}
+            </Kbd>
+          </span>
+        ) : skillSourceKind ? (
           <SkillSourceBadge
             kind={skillSourceKind}
             showSkillSuffix={props.triggerKind === "skill"}

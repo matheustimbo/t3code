@@ -2143,7 +2143,11 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
 
     return {
       provider: PROVIDER,
-      capabilities: { sessionModelSwitch: "in-session", concurrentSend: GROK_CONCURRENT_SEND },
+      capabilities: {
+        sessionModelSwitch: "in-session",
+        concurrentSend: GROK_CONCURRENT_SEND,
+        supportsConversationRollback: false,
+      },
       compaction: { type: "slash-command", command: "/compact" },
       startSession,
       sendTurn,

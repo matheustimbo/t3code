@@ -69,6 +69,18 @@ the text is an unedited recalled prompt, with the caret on the first visual line
 the last visual line for `ArrowDown`, counting wrapped lines. Editing a recalled prompt turns it
 into a normal draft.
 
+## Edit an earlier prompt
+
+On web and desktop, choose **Edit from here** beneath a sent message to rewind
+the conversation to before that message. Choose **Revert and keep changes** to
+leave workspace files as they are, or **Revert files too** to restore them as well.
+The selected prompt and its attachments return to the composer for editing and
+resending. Any unsent draft stays above the restored prompt.
+
+This removes the selected message and later conversation from the active thread
+and provider history. It does not undo external actions or separate provider
+memory. The action is available only when the provider supports rewind.
+
 ## Prompt stash
 
 On web and desktop, press `Cmd+S` on macOS or `Ctrl+S` on Windows and Linux to save
@@ -105,6 +117,18 @@ Show skills in slash menu**. Only skills enabled for the provider are listed.
 
 Provider commands must start the message to run. T3 Code commands such as
 `/model` and `/plan`, and skill mentions, work on any line.
+
+On web and desktop, press `Option+Enter` on macOS or `Alt+Enter` on Windows and
+Linux while a skill or a provider command is highlighted in either menu to pin
+it as a mode. A pinned mode appears as a chip in the composer and starts every
+message in that thread with it, until you click the chip to remove it. Skills
+lead with `$name` and provider commands with `/name`, so a command mode runs on
+every message the way it would if you typed it.
+
+On mobile, tap **Mode** on a skill or provider command in the menu to pin it.
+The chip sits above the message field and stays there while the composer is
+collapsed; tap it to remove the mode. Pinning a mode is not available on
+**New task**, since that draft ends when the thread starts.
 
 Send `/compact` in an existing conversation to reduce context usage when the
 provider supports it. Web and desktop also offer compaction from the context meter.

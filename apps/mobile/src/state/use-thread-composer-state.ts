@@ -20,6 +20,10 @@ import {
   type CodexFeedbackSubmission,
 } from "@t3tools/client-runtime/state/threads";
 import { deriveActiveWorkStartedAt } from "@t3tools/shared/orchestrationTiming";
+import {
+  applyComposerSkillModePrefix,
+  type ComposerSkillMode,
+} from "@t3tools/shared/composerTrigger";
 
 import { makeQueuedMessageMetadata } from "../lib/commandMetadata";
 import { isModelSelectionUnavailable } from "../lib/modelOptions";
@@ -207,6 +211,7 @@ export function useThreadComposerState() {
   const selectedThread = selectedThreadDetail ?? selectedThreadShell;
   const modelSelection = selectedDraft?.modelSelection ?? selectedThread?.modelSelection ?? null;
   const runtimeMode = selectedDraft?.runtimeMode ?? selectedThread?.runtimeMode ?? null;
+  const skillMode = selectedDraft?.skillMode ?? null;
   const selectedProvider = selectedEnvironmentRuntime?.serverConfig?.providers.find(
     (provider) => provider.instanceId === modelSelection?.instanceId,
   );
@@ -395,7 +400,7 @@ export function useThreadComposerState() {
       threadId: selectedThreadShell.id,
       messageId,
       commandId: CommandId.make(metadata.commandId),
-      text,
+      text: applyComposerSkillModePrefix(text, draft.skillMode),
       attachments,
       modelSelection,
       runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
@@ -584,6 +589,23 @@ export function useThreadComposerState() {
     [selectedEnvironmentRuntime?.serverConfig, selectedThreadKey],
   );
 
+  const onPinSkillMode = useCallback(
+    (value: ComposerSkillMode) => {
+      if (!selectedThreadKey) {
+        return;
+      }
+      updateComposerDraftSettings(selectedThreadKey, { skillMode: value });
+    },
+    [selectedThreadKey],
+  );
+
+  const onClearSkillMode = useCallback(() => {
+    if (!selectedThreadKey) {
+      return;
+    }
+    updateComposerDraftSettings(selectedThreadKey, { skillMode: undefined });
+  }, [selectedThreadKey]);
+
   const onUpdateRuntimeMode = useCallback(
     (value: RuntimeMode) => {
       if (!selectedThreadKey) {
@@ -636,5 +658,8 @@ export function useThreadComposerState() {
     onUpdateModelSelection,
     onUpdateRuntimeMode,
     onUpdateInteractionMode,
+    skillMode,
+    onPinSkillMode,
+    onClearSkillMode,
   };
 }
