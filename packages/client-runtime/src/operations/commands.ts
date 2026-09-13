@@ -50,6 +50,8 @@ export type SetThreadRuntimeModeInput = CommandInput<"thread.runtime-mode.set">;
 export type SetThreadInteractionModeInput = CommandInput<"thread.interaction-mode.set">;
 export type StartThreadTurnInput = CommandInput<"thread.turn.start">;
 export type InterruptThreadTurnInput = CommandInput<"thread.turn.interrupt">;
+export type EditQueuedMessageInput = CommandInput<"thread.queued-message.edit">;
+export type DropQueuedMessageInput = CommandInput<"thread.queued-message.drop">;
 export type RespondToThreadApprovalInput = CommandInput<"thread.approval.respond">;
 export type RespondToThreadUserInputInput = CommandInput<"thread.user-input.respond">;
 export type DismissThreadUserInputInput = CommandInput<"thread.user-input.dismiss">;
@@ -314,6 +316,30 @@ export const interruptThreadTurn: (input: InterruptThreadTurnInput) => CommandEf
   return yield* dispatch({
     ...input,
     type: "thread.turn.interrupt",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
+
+export const editQueuedMessage: (input: EditQueuedMessageInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.editQueuedMessage",
+)(function* (input) {
+  const metadata = yield* timestampedCommandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "thread.queued-message.edit",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
+
+export const dropQueuedMessage: (input: DropQueuedMessageInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.dropQueuedMessage",
+)(function* (input) {
+  const metadata = yield* timestampedCommandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "thread.queued-message.drop",
     commandId: metadata.commandId,
     createdAt: metadata.createdAt,
   });
