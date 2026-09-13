@@ -34,7 +34,7 @@ const outbox = (id: string): QueuedThreadMessage => ({
 });
 
 const queue = (...ids: ReadonlyArray<string>) =>
-  ids.map((messageId) => ({ messageId: MessageId.make(messageId) }));
+  ids.map((messageId, revision) => ({ messageId: MessageId.make(messageId), revision }));
 
 describe("queued message ordinals", () => {
   it("uses server queue order when client timestamps are skewed", () => {
@@ -104,6 +104,22 @@ describe("queued message ordinals", () => {
       withQueuedMessageOrdinals([ahead, behind], queue("ahead", "behind"))[1]?.queuedOrdinal,
     ).toBe(2);
     expect(withQueuedMessageOrdinals([behind], queue("behind"))[0]?.queuedOrdinal).toBe(1);
+  });
+
+  it("binds the displayed message to its observed queue revision", () => {
+    const queued = message("queued", "user", true);
+    const first = withQueuedMessageOrdinals(
+      [queued],
+      [{ messageId: MessageId.make("queued"), revision: 0 }],
+    );
+    const second = withQueuedMessageOrdinals(
+      [queued],
+      [{ messageId: MessageId.make("queued"), revision: 1 }],
+    );
+
+    expect(first[0]?.queuedMessageEdit?.expectedRevision).toBe(0);
+    expect(second[0]?.queuedMessageEdit?.expectedRevision).toBe(1);
+    expect(second[0]).not.toBe(first[0]);
   });
 
   it("clears queued UI when the queue no longer contains a stale flagged message", () => {

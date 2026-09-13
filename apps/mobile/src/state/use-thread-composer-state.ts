@@ -69,10 +69,10 @@ import { setPendingConnectionError } from "../state/use-remote-environment-regis
 import { useSelectedThreadDetail } from "../state/use-thread-detail";
 import { useThreadSelection } from "../state/use-thread-selection";
 import {
+  editingQueuedTurnMessage,
   editingQueuedTurnMessageId,
   editingQueuedTurnMessagesAtom,
   endEditQueuedTurnMessage,
-  queuedTurnMessageRevision,
   replaceEditingQueuedTurnMessageDraftText,
 } from "./edit-queued-thread-message";
 import { enqueueThreadOutboxMessage } from "./thread-outbox";
@@ -234,7 +234,7 @@ export function useThreadComposerState() {
     }
 
     const queued = selectedThreadDetail.queuedMessages;
-    if (queued && !queued.some((entry) => entry.messageId === editing)) {
+    if (queued && !queued.some((entry) => entry.messageId === editing.messageId)) {
       endEditQueuedTurnMessage(selectedThreadKey);
     }
   }, [selectedThreadCreation, selectedThreadDetail, selectedThreadKey, selectedThreadShell]);
@@ -350,20 +350,16 @@ export function useThreadComposerState() {
       readonly environmentId: EnvironmentId;
       readonly threadId: ThreadId;
       readonly messageId: MessageId;
+      readonly expectedRevision: number;
       readonly text: string;
     }): Promise<QueuedMessageUnavailableNotice | null> => {
       const threadKey = scopedThreadKey(message.environmentId, message.threadId);
-      const expectedRevision = queuedTurnMessageRevision(message);
-      if (expectedRevision === null) {
-        endEditQueuedTurnMessage(threadKey);
-        return queuedMessageUnavailableNotice("not-queued", "edit");
-      }
       const result = await editQueuedMessage({
         environmentId: message.environmentId,
         input: {
           threadId: message.threadId,
           messageId: message.messageId,
-          expectedRevision,
+          expectedRevision: message.expectedRevision,
           text: message.text,
         },
       });
@@ -417,15 +413,16 @@ export function useThreadComposerState() {
     // Edit is text-only on the wire, so attaching a file drops the draft out
     // of edit mode; the send button's label changes with it before the user
     // commits, and the send then goes out as a new message.
-    const editedMessageId = attachments.length === 0 ? editingQueuedTurnMessageId(threadKey) : null;
+    const editedMessage = attachments.length === 0 ? editingQueuedTurnMessage(threadKey) : null;
     if (attachments.length > 0) {
       endEditQueuedTurnMessage(threadKey);
     }
-    if (editedMessageId !== null) {
+    if (editedMessage !== null) {
       const notice = await saveEditedQueuedMessage({
         environmentId: selectedThreadShell.environmentId,
         threadId: selectedThreadShell.id,
-        messageId: editedMessageId,
+        messageId: editedMessage.messageId,
+        expectedRevision: editedMessage.expectedRevision,
         text,
       });
       if (notice) {

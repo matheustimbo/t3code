@@ -1,4 +1,5 @@
 import type { ThreadFeedEntry } from "../../lib/threadActivity";
+import type { QueuedMessageEditSession } from "@t3tools/client-runtime/composer/queued-messages";
 import type { QueuedThreadMessage } from "../../state/thread-outbox-model";
 
 export type PendingThreadFeedEntry = ThreadFeedEntry & {
@@ -11,6 +12,7 @@ export type PendingThreadFeedEntry = ThreadFeedEntry & {
    * reached the server and is waiting for the running turn to finish.
    */
   readonly queuedOrdinal?: number;
+  readonly queuedMessageEdit?: QueuedMessageEditSession;
 };
 
 /** Append the outbox after all presented activity, until the server echoes each message. */

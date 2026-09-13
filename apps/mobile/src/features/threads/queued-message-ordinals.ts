@@ -7,24 +7,45 @@ const numberedRowsByEntry = new WeakMap<PendingThreadFeedEntry, PendingThreadFee
 
 export function withQueuedMessageOrdinals(
   entries: ReadonlyArray<PendingThreadFeedEntry>,
-  queuedMessages: ReadonlyArray<Pick<QueuedMessageRef, "messageId">>,
+  queuedMessages: ReadonlyArray<Pick<QueuedMessageRef, "messageId" | "revision">>,
 ): ReadonlyArray<PendingThreadFeedEntry> {
   const ordinals = queuedMessageOrdinalMap(queuedMessages);
   if (ordinals.size === 0) return entries;
+  const edits = new Map(
+    queuedMessages.map(
+      (message) =>
+        [
+          message.messageId,
+          { messageId: message.messageId, expectedRevision: message.revision },
+        ] as const,
+    ),
+  );
 
   const numbered: PendingThreadFeedEntry[] = [];
   for (const entry of entries) {
-    const ordinal = entry.type === "message" ? ordinals.get(entry.message.id) : undefined;
+    if (entry.type !== "message") {
+      numbered.push(entry);
+      continue;
+    }
+    const ordinal = ordinals.get(entry.message.id);
     if (ordinal === undefined) {
       numbered.push(entry);
       continue;
     }
+    const edit = edits.get(entry.message.id);
+    if (edit === undefined) {
+      numbered.push(entry);
+      continue;
+    }
     const cached = numberedRowsByEntry.get(entry);
-    if (cached?.queuedOrdinal === ordinal) {
+    if (
+      cached?.queuedOrdinal === ordinal &&
+      cached.queuedMessageEdit?.expectedRevision === edit.expectedRevision
+    ) {
       numbered.push(cached);
       continue;
     }
-    const row = { ...entry, queuedOrdinal: ordinal };
+    const row = { ...entry, queuedOrdinal: ordinal, queuedMessageEdit: edit };
     numberedRowsByEntry.set(entry, row);
     numbered.push(row);
   }

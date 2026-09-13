@@ -166,6 +166,7 @@ import {
   EDIT_QUEUED_MESSAGE_ACCESSIBLE_LABEL,
   queuedMessageStatus,
   REMOVE_QUEUED_MESSAGE_LABEL,
+  type QueuedMessageEditSession,
 } from "@t3tools/client-runtime/composer/queued-messages";
 import type { QueuedThreadMessage } from "../../state/thread-outbox-model";
 import { useMarkdownCodeHighlight } from "./markdownCodeHighlightState";
@@ -238,14 +239,17 @@ function isFreshTimestamp(input: string): boolean {
 
 export interface ThreadFeedProps {
   readonly outboxMessages: ReadonlyArray<QueuedThreadMessage>;
-  readonly queuedMessages: ReadonlyArray<Pick<QueuedMessageRef, "messageId">>;
+  readonly queuedMessages: ReadonlyArray<Pick<QueuedMessageRef, "messageId" | "revision">>;
   readonly dispatchingMessageId: MessageId | null;
   readonly onEditPendingMessage: (message: QueuedThreadMessage) => void;
   /** A message already on the server, waiting for the running turn to end. */
-  readonly onEditQueuedMessage: (message: {
-    readonly id: MessageId;
-    readonly text: string;
-  }) => void;
+  readonly onEditQueuedMessage: (
+    message: {
+      readonly id: MessageId;
+      readonly text: string;
+    },
+    edit: QueuedMessageEditSession,
+  ) => void;
   readonly onRemoveQueuedMessage: (message: { readonly id: MessageId }) => void;
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
@@ -1579,7 +1583,11 @@ function renderFeedEntry(
                   accessibilityLabel={EDIT_QUEUED_MESSAGE_ACCESSIBLE_LABEL}
                   hitSlop={8}
                   className="size-7 items-center justify-center"
-                  onPress={() => props.onEditQueuedMessage(message)}
+                  onPress={() => {
+                    if (entry.queuedMessageEdit) {
+                      props.onEditQueuedMessage(message, entry.queuedMessageEdit);
+                    }
+                  }}
                 >
                   <SymbolView name="pencil" size={14} tintColor={iconSubtleColor} />
                 </Pressable>

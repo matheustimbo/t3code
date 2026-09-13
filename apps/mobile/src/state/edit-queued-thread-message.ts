@@ -1,4 +1,5 @@
 import type { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
+import type { QueuedMessageEditSession } from "@t3tools/client-runtime/composer/queued-messages";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 
@@ -30,12 +31,15 @@ export interface QueuedTurnMessageRef {
  * do without losing its place in line. This one leaves the message on the
  * server until the user sends the replacement text.
  */
-export const editingQueuedTurnMessagesAtom = Atom.make<Record<string, MessageId>>({}).pipe(
-  Atom.keepAlive,
-  Atom.withLabel("mobile:queued-turn:editing"),
-);
+export const editingQueuedTurnMessagesAtom = Atom.make<Record<string, QueuedMessageEditSession>>(
+  {},
+).pipe(Atom.keepAlive, Atom.withLabel("mobile:queued-turn:editing"));
 
 export function editingQueuedTurnMessageId(threadKey: string): MessageId | null {
+  return editingQueuedTurnMessage(threadKey)?.messageId ?? null;
+}
+
+export function editingQueuedTurnMessage(threadKey: string): QueuedMessageEditSession | null {
   return appAtomRegistry.get(editingQueuedTurnMessagesAtom)[threadKey] ?? null;
 }
 
@@ -51,12 +55,7 @@ export function replaceEditingQueuedTurnMessageDraftText(threadKey: string, text
   setComposerDraftText(threadKey, text);
 }
 
-/**
- * The revision to send as `expectedRevision`, read live at the moment of
- * dispatch. Never snapshot this into a row: another device's edit bumps it,
- * and a stale value is exactly what the server refuses. Null means the
- * message is no longer waiting in the queue.
- */
+/** Read the current revision for an immediate action such as removal. */
 export function queuedTurnMessageRevision(message: QueuedTurnMessageRef): number | null {
   const state = appAtomRegistry.get(
     environmentThreads.stateAtom(message.environmentId, message.threadId),
@@ -80,7 +79,10 @@ export type BeginEditQueuedTurnMessage = "started" | "already-editing" | "not-qu
  * survives an abandoned edit.
  */
 export async function beginEditQueuedTurnMessage(
-  message: QueuedTurnMessageRef & { readonly text: string },
+  message: QueuedTurnMessageRef & {
+    readonly expectedRevision: number;
+    readonly text: string;
+  },
 ): Promise<BeginEditQueuedTurnMessage> {
   const draftKey = scopedThreadKey(message.environmentId, message.threadId);
   if (editingQueuedTurnMessageId(draftKey) !== null) return "already-editing";
@@ -103,7 +105,10 @@ export async function beginEditQueuedTurnMessage(
   }
   appAtomRegistry.set(editingQueuedTurnMessagesAtom, {
     ...appAtomRegistry.get(editingQueuedTurnMessagesAtom),
-    [draftKey]: message.messageId,
+    [draftKey]: {
+      messageId: message.messageId,
+      expectedRevision: message.expectedRevision,
+    },
   });
   return "started";
 }

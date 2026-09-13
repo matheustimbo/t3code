@@ -28,6 +28,19 @@ export function queuedMessageOrdinalMap(
   return ordinals;
 }
 
+export interface QueuedMessageEditSession {
+  readonly messageId: MessageId;
+  readonly expectedRevision: number;
+}
+
+export function queuedMessageEditSession(
+  queuedMessages: ReadonlyArray<Pick<QueuedMessageRef, "messageId" | "revision">>,
+  messageId: MessageId,
+): QueuedMessageEditSession | null {
+  const queued = queuedMessages.find((message) => message.messageId === messageId);
+  return queued ? { messageId: queued.messageId, expectedRevision: queued.revision } : null;
+}
+
 export function queuedMessageStatus(ordinal: number): string {
   if (ordinal <= 1) return "Queued, sends next";
   return `Queued, ${ordinal}${ordinalSuffix(ordinal)} in line`;

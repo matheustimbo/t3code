@@ -3,10 +3,33 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   queuedMessageActionFailureNotice,
   queuedMessageCountLabel,
+  queuedMessageEditSession,
   queuedMessageOrdinalMap,
   queuedMessageStatus,
   queuedMessageUnavailableNotice,
 } from "./queuedMessages.ts";
+
+describe("queuedMessageEditSession", () => {
+  it("keeps the revision observed when editing began", () => {
+    const messageId = "message" as never;
+    const firstQueue = [{ messageId, revision: 0 }];
+    const deviceA = queuedMessageEditSession(firstQueue, messageId);
+    const deviceB = queuedMessageEditSession(firstQueue, messageId);
+
+    const queueAfterDeviceAEdit = [{ messageId, revision: 1 }];
+
+    expect(deviceA).toEqual({ messageId, expectedRevision: 0 });
+    expect(deviceB).toEqual({ messageId, expectedRevision: 0 });
+    expect(queuedMessageEditSession(queueAfterDeviceAEdit, messageId)).toEqual({
+      messageId,
+      expectedRevision: 1,
+    });
+  });
+
+  it("does not start an edit for a message that is no longer queued", () => {
+    expect(queuedMessageEditSession([], "gone" as never)).toBe(null);
+  });
+});
 
 describe("queuedMessageStatus", () => {
   it("says the first queued message goes next", () => {

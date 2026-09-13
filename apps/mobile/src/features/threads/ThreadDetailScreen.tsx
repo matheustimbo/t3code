@@ -84,6 +84,7 @@ import {
 import {
   queuedMessageActionFailureNotice,
   queuedMessageUnavailableNotice,
+  type QueuedMessageEditSession,
   type QueuedMessageUnavailableNotice,
 } from "@t3tools/client-runtime/composer/queued-messages";
 import { queuedMessageUnavailableReason } from "@t3tools/client-runtime/errors";
@@ -134,7 +135,7 @@ export interface ThreadDetailScreenProps {
   readonly feedbackSubmissions: ReadonlyArray<CodexFeedbackSubmission>;
   readonly onDismissFeedback: (id: MessageId) => void;
   readonly selectedThreadFeed: ReadonlyArray<ThreadFeedEntry>;
-  readonly queuedMessages: ReadonlyArray<Pick<QueuedMessageRef, "messageId">>;
+  readonly queuedMessages: ReadonlyArray<Pick<QueuedMessageRef, "messageId" | "revision">>;
   readonly activeWorkStartedAt: string | null;
   readonly isCompacting: boolean;
   /**
@@ -856,10 +857,17 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   // Pulls the queued text into the composer; the message stays queued on the
   // server until the replacement is sent, so an abandoned edit costs nothing.
   const handleEditQueuedMessage = useCallback(
-    async (message: { readonly id: MessageId; readonly text: string }) => {
+    async (
+      message: { readonly id: MessageId; readonly text: string },
+      edit: QueuedMessageEditSession,
+    ) => {
       const target = queuedMessageTarget(message.id);
       try {
-        const outcome = await beginEditQueuedTurnMessage({ ...target, text: message.text });
+        const outcome = await beginEditQueuedTurnMessage({
+          ...target,
+          expectedRevision: edit.expectedRevision,
+          text: message.text,
+        });
         if (outcome === "not-queued") {
           const notice = queuedMessageUnavailableNotice("not-queued", "edit");
           Alert.alert(notice.title, notice.description);

@@ -30,6 +30,7 @@ import {
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
 } from "@t3tools/contracts";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
+import type { QueuedMessageEditSession } from "@t3tools/client-runtime/composer/queued-messages";
 import {
   type ComposerSkillMode,
   composerSkillModeMention,
@@ -1219,8 +1220,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
     object rather than a flag per question. `stashEntryId` is null when the
     composer was empty when the edit started, so there is nothing to put back
     when it ends. */
-type QueuedMessageEdit = {
-  messageId: MessageId;
+type QueuedMessageEdit = QueuedMessageEditSession & {
   stashEntryId: string | null;
   /** The composer draft this edit belongs to. */
   targetKey: string;
@@ -1258,7 +1258,7 @@ export interface ChatComposerHandle {
   /** Insert a terminal context from the terminal drawer. */
   addTerminalContext: (selection: TerminalContextSelection) => void;
   /** Load a queued message's text for editing, parking any current draft. */
-  beginQueuedMessageEdit: (messageId: MessageId, text: string) => void;
+  beginQueuedMessageEdit: (edit: QueuedMessageEditSession, text: string) => void;
   /** Get the current prompt/effort/model state for use in send. */
   getSendContext: () => {
     prompt: string;
@@ -1416,7 +1416,7 @@ export interface ChatComposerProps {
   /** Dispatches the edit and owns every notice it produces. The composer only
    * needs to know which of the three outcomes happened to it. */
   onSaveQueuedMessageEdit: (
-    messageId: MessageId,
+    edit: QueuedMessageEditSession,
     text: string,
   ) => Promise<"saved" | "unavailable" | "failed">;
   onInterrupt: () => void;
@@ -4001,7 +4001,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   );
 
   const beginQueuedMessageEdit = useCallback(
-    async (messageId: MessageId, text: string) => {
+    async (edit: QueuedMessageEditSession, text: string) => {
       // A second edit replaces the first, and the draft parked when the first
       // started carries over rather than being restored into the composer only
       // to be parked again.
@@ -4012,16 +4012,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         // draft that failed to save would make it the second casualty.
         if (stashEntryId === null) return;
       }
-      setQueuedMessageEdit({ messageId, stashEntryId, targetKey: queuedMessageEditTargetKey });
+      setQueuedMessageEdit({ ...edit, stashEntryId, targetKey: queuedMessageEditTargetKey });
       replaceComposerPrompt(text);
-      focusComposer();
+      scheduleComposerFocus();
     },
     [
       composerHasContentToPark,
-      focusComposer,
       queuedMessageEdit,
       queuedMessageEditTargetKey,
       replaceComposerPrompt,
+      scheduleComposerFocus,
       stashCurrentPrompt,
     ],
   );
@@ -4035,7 +4035,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const saveQueuedMessageEdit = useCallback(async () => {
     const edit = queuedMessageEdit;
     if (edit === null) return;
-    const outcome = await onSaveQueuedMessageEdit(edit.messageId, promptRef.current);
+    const outcome = await onSaveQueuedMessageEdit(edit, promptRef.current);
     // A transport failure is worth retrying, so the edit stays open on its text.
     if (outcome === "failed") return;
     // "unavailable" leaves the text exactly where the notice promises it is:
@@ -5074,8 +5074,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           composerEditorRef.current?.focusAt(nextCollapsedCursor);
         });
       },
-      beginQueuedMessageEdit: (messageId, text) => {
-        void beginQueuedMessageEdit(messageId, text);
+      beginQueuedMessageEdit: (edit, text) => {
+        void beginQueuedMessageEdit(edit, text);
       },
       getSendContext: () => ({
         prompt: promptRef.current,

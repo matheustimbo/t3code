@@ -43,6 +43,7 @@ vi.mock("./use-composer-drafts", () => ({
 
 import {
   beginEditQueuedTurnMessage,
+  editingQueuedTurnMessage,
   editingQueuedTurnMessageId,
   editingQueuedTurnMessagesAtom,
   endEditQueuedTurnMessage,
@@ -99,12 +100,40 @@ describe("editing a server-queued message", () => {
         environmentId,
         threadId,
         messageId: first,
+        expectedRevision: 3,
         text: "Queued text",
       }),
     ).toBe("started");
     expect(state.draft.text).toBe("Existing draft\n\nQueued text");
     expect(state.flushes).toBe(1);
     expect(editingQueuedTurnMessageId(threadKey)).toBe(first);
+    expect(editingQueuedTurnMessage(threadKey)).toEqual({
+      messageId: first,
+      expectedRevision: 3,
+    });
+  });
+
+  it("keeps the observed revision until a later edit session", async () => {
+    await beginEditQueuedTurnMessage({
+      environmentId,
+      threadId,
+      messageId: first,
+      expectedRevision: 3,
+      text: "Original text",
+    });
+    seedQueue([{ messageId: first, revision: 4 }]);
+
+    expect(editingQueuedTurnMessage(threadKey)?.expectedRevision).toBe(3);
+
+    endEditQueuedTurnMessage(threadKey);
+    await beginEditQueuedTurnMessage({
+      environmentId,
+      threadId,
+      messageId: first,
+      expectedRevision: 4,
+      text: "Newer text",
+    });
+    expect(editingQueuedTurnMessage(threadKey)?.expectedRevision).toBe(4);
   });
 
   it("refuses a second message rather than merging two into one draft", async () => {
@@ -112,6 +141,7 @@ describe("editing a server-queued message", () => {
       environmentId,
       threadId,
       messageId: first,
+      expectedRevision: 3,
       text: "Queued text",
     });
     expect(
@@ -119,6 +149,7 @@ describe("editing a server-queued message", () => {
         environmentId,
         threadId,
         messageId: second,
+        expectedRevision: 0,
         text: "Other text",
       }),
     ).toBe("already-editing");
@@ -131,6 +162,7 @@ describe("editing a server-queued message", () => {
       environmentId,
       threadId,
       messageId: first,
+      expectedRevision: 3,
       text: "Queued text",
     });
 
@@ -146,6 +178,7 @@ describe("editing a server-queued message", () => {
       environmentId,
       threadId,
       messageId: first,
+      expectedRevision: 3,
       text: "Queued text",
     });
     replaceEditingQueuedTurnMessageDraftText(threadKey, "Keep this draft");
@@ -163,6 +196,7 @@ describe("editing a server-queued message", () => {
         environmentId,
         threadId,
         messageId: first,
+        expectedRevision: 3,
         text: "Queued text",
       }),
     ).toBe("not-queued");
@@ -177,6 +211,7 @@ describe("editing a server-queued message", () => {
         environmentId,
         threadId,
         messageId: first,
+        expectedRevision: 3,
         text: "Queued text",
       }),
     ).rejects.toThrow("disk error");
@@ -185,8 +220,13 @@ describe("editing a server-queued message", () => {
   });
 
   it("clears only the thread it is given", () => {
-    state.values.set(editingQueuedTurnMessagesAtom, { [threadKey]: first, "env:other": second });
+    state.values.set(editingQueuedTurnMessagesAtom, {
+      [threadKey]: { messageId: first, expectedRevision: 3 },
+      "env:other": { messageId: second, expectedRevision: 0 },
+    });
     endEditQueuedTurnMessage(threadKey);
-    expect(state.values.get(editingQueuedTurnMessagesAtom)).toEqual({ "env:other": second });
+    expect(state.values.get(editingQueuedTurnMessagesAtom)).toEqual({
+      "env:other": { messageId: second, expectedRevision: 0 },
+    });
   });
 });

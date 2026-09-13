@@ -12,7 +12,9 @@ import { derivePendingRequests } from "@t3tools/client-runtime/pending-requests"
 import { resolveSendWhileRunning } from "@t3tools/client-runtime/composer/send-while-running";
 import {
   queuedMessageActionFailureNotice,
+  queuedMessageEditSession,
   queuedMessageUnavailableNotice,
+  type QueuedMessageEditSession,
 } from "@t3tools/client-runtime/composer/queued-messages";
 import { useSendWhileRunningPreferenceStore } from "../sendWhileRunningPreferenceStore";
 import {
@@ -8289,10 +8291,7 @@ export default function ChatView(props: ChatViewProps) {
     },
     [activeThreadRef, isServerThread, onDiffPanelOpen],
   );
-  /** Read off the live queue entry at dispatch time, never snapshotted into a
-      timeline row: a row painted before another device's edit would carry a
-      stale revision, which is exactly what the server rejects. Null means the
-      message is no longer waiting in this client's queue. */
+  /** Read the current revision for an immediate action such as removal. */
   const readQueuedMessageRevision = useCallback(
     (messageId: MessageId) =>
       activeThread?.queuedMessages?.find((queued) => queued.messageId === messageId)?.revision ??
@@ -8303,10 +8302,11 @@ export default function ChatView(props: ChatViewProps) {
   const onEditQueuedMessage = useCallback(
     (messageId: MessageId) => {
       const text = activeThread?.messages.find((message) => message.id === messageId)?.text;
-      if (text === undefined) return;
+      const edit = queuedMessageEditSession(activeThread?.queuedMessages ?? [], messageId);
+      if (text === undefined || edit === null) return;
       // The composer owns every text transition, including parking whatever
       // the user was already typing.
-      composerRef.current?.beginQueuedMessageEdit(messageId, text);
+      composerRef.current?.beginQueuedMessageEdit(edit, text);
     },
     [activeThread, composerRef],
   );
@@ -8336,23 +8336,19 @@ export default function ChatView(props: ChatViewProps) {
   );
 
   const onSaveQueuedMessageEdit = useCallback(
-    async (messageId: MessageId, text: string): Promise<"saved" | "unavailable" | "failed"> => {
+    async (
+      edit: QueuedMessageEditSession,
+      text: string,
+    ): Promise<"saved" | "unavailable" | "failed"> => {
       if (!activeThread) return "failed";
-      const expectedRevision = readQueuedMessageRevision(messageId);
-      // Already gone from this client's queue, which the shared copy words the
-      // same way the server's refusal would.
-      if (expectedRevision === null) {
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            ...queuedMessageUnavailableNotice("not-queued", "edit"),
-          }),
-        );
-        return "unavailable";
-      }
       const result = await editQueuedMessage({
         environmentId: activeThread.environmentId,
-        input: { threadId: activeThread.id, messageId, expectedRevision, text },
+        input: {
+          threadId: activeThread.id,
+          messageId: edit.messageId,
+          expectedRevision: edit.expectedRevision,
+          text,
+        },
       });
       if (result._tag !== "Failure") return "saved";
       // An interrupted command means this view is going away, so it is not a
@@ -8370,7 +8366,7 @@ export default function ChatView(props: ChatViewProps) {
       );
       return reason ? "unavailable" : "failed";
     },
-    [activeThread, editQueuedMessage, readQueuedMessageRevision],
+    [activeThread, editQueuedMessage],
   );
 
   // The revert handler is read from a ref at call-time so the callback
