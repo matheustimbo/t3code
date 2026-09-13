@@ -143,8 +143,8 @@ export interface ThreadDetailScreenProps {
   readonly environmentId: EnvironmentId;
   readonly projectWorkspaceRoot: string | null;
   readonly threadCwd: string | null;
-  readonly selectedThreadQueueCount: number;
-  readonly queuedMessages: ReadonlyArray<QueuedThreadMessage>;
+  readonly selectedThreadOutboxCount: number;
+  readonly outboxMessages: ReadonlyArray<QueuedThreadMessage>;
   readonly dispatchingMessageId: MessageId | null;
   readonly serverConfig: T3ServerConfig | null;
   readonly layoutVariant?: LayoutVariant;
@@ -387,7 +387,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const showFloatingStatus =
     showWorkingControl ||
     props.connectionStateLabel !== "connected" ||
-    props.queuedMessages.length > 0 ||
+    props.outboxMessages.length > 0 ||
     props.selectedThreadFeed.some(
       (entry) => "acknowledged" in entry && entry.acknowledged === true,
     );
@@ -689,7 +689,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
       (!selectedThreadFeed.some(
         (entry) => entry.type === "message" && entry.id === submittedMessageId,
       ) &&
-        !props.queuedMessages.some((message) => message.messageId === submittedMessageId))
+        !props.outboxMessages.some((message) => message.messageId === submittedMessageId))
     ) {
       return;
     }
@@ -732,7 +732,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     submittedMessageId,
     freeze,
     contentPresentationKind,
-    props.queuedMessages,
+    props.outboxMessages,
     selectedThreadFeed,
     scrollMessageToEnd,
     selectedThreadKey,
@@ -758,7 +758,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
         submittedMessageId: messageId,
         hasStartedTurn: props.selectedThread.latestTurn !== null,
         hasUserMessage,
-        queuedMessageCount: props.selectedThreadQueueCount,
+        outboxMessageCount: props.selectedThreadOutboxCount,
       }),
     );
     composerEditorRef.current?.blur();
@@ -768,7 +768,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     clearUsageLimitsFor,
     props.onSendMessage,
     props.selectedThread.latestTurn,
-    props.selectedThreadQueueCount,
+    props.selectedThreadOutboxCount,
     selectedThreadFeed,
     selectedThreadKey,
   ]);
@@ -876,7 +876,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
             threadId={props.selectedThread.id}
             workspaceRoot={props.threadCwd}
             feed={props.selectedThreadFeed}
-            queuedMessages={props.queuedMessages}
+            outboxMessages={props.outboxMessages}
             dispatchingMessageId={props.dispatchingMessageId}
             onEditPendingMessage={handleEditPendingMessage}
             contentPresentation={props.contentPresentation}
@@ -1035,7 +1035,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                     selectedThread={props.selectedThread}
                     hasCompactableConversation={hasCompactableConversation && !props.isCompacting}
                     serverConfig={props.serverConfig}
-                    queueCount={props.selectedThreadQueueCount}
+                    outboxCount={props.selectedThreadOutboxCount}
                     environmentId={props.environmentId}
                     projectCwd={props.threadCwd ?? props.projectWorkspaceRoot}
                     // Follow-ups typed during setup wait in the draft: queueing

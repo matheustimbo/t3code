@@ -119,7 +119,7 @@ export interface ThreadComposerProps {
   readonly selectedThread: OrchestrationThreadShell;
   readonly hasCompactableConversation: boolean;
   readonly serverConfig: T3ServerConfig | null;
-  readonly queueCount: number;
+  readonly outboxCount: number;
   readonly environmentId: EnvironmentId;
   readonly projectCwd: string | null;
   /** Why sending is blocked right now (shown as the send button's label), or null. */
@@ -301,7 +301,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   // Every send goes through the outbox; the label says whether it leaves now
   // or waits (for the connection, an earlier queued message, or an upload).
   const outboxSendLabel =
-    props.connectionState !== "connected" || props.queueCount > 0 || attachmentsUploading
+    props.connectionState !== "connected" || props.outboxCount > 0 || attachmentsUploading
       ? "Queue"
       : "Send";
   const sessionProviderStatus = useMemo(() => {

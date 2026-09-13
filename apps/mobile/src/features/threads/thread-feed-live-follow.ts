@@ -52,7 +52,7 @@ export function resolveThreadFeedSubmissionAnchor<AnchorId>(input: {
   readonly submittedMessageId: AnchorId;
   readonly hasStartedTurn: boolean;
   readonly hasUserMessage: boolean;
-  readonly queuedMessageCount: number;
+  readonly outboxMessageCount: number;
 }): AnchorId | null {
   if (input.hasStartedTurn || input.hasUserMessage) {
     return null;
@@ -62,7 +62,7 @@ export function resolveThreadFeedSubmissionAnchor<AnchorId>(input: {
     return input.currentAnchorMessageId;
   }
 
-  return input.queuedMessageCount > 0 ? null : input.submittedMessageId;
+  return input.outboxMessageCount > 0 ? null : input.submittedMessageId;
 }
 
 export function resolveThreadFeedLiveFollow(

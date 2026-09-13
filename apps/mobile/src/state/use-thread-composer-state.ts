@@ -128,7 +128,7 @@ export function useThreadComposerState() {
     : null;
   // The creation entry is the thread itself (rendered as the first message),
   // not a follow-up waiting behind it.
-  const selectedThreadQueuedMessages = useMemo(
+  const selectedThreadOutboxMessages = useMemo(
     () =>
       selectedThreadKey
         ? (queuedMessagesByThreadKey[selectedThreadKey] ?? []).filter(
@@ -174,7 +174,7 @@ export function useThreadComposerState() {
     const pendingAcknowledgments = acknowledgedMessages.filter(
       (message) =>
         scopedThreadKey(message.environmentId, message.threadId) === selectedThreadKey &&
-        !selectedThreadQueuedMessages.some((queued) => queued.messageId === message.messageId),
+        !selectedThreadOutboxMessages.some((queued) => queued.messageId === message.messageId),
     );
     if (pendingAcknowledgments.length === 0) return feed;
     return appendPendingThreadMessages(feed, feed, pendingAcknowledgments).map((entry) =>
@@ -185,7 +185,7 @@ export function useThreadComposerState() {
     selectedThreadMessages,
     pendingCreationMessage,
     selectedThreadKey,
-    selectedThreadQueuedMessages,
+    selectedThreadOutboxMessages,
     acknowledgedMessages,
   ]);
   useEffect(() => {
@@ -203,7 +203,7 @@ export function useThreadComposerState() {
   const selectedDraft = selectedThreadKey ? composerDrafts[selectedThreadKey] : null;
   const draftMessage = selectedDraft?.text ?? "";
   const draftAttachments = selectedDraft?.attachments ?? [];
-  const selectedThreadQueueCount = selectedThreadQueuedMessages.length;
+  const selectedThreadOutboxCount = selectedThreadOutboxMessages.length;
   const selectedThread = selectedThreadDetail ?? selectedThreadShell;
   const modelSelection = selectedDraft?.modelSelection ?? selectedThread?.modelSelection ?? null;
   const runtimeMode = selectedDraft?.runtimeMode ?? selectedThread?.runtimeMode ?? null;
@@ -230,7 +230,7 @@ export function useThreadComposerState() {
   }, [selectedThreadDetail, selectedThreadShell]);
 
   const isCompacting = useMemo(() => {
-    const queuedMessage = selectedThreadQueuedMessages.findLast(
+    const queuedMessage = selectedThreadOutboxMessages.findLast(
       (message) =>
         message.messageId === dispatchingQueuedMessageId &&
         message.text.trim().toLowerCase() === "/compact" &&
@@ -268,7 +268,7 @@ export function useThreadComposerState() {
     dispatchingQueuedMessageId,
     selectedThread,
     selectedThreadDetail,
-    selectedThreadQueuedMessages,
+    selectedThreadOutboxMessages,
   ]);
 
   const activeWorkStartedAt = useMemo(() => {
@@ -616,8 +616,8 @@ export function useThreadComposerState() {
     feedbackSubmissions,
     dismissFeedback,
     selectedThreadFeed,
-    selectedThreadQueueCount,
-    selectedThreadQueuedMessages,
+    selectedThreadOutboxCount,
+    selectedThreadOutboxMessages,
     dispatchingQueuedMessageId,
     activeWorkStartedAt,
     isCompacting,

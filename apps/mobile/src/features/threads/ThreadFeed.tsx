@@ -230,7 +230,7 @@ function isFreshTimestamp(input: string): boolean {
 }
 
 export interface ThreadFeedProps {
-  readonly queuedMessages: ReadonlyArray<QueuedThreadMessage>;
+  readonly outboxMessages: ReadonlyArray<QueuedThreadMessage>;
   readonly dispatchingMessageId: MessageId | null;
   readonly onEditPendingMessage: (message: QueuedThreadMessage) => void;
   readonly environmentId: EnvironmentId;
@@ -2439,10 +2439,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           props.activeWorkStartedAt,
         ),
         props.feed,
-        props.queuedMessages,
+        props.outboxMessages,
       ),
     [
-      props.queuedMessages,
+      props.outboxMessages,
       expandedTurnIds,
       expandedWorkGroupIds,
       props.activeWorkStartedAt,
@@ -2767,7 +2767,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     ],
   );
 
-  if (props.contentPresentation.kind === "unavailable" && props.queuedMessages.length === 0) {
+  if (props.contentPresentation.kind === "unavailable" && props.outboxMessages.length === 0) {
     return (
       <ThreadFeedPlaceholder
         title={props.contentPresentation.title}
