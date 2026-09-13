@@ -202,12 +202,15 @@ layer("ProjectionThreadMessageRepository", (it) => {
     }),
   );
 
-  it.effect("orders queued messages by receipt row when timestamps tie", () =>
+  it.effect("orders queued messages by receipt row when client timestamps go backwards", () =>
     Effect.gen(function* () {
       const repository = yield* ProjectionThreadMessageRepository;
       const threadId = ThreadId.make("thread-queued-fifo");
-      const createdAt = "2026-02-28T19:00:00.000Z";
-      for (const messageId of ["queued-second", "queued-first"]) {
+      const messages = [
+        ["queued-first", "2026-02-28T19:00:02.000Z"],
+        ["queued-second", "2026-02-28T19:00:01.000Z"],
+      ] as const;
+      for (const [messageId, createdAt] of messages) {
         yield* repository.upsert({
           messageId: MessageId.make(messageId),
           threadId,
@@ -225,7 +228,7 @@ layer("ProjectionThreadMessageRepository", (it) => {
       const queued = yield* repository.listQueuedByThreadId({ threadId });
       assert.deepEqual(
         queued.map((message) => message.messageId),
-        ["queued-second", "queued-first"],
+        ["queued-first", "queued-second"],
       );
       assert.equal(yield* repository.countQueuedByThreadId({ threadId }), 2);
     }),

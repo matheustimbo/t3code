@@ -1073,6 +1073,100 @@ describe("orchestration projector", () => {
     ).toEqual([{ id: "assistant-keep", role: "assistant", turnId: "turn-1" }]);
   });
 
+  it("preserves latest user metadata when a queued message ages out and is dropped", async () => {
+    const createdAt = "2026-03-01T09:00:00.000Z";
+    const threadId = "thread-capped-queue";
+    const event = (sequence: number, type: OrchestrationEvent["type"], payload: unknown) =>
+      makeEvent({
+        sequence,
+        type,
+        payload,
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: createdAt,
+        commandId: `cmd-capped-queue-${sequence}`,
+      });
+
+    let model = await Effect.runPromise(
+      projectEvent(
+        createEmptyReadModel(createdAt),
+        event(1, "thread.created", {
+          threadId,
+          projectId: "project-1",
+          title: "capped queue",
+          modelSelection: { provider: "codex", model: "gpt-5-codex" },
+          runtimeMode: "full-access",
+          branch: null,
+          worktreePath: null,
+          createdAt,
+          updatedAt: createdAt,
+        }),
+      ),
+    );
+    model = await Effect.runPromise(
+      projectEvent(
+        model,
+        event(2, "thread.message-sent", {
+          threadId,
+          messageId: "adopted-user",
+          role: "user",
+          text: "Adopted prompt",
+          turnId: "turn-adopted",
+          streaming: false,
+          createdAt: "2026-03-01T09:00:01.000Z",
+          updatedAt: "2026-03-01T09:00:01.000Z",
+        }),
+      ),
+    );
+    model = await Effect.runPromise(
+      projectEvent(
+        model,
+        event(3, "thread.message-sent", {
+          threadId,
+          messageId: "queued-user",
+          role: "user",
+          text: "Queued prompt",
+          turnId: null,
+          streaming: false,
+          queuedTurnStart: { titleSeed: "Queued prompt" },
+          createdAt: "2026-03-01T09:00:02.000Z",
+          updatedAt: "2026-03-01T09:00:02.000Z",
+        }),
+      ),
+    );
+
+    const assistantEvents = Array.from({ length: 2_000 }, (_, index) =>
+      event(index + 4, "thread.message-sent", {
+        threadId,
+        messageId: `assistant-${index}`,
+        role: "assistant",
+        text: `Assistant message ${index}`,
+        turnId: `turn-${index}`,
+        streaming: false,
+        createdAt: "2026-03-01T09:00:03.000Z",
+        updatedAt: "2026-03-01T09:00:03.000Z",
+      }),
+    );
+    model = await assistantEvents.reduce<Promise<ReturnType<typeof createEmptyReadModel>>>(
+      (statePromise, nextEvent) =>
+        statePromise.then((state) => Effect.runPromise(projectEvent(state, nextEvent))),
+      Promise.resolve(model),
+    );
+
+    const afterDrop = await Effect.runPromise(
+      projectEvent(
+        model,
+        event(2_004, "thread.queued-message-dropped", {
+          threadId,
+          messageId: "queued-user",
+          updatedAt: "2026-03-01T09:00:04.000Z",
+        }),
+      ),
+    );
+
+    expect(afterDrop.threads[0]?.latestUserMessageAt).toBe("2026-03-01T09:00:01.000Z");
+  });
+
   it("caps message and checkpoint retention for long-lived threads", async () => {
     const createdAt = "2026-03-01T10:00:00.000Z";
     const model = createEmptyReadModel(createdAt);
