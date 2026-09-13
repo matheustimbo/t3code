@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  queuedMessageActionFailureNotice,
   queuedMessageCountLabel,
+  queuedMessageOrdinalMap,
   queuedMessageStatus,
   queuedMessageUnavailableNotice,
 } from "./queuedMessages.ts";
@@ -36,6 +38,20 @@ describe("queuedMessageStatus", () => {
 
   it("clamps a caller's off-by-one to the first position", () => {
     expect(queuedMessageStatus(0)).toBe("Queued, sends next");
+  });
+});
+
+describe("queuedMessageOrdinalMap", () => {
+  it("uses the server queue order instead of client timestamps", () => {
+    const ordinals = queuedMessageOrdinalMap([
+      { messageId: "newer-client-clock" as never },
+      { messageId: "older-client-clock" as never },
+    ]);
+
+    expect([...ordinals]).toEqual([
+      ["newer-client-clock", 1],
+      ["older-client-clock", 2],
+    ]);
   });
 });
 
@@ -94,6 +110,22 @@ describe("queuedMessageUnavailableNotice", () => {
       title: "Edited somewhere else",
       description:
         "This message changed on another device. Open it again to see the newer text before removing it.",
+    });
+  });
+});
+
+describe("queuedMessageActionFailureNotice", () => {
+  it("keeps the server error for a failed edit", () => {
+    expect(queuedMessageActionFailureNotice("edit", new Error("Connection lost"))).toEqual({
+      title: "Could not save the queued message",
+      description: "Connection lost",
+    });
+  });
+
+  it("uses stable copy when a failure has no message", () => {
+    expect(queuedMessageActionFailureNotice("remove", {})).toEqual({
+      title: "Could not remove the queued message",
+      description: "The server refused the request.",
     });
   });
 });

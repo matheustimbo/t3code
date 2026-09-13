@@ -5,7 +5,11 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
-import type { SidebarProjectGroupingMode } from "@t3tools/contracts";
+import type {
+  SendWhileRunningDelivery,
+  SendWhileRunningPreferences,
+} from "@t3tools/client-runtime/composer/send-while-running";
+import type { SidebarProjectGroupingMode, TurnDelivery } from "@t3tools/contracts";
 import { MOBILE_THEME_IDS, type MobileThemeId, type MobileThemeMode } from "../lib/mobileTheme";
 
 import * as MobileDatabase from "./mobile-database";
@@ -47,6 +51,12 @@ export interface Preferences {
   /** Fresh keys reset both shelves to collapsed when users update. */
   readonly threadListSettledShelfExpanded?: boolean;
   readonly threadListSnoozedShelfExpanded?: boolean;
+  /**
+   * Delivery the user last picked for a send made while the agent is working,
+   * keyed by the provider's behavior class. Nothing to do with the offline
+   * outbox, which is about reaching the server at all.
+   */
+  readonly sendWhileRunningDelivery?: SendWhileRunningPreferences;
 }
 
 export class MobilePreferencesLoadError extends Schema.TaggedError<MobilePreferencesLoadError>()(
@@ -86,6 +96,34 @@ export class MobilePreferencesStore extends Context.Service<
   }
 >()("@t3tools/mobile/persistence/MobilePreferencesStore") {}
 
+const SEND_WHILE_RUNNING_BEHAVIORS: ReadonlyArray<SendWhileRunningDelivery> = [
+  "steer",
+  "provider-queue",
+  "interrupt",
+  "unsupported",
+  "unknown",
+];
+
+/**
+ * Keys are omitted rather than stored as explicit `undefined`, both because
+ * the repo runs `exactOptionalPropertyTypes` and because an absent key is what
+ * lets a changed default reach everyone who never expressed a preference.
+ * Returns undefined for an empty result so the blob keeps no empty object.
+ */
+function sanitizeSendWhileRunningDelivery(
+  parsed: SendWhileRunningPreferences | undefined,
+): SendWhileRunningPreferences | undefined {
+  if (typeof parsed !== "object" || parsed === null) return undefined;
+  const deliveries: Record<string, TurnDelivery> = {};
+  for (const behavior of SEND_WHILE_RUNNING_BEHAVIORS) {
+    const delivery = parsed[behavior];
+    if (delivery === "now" || delivery === "queued") {
+      deliveries[behavior] = delivery;
+    }
+  }
+  return Object.keys(deliveries).length > 0 ? deliveries : undefined;
+}
+
 function sanitizePreferences(parsed: Preferences): Preferences {
   const preferences: {
     liveActivitiesEnabled?: boolean;
@@ -108,6 +146,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     usageTab?: "limits" | "local";
     threadListSettledShelfExpanded?: boolean;
     threadListSnoozedShelfExpanded?: boolean;
+    sendWhileRunningDelivery?: SendWhileRunningPreferences;
   } = {};
 
   if (typeof parsed.liveActivitiesEnabled === "boolean") {
@@ -186,6 +225,12 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (typeof parsed.threadListSnoozedShelfExpanded === "boolean") {
     preferences.threadListSnoozedShelfExpanded = parsed.threadListSnoozedShelfExpanded;
+  }
+  const sendWhileRunningDelivery = sanitizeSendWhileRunningDelivery(
+    parsed.sendWhileRunningDelivery,
+  );
+  if (sendWhileRunningDelivery) {
+    preferences.sendWhileRunningDelivery = sendWhileRunningDelivery;
   }
   return preferences;
 }

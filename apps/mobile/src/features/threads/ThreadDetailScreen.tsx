@@ -18,6 +18,7 @@ import type {
   MessageId,
   ModelSelection,
   OrchestrationThreadShell,
+  QueuedMessageRef,
   ProviderApprovalDecision,
   ProviderInteractionMode,
   RuntimeMode,
@@ -74,6 +75,22 @@ import type { DraftComposerAttachment } from "../../lib/composerImages";
 import { CHAT_CONTENT_MAX_WIDTH, type LayoutVariant } from "../../lib/layout";
 import { IOS_NAV_BAR_HEIGHT } from "../../lib/layoutMetrics";
 import { editPendingThreadMessage } from "../../state/edit-pending-thread-message";
+import {
+  beginEditQueuedTurnMessage,
+  editingQueuedTurnMessageId,
+  endEditQueuedTurnMessage,
+  queuedTurnMessageRevision,
+} from "../../state/edit-queued-thread-message";
+import {
+  queuedMessageActionFailureNotice,
+  queuedMessageUnavailableNotice,
+  type QueuedMessageUnavailableNotice,
+} from "@t3tools/client-runtime/composer/queued-messages";
+import { queuedMessageUnavailableReason } from "@t3tools/client-runtime/errors";
+import { threadEnvironment } from "../../state/threads";
+import { useAtomCommand } from "../../state/use-atom-command";
+import * as Cause from "effect/Cause";
+import { AsyncResult } from "effect/unstable/reactivity";
 import type { QueuedThreadMessage } from "../../state/thread-outbox-model";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import type {
@@ -117,6 +134,7 @@ export interface ThreadDetailScreenProps {
   readonly feedbackSubmissions: ReadonlyArray<CodexFeedbackSubmission>;
   readonly onDismissFeedback: (id: MessageId) => void;
   readonly selectedThreadFeed: ReadonlyArray<ThreadFeedEntry>;
+  readonly queuedMessages: ReadonlyArray<Pick<QueuedMessageRef, "messageId">>;
   readonly activeWorkStartedAt: string | null;
   readonly isCompacting: boolean;
   /**
@@ -777,6 +795,39 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     selectedThreadKey,
   ]);
 
+  const dropQueuedMessage = useAtomCommand(threadEnvironment.dropQueuedMessage, {
+    reportFailure: false,
+  });
+
+  /** Returns the notice to show, or null when the message left the queue. */
+  const removeQueuedMessage = useCallback(
+    async (message: {
+      readonly environmentId: EnvironmentId;
+      readonly threadId: ThreadId;
+      readonly messageId: MessageId;
+    }): Promise<QueuedMessageUnavailableNotice | null> => {
+      const expectedRevision = queuedTurnMessageRevision(message);
+      if (expectedRevision === null) {
+        return queuedMessageUnavailableNotice("not-queued", "remove");
+      }
+      const result = await dropQueuedMessage({
+        environmentId: message.environmentId,
+        input: {
+          threadId: message.threadId,
+          messageId: message.messageId,
+          expectedRevision,
+        },
+      });
+      if (!AsyncResult.isFailure(result)) return null;
+      const error = Cause.squash(result.cause);
+      const reason = queuedMessageUnavailableReason(error);
+      return reason !== null
+        ? queuedMessageUnavailableNotice(reason, "remove")
+        : queuedMessageActionFailureNotice("remove", error);
+    },
+    [dropQueuedMessage],
+  );
+
   const handleEditPendingMessage = useCallback(async (message: QueuedThreadMessage) => {
     try {
       if (
@@ -792,6 +843,59 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
       );
     }
   }, []);
+
+  const queuedMessageTarget = useCallback(
+    (messageId: MessageId) => ({
+      environmentId: props.environmentId,
+      threadId: props.selectedThread.id,
+      messageId,
+    }),
+    [props.environmentId, props.selectedThread.id],
+  );
+
+  // Pulls the queued text into the composer; the message stays queued on the
+  // server until the replacement is sent, so an abandoned edit costs nothing.
+  const handleEditQueuedMessage = useCallback(
+    async (message: { readonly id: MessageId; readonly text: string }) => {
+      const target = queuedMessageTarget(message.id);
+      try {
+        const outcome = await beginEditQueuedTurnMessage({ ...target, text: message.text });
+        if (outcome === "not-queued") {
+          const notice = queuedMessageUnavailableNotice("not-queued", "edit");
+          Alert.alert(notice.title, notice.description);
+          return;
+        }
+        if (
+          selectedThreadKeyRef.current === scopedThreadKey(target.environmentId, target.threadId)
+        ) {
+          composerEditorRef.current?.focus();
+        }
+      } catch (error) {
+        Alert.alert(
+          "Could not edit message",
+          error instanceof Error ? error.message : "Please try again.",
+        );
+      }
+    },
+    [queuedMessageTarget],
+  );
+
+  const handleRemoveQueuedMessage = useCallback(
+    async (message: { readonly id: MessageId }) => {
+      const target = queuedMessageTarget(message.id);
+      // Only this message's own edit; a draft editing a different queued
+      // message in the same thread is none of this removal's business.
+      const threadKey = scopedThreadKey(target.environmentId, target.threadId);
+      if (editingQueuedTurnMessageId(threadKey) === message.id) {
+        endEditQueuedTurnMessage(threadKey);
+      }
+      const notice = await removeQueuedMessage(target);
+      if (notice) {
+        Alert.alert(notice.title, notice.description);
+      }
+    },
+    [queuedMessageTarget, removeQueuedMessage],
+  );
 
   const collapseComposer = useCallback(() => {
     composerEditorRef.current?.blur();
@@ -881,8 +985,11 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
             workspaceRoot={props.threadCwd}
             feed={props.selectedThreadFeed}
             outboxMessages={props.outboxMessages}
+            queuedMessages={props.queuedMessages}
             dispatchingMessageId={props.dispatchingMessageId}
             onEditPendingMessage={handleEditPendingMessage}
+            onEditQueuedMessage={handleEditQueuedMessage}
+            onRemoveQueuedMessage={handleRemoveQueuedMessage}
             contentPresentation={props.contentPresentation}
             agentLabel={agentLabel}
             latestTurn={props.selectedThread.latestTurn}

@@ -2,8 +2,15 @@ import type { ThreadFeedEntry } from "../../lib/threadActivity";
 import type { QueuedThreadMessage } from "../../state/thread-outbox-model";
 
 export type PendingThreadFeedEntry = ThreadFeedEntry & {
+  /** Local outbox: not on the server yet. Reads as "Pending" in the timeline. */
   readonly pendingMessage?: QueuedThreadMessage;
   readonly acknowledged?: boolean;
+  /**
+   * Place in T3 Code's server-side queue, 1-based, filled in by
+   * `withQueuedMessageOrdinals`. Unrelated to `pendingMessage`: this message
+   * reached the server and is waiting for the running turn to finish.
+   */
+  readonly queuedOrdinal?: number;
 };
 
 /** Append the outbox after all presented activity, until the server echoes each message. */

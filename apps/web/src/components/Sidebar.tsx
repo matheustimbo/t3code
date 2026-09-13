@@ -190,6 +190,7 @@ import {
 import { SidebarDragLifecycle, SidebarPointerSensor } from "./Sidebar.pointer";
 import { createSidebarListMotion } from "./Sidebar.motion";
 import {
+  QueuedMessagesIndicator,
   ThreadPullRequestBadgeControl,
   ThreadPullRequestsMiniList,
   ThreadWorktreeIndicator,
@@ -1535,6 +1536,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       <TooltipPopup side="top">Unsent draft</TooltipPopup>
     </Tooltip>
   ) : null;
+  const queuedIndicator = (
+    <QueuedMessagesIndicator threadId={thread.id} count={thread.queuedMessageCount} />
+  );
   const showPin =
     props.isPinned && (!sortable?.isDragging || (props.dragOverPinned && props.dropVerb === null));
   const pinIndicator = showPin ? (
@@ -1604,6 +1608,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               {props.project ? <ProjectFavicon project={props.project} className="size-4" /> : null}
             </span>
             {draftIndicator}
+            {queuedIndicator}
             {title}
             {pinIndicator}
             {terminalStatusIcon}
@@ -1748,6 +1753,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
           <div className="relative z-10 h-[4.875rem] px-[var(--sidebar-row-content-inset)] py-[var(--sidebar-content-inset)]">
             <div className="flex h-5 min-w-0 items-center gap-1.5">
               {draftIndicator}
+              {queuedIndicator}
               {props.project ? (
                 <ProjectFavicon project={props.project} className="size-4 shrink-0" />
               ) : null}

@@ -37,6 +37,8 @@ import {
   type ThreadListV2Status,
 } from "./threadListV2";
 import { QueuedMessageIcon } from "./queued-message-icon";
+import { QueuedTurnIcon } from "./queued-turn-icon";
+import { queuedMessageCountLabel } from "@t3tools/client-runtime/composer/queued-messages";
 import { ThreadSearchMatchExcerpt } from "./thread-search-match";
 
 /**
@@ -744,6 +746,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           {props.projectTitle ?? props.project?.title ?? ""}
         </Text>
         {props.hasQueuedMessages ? <QueuedMessageIcon selected={selected} /> : null}
+        <QueuedTurnIcon count={props.thread.queuedMessageCount} selected={selected} />
         {pinnedRow ? (
           <SymbolView
             name="pin"
@@ -920,13 +923,18 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     </>
   );
 
+  const rowAccessibilityLabel = [
+    thread.title,
+    props.hasQueuedMessages ? "messages queued to send" : null,
+    thread.queuedMessageCount ? queuedMessageCountLabel(thread.queuedMessageCount) : null,
+  ]
+    .filter(Boolean)
+    .join(", ");
   const rowContent = (close: () => void) =>
     variant === "card" ? (
       <Pressable
         accessibilityHint={swipeAccessibilityHint}
-        accessibilityLabel={
-          props.hasQueuedMessages ? `${thread.title}, messages queued to send` : thread.title
-        }
+        accessibilityLabel={rowAccessibilityLabel}
         accessibilityRole="button"
         accessibilityState={{ selected }}
         onPress={() => {
@@ -967,9 +975,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     ) : (
       <Pressable
         accessibilityHint={swipeAccessibilityHint}
-        accessibilityLabel={
-          props.hasQueuedMessages ? `${thread.title}, messages queued to send` : thread.title
-        }
+        accessibilityLabel={rowAccessibilityLabel}
         accessibilityRole="button"
         accessibilityState={{ selected }}
         className={sidebarPane || materialYouStyleLayoutActive ? undefined : "bg-screen"}
@@ -1033,6 +1039,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             ) : null}
           </View>
           {props.hasQueuedMessages ? <QueuedMessageIcon selected={selected} /> : null}
+          <QueuedTurnIcon count={props.thread.queuedMessageCount} selected={selected} />
           <Text
             className={cn(
               "text-sm tabular-nums",

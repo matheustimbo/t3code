@@ -1,4 +1,13 @@
-import { EnvironmentId, MessageId, ThreadId, type AssistantCitation } from "@t3tools/contracts";
+import { resolveSendWhileRunning } from "@t3tools/client-runtime/composer/send-while-running";
+import {
+  EnvironmentId,
+  MessageId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  ThreadId,
+  type AssistantCitation,
+  type ProviderConcurrentSend,
+} from "@t3tools/contracts";
 import {
   collectAssistantCitations,
   expandAssistantCitationsForProvider,
@@ -10,6 +19,7 @@ import {
   clampCollapsedComposerCursor,
   collapseExpandedComposerCursor,
   composerSubmissionIntentForEnter,
+  composerTurnDeliveryForSubmission,
   detectComposerTrigger,
   expandCollapsedComposerCursor,
   formatAssistantCitationForComposer,
@@ -106,6 +116,66 @@ describe("composerSubmissionIntentForEnter", () => {
         isDraftThread: false,
       }),
     ).toBe("foreground");
+  });
+});
+
+describe("composerTurnDeliveryForSubmission", () => {
+  const affordanceFor = (concurrentSend: ProviderConcurrentSend) =>
+    resolveSendWhileRunning({
+      isRunning: true,
+      provider: {
+        instanceId: ProviderInstanceId.make("provider-1"),
+        driver: ProviderDriverKind.make("claude"),
+        displayName: "Claude Code",
+        concurrentSend,
+      },
+    });
+
+  it("sends no delivery field at all while the thread is idle", () => {
+    expect(
+      composerTurnDeliveryForSubmission({ sendWhileRunning: null, modifierKey: false }),
+    ).toBeUndefined();
+    expect(
+      composerTurnDeliveryForSubmission({ sendWhileRunning: null, modifierKey: true }),
+    ).toBeUndefined();
+  });
+
+  it("sends the selected delivery while running without the modifier", () => {
+    expect(
+      composerTurnDeliveryForSubmission({
+        sendWhileRunning: affordanceFor("steer"),
+        modifierKey: false,
+      }),
+    ).toBe("now");
+    expect(
+      composerTurnDeliveryForSubmission({
+        sendWhileRunning: affordanceFor("interrupt"),
+        modifierKey: false,
+      }),
+    ).toBe("queued");
+  });
+
+  it("deviates to the alternate delivery for one send when the modifier is held", () => {
+    expect(
+      composerTurnDeliveryForSubmission({
+        sendWhileRunning: affordanceFor("steer"),
+        modifierKey: true,
+      }),
+    ).toBe("queued");
+    expect(
+      composerTurnDeliveryForSubmission({
+        sendWhileRunning: affordanceFor("interrupt"),
+        modifierKey: true,
+      }),
+    ).toBe("now");
+  });
+
+  it("still sends the selected delivery when the modifier is held with no alternate on offer", () => {
+    const unsupported = affordanceFor("unsupported");
+    expect(unsupported?.alternate).toBeNull();
+    expect(
+      composerTurnDeliveryForSubmission({ sendWhileRunning: unsupported, modifierKey: true }),
+    ).toBe("now");
   });
 });
 

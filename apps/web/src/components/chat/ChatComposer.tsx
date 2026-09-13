@@ -10,6 +10,7 @@ import type {
   AssistantCitation,
   ChatFileAttachment,
   EnvironmentId,
+  MessageId,
   ModelSelection,
   PreviewAnnotationPayload,
   ProviderApprovalDecision,
@@ -20,6 +21,7 @@ import type {
   ServerProvider,
   ThreadId,
   SnapShotSource,
+  TurnDelivery,
 } from "@t3tools/contracts";
 import {
   ProviderDriverKind,
@@ -56,6 +58,7 @@ import {
   type ComposerTrigger,
   collapseExpandedComposerCursor,
   composerSubmissionIntentForEnter,
+  composerTurnDeliveryForSubmission,
   detectComposerTrigger,
   expandCollapsedComposerCursor,
   formatAssistantCitationForComposer,
@@ -188,7 +191,12 @@ import {
 } from "./ComposerCommandMenu";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
-import type { SendWhileRunningAffordance } from "@t3tools/client-runtime/composer/send-while-running";
+import type {
+  SendWhileRunningAffordance,
+  SendWhileRunningOption,
+} from "@t3tools/client-runtime/composer/send-while-running";
+import { EDIT_QUEUED_MESSAGE_ACCESSIBLE_LABEL } from "@t3tools/client-runtime/composer/queued-messages";
+import { useSendWhileRunningPreferenceStore } from "../../sendWhileRunningPreferenceStore";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
@@ -863,6 +871,12 @@ import {
   PaperclipIcon,
   PencilRulerIcon,
   PlayIcon,
+  type LucideIcon,
+  LockIcon,
+  LockOpenIcon,
+  PenLineIcon,
+  SparklesIcon,
+  SquarePenIcon,
   XIcon,
 } from "lucide-react";
 import { proposedPlanTitle } from "../../proposedPlan";
@@ -1150,6 +1164,8 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   preserveComposerFocusOnPointerDown?: boolean;
   sendWhileRunning: SendWhileRunningAffordance | null;
   showEnterHint: boolean;
+  isEditingQueuedMessage: boolean;
+  onSelectSendWhileRunningOption: (option: SendWhileRunningOption) => void;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
@@ -1185,6 +1201,8 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
         preserveComposerFocusOnPointerDown={props.preserveComposerFocusOnPointerDown ?? false}
         sendWhileRunning={props.sendWhileRunning}
         showEnterHint={props.showEnterHint}
+        isEditingQueuedMessage={props.isEditingQueuedMessage}
+        onSelectSendWhileRunningOption={props.onSelectSendWhileRunningOption}
         onPreviousPendingQuestion={props.onPreviousPendingQuestion}
         onInterrupt={props.onInterrupt}
         onImplementPlanInNewThread={props.onImplementPlanInNewThread}
@@ -1196,6 +1214,17 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
 // --------------------------------------------------------------------------
 // Handle exposed to ChatView
 // --------------------------------------------------------------------------
+
+/** An edit is open for exactly one queued message, or none is: one nullable
+    object rather than a flag per question. `stashEntryId` is null when the
+    composer was empty when the edit started, so there is nothing to put back
+    when it ends. */
+type QueuedMessageEdit = {
+  messageId: MessageId;
+  stashEntryId: string | null;
+  /** The composer draft this edit belongs to. */
+  targetKey: string;
+};
 
 export interface ChatComposerHandle {
   focusAtEnd: () => void;
@@ -1228,6 +1257,8 @@ export interface ChatComposerHandle {
   }) => void;
   /** Insert a terminal context from the terminal drawer. */
   addTerminalContext: (selection: TerminalContextSelection) => void;
+  /** Load a queued message's text for editing, parking any current draft. */
+  beginQueuedMessageEdit: (messageId: MessageId, text: string) => void;
   /** Get the current prompt/effort/model state for use in send. */
   getSendContext: () => {
     prompt: string;
@@ -1377,7 +1408,17 @@ export interface ChatComposerProps {
 
   // Callbacks
   onCompactContext: () => void;
-  onSend: (e?: { preventDefault: () => void }, intent?: ComposerSubmissionIntent) => void;
+  onSend: (
+    e?: { preventDefault: () => void },
+    intent?: ComposerSubmissionIntent,
+    delivery?: TurnDelivery,
+  ) => void;
+  /** Dispatches the edit and owns every notice it produces. The composer only
+   * needs to know which of the three outcomes happened to it. */
+  onSaveQueuedMessageEdit: (
+    messageId: MessageId,
+    text: string,
+  ) => Promise<"saved" | "unavailable" | "failed">;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
   onRespondToApproval: (
@@ -1487,6 +1528,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onPageScrollRelease,
     onCompactContext,
     onSend,
+    onSaveQueuedMessageEdit,
     onInterrupt,
     onImplementPlanInNewThread,
     onRespondToApproval,
@@ -1982,6 +2024,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const hasMultilinePrompt = prompt.includes("\n") || hasWrappedPrompt;
   const [isStashMenuOpen, setIsStashMenuOpen] = useState(false);
   const [isTasksDrawerOpen, setIsTasksDrawerOpen] = useState(false);
+  const [queuedMessageEditState, setQueuedMessageEdit] = useState<QueuedMessageEdit | null>(null);
+  const queuedMessageEditTargetKey = composerTargetKey(composerDraftTarget);
+  // The composer persists across threads while its draft is per-target, so an
+  // edit belongs to the target it was opened in: it goes quiet when the user
+  // moves to another thread, and comes back with that thread's draft.
+  const queuedMessageEdit =
+    queuedMessageEditState?.targetKey === queuedMessageEditTargetKey
+      ? queuedMessageEditState
+      : null;
   const [stashPulse, setStashPulse] = useState<{ key: number; active: boolean }>({
     key: 0,
     active: false,
@@ -2214,6 +2265,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const showComposerTopDrawer =
     isComposerApprovalState ||
     pendingUserInputs.length > 0 ||
+    queuedMessageEdit !== null ||
     (!isComposerCollapsedMobile && showPlanFollowUpPrompt && activeProposedPlan !== null);
   const showCollapsedMobilePromptRow =
     isComposerCollapsedMobile && !isComposerApprovalState && pendingUserInputs.length === 0;
@@ -3082,8 +3134,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     showPlanFollowUpPrompt,
   ]);
 
+  // `delivery` absent means "use whatever the composer is currently offering",
+  // because a submit-button click reaches this through DOM bubbling and cannot
+  // pass one. Only the Enter handler, which can read the modifier, passes it.
   const submitComposer = useCallback(
-    (event?: { preventDefault: () => void }, intent: ComposerSubmissionIntent = "foreground") => {
+    (
+      event?: { preventDefault: () => void },
+      intent: ComposerSubmissionIntent = "foreground",
+      delivery?: TurnDelivery,
+    ) => {
       if (noProviderAvailable || isSendDisabled) {
         event?.preventDefault();
         return;
@@ -3112,7 +3171,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           // ChatView reports its final composed-input preflight through the
           // composer handle before its first asynchronous send step.
           providerInputRejectedRef.current = false;
-          onSend(sendEvent, intent);
+          onSend(sendEvent, intent, delivery ?? sendWhileRunning?.selected.turnDelivery);
           return !providerInputRejectedRef.current;
         },
       });
@@ -3131,8 +3190,24 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       noProviderAvailable,
       onSend,
       promptRef,
+      sendWhileRunning,
       shouldBlurMobileComposerOnSubmit,
     ],
+  );
+  const setSendWhileRunningDelivery = useSendWhileRunningPreferenceStore(
+    (state) => state.setDelivery,
+  );
+  /** One click both remembers this delivery for the behavior class and sends
+      with it. The delivery goes to `submitComposer` explicitly because the
+      store write above has not reached the affordance memo yet in this tick. */
+  const selectSendWhileRunningOption = useCallback(
+    (option: SendWhileRunningOption) => {
+      if (sendWhileRunning) {
+        setSendWhileRunningDelivery(sendWhileRunning.behavior, option.turnDelivery);
+      }
+      submitComposer(undefined, "foreground", option.turnDelivery);
+    },
+    [sendWhileRunning, setSendWhileRunningDelivery, submitComposer],
   );
   const submitCitationAndSend = useCallback(() => {
     const intent = composerSubmissionIntentForEnter({
@@ -3207,7 +3282,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     promptHistoryPositionRef.current = null;
   }, [promptHistoryTargetKey]);
 
-  const replacePromptFromHistory = useCallback(
+  /** Replaces the whole prompt and resets everything derived from it. */
+  const replaceComposerPrompt = useCallback(
     (nextPrompt: string) => {
       promptRef.current = nextPrompt;
       setComposerDraftPrompt(composerDraftTarget, nextPrompt);
@@ -3254,7 +3330,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       });
       if (!step) return false;
       promptHistoryPositionRef.current = step.position;
-      replacePromptFromHistory(step.prompt);
+      replaceComposerPrompt(step.prompt);
       return true;
     },
     [
@@ -3266,7 +3342,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       isComposerApprovalState,
       pendingUserInputs.length,
       promptRef,
-      replacePromptFromHistory,
+      replaceComposerPrompt,
     ],
   );
 
@@ -3319,7 +3395,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           })
         : null;
     if (submissionIntent) {
-      submitComposer(undefined, submissionIntent);
+      // An open edit is not a send: the same key that would deliver a message
+      // saves the queued one instead, which is what the banner says it does.
+      if (queuedMessageEdit) {
+        void saveQueuedMessageEdit();
+        return true;
+      }
+      submitComposer(
+        undefined,
+        submissionIntent,
+        composerTurnDeliveryForSubmission({
+          sendWhileRunning,
+          modifierKey: event.metaKey || event.ctrlKey,
+        }),
+      );
       return true;
     }
     return false;
@@ -3660,7 +3749,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     [stashQueue, takeStashEntry],
   );
 
-  const stashCurrentPrompt = useCallback(async () => {
+  /** Resolves to the id of the entry it wrote, or null when it parked nothing:
+      a caller that parks a draft on the user's behalf has to know whether the
+      composer was actually cleared before it puts something else there. */
+  const stashCurrentPrompt = useCallback(async (): Promise<string | null> => {
     // Terminal-context placeholders reference live sessions the stash can't
     // round-trip, so they are stripped from the stashed prompt.
     const prompt = promptRef.current.split(INLINE_TERMINAL_CONTEXT_PLACEHOLDER).join("").trim();
@@ -3674,7 +3766,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       } else {
         setIsStashMenuOpen((open) => !open);
       }
-      return;
+      return null;
     }
     const stashedFiles: PersistedComposerFileAttachment[] = [];
     for (const file of files) {
@@ -3683,7 +3775,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           type: "error",
           title: "Attach dropped files again or remove them before stashing",
         });
-        return;
+        return null;
       }
       const upload = readAttachmentUpload(file.id);
       if (upload?.status !== "ready" || upload.environmentId !== environmentId) {
@@ -3691,7 +3783,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           type: "error",
           title: "Wait for file uploads before stashing this prompt",
         });
-        return;
+        return null;
       }
       stashedFiles.push({
         id: file.id,
@@ -3712,7 +3804,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       .concat(files.map((file) => `file:${file.id}`))
       .join(",");
     const snapshotKey = [String(composerDraftTarget), prompt, attachmentKey].join("\n");
-    if (stashInFlightRef.current.has(snapshotKey)) return;
+    if (stashInFlightRef.current.has(snapshotKey)) return null;
     stashInFlightRef.current.add(snapshotKey);
 
     const stashTarget = composerDraftTarget;
@@ -3746,7 +3838,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             "Browser storage rejected the write, so the composer was left as-is. Free up site data and try again.",
           data: { hideCopyButton: true },
         });
-        return;
+        return null;
       }
       // Written but only into the in-memory fallback (localStorage blocked):
       // the entry is visible and restorable this session, so proceed with the
@@ -3849,6 +3941,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           data: { hideCopyButton: true },
         });
       }
+      return entryId;
     } finally {
       // Must clear on every path: a throw that left this set would wedge this
       // snapshot's ⌘S until the composer remounts.
@@ -3866,6 +3959,93 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     restoreStashEntry,
     stashEntryToQueue,
   ]);
+
+  // ------------------------------------------------------------------
+  // Queued message edit
+  // ------------------------------------------------------------------
+  /** Parking is for a composer that holds something. The test has to match
+      `stashCurrentPrompt`'s own, or an empty composer would fall into its
+      restore-or-open-the-menu branch instead of parking nothing. */
+  const composerHasContentToPark = useCallback(() => {
+    const prompt = promptRef.current.split(INLINE_TERMINAL_CONTEXT_PLACEHOLDER).join("").trim();
+    return (
+      prompt.length > 0 ||
+      composerImagesRef.current.length > 0 ||
+      composerFilesRef.current.length > 0
+    );
+  }, [composerFilesRef, composerImagesRef, promptRef]);
+
+  const restoreParkedDraft = useCallback(
+    async (stashEntryId: string | null) => {
+      if (stashEntryId === null) return;
+      // Read live: the user may have restored or deleted the entry from the
+      // stash menu while the edit was open, and then there is nothing to put
+      // back.
+      const entry = usePromptStashStore
+        .getState()
+        .entries.find((candidate) => candidate.id === stashEntryId);
+      if (entry) await restoreStashEntry(entry);
+    },
+    [restoreStashEntry],
+  );
+
+  const endQueuedMessageEdit = useCallback(
+    (edit: QueuedMessageEdit, options: { clearComposer: boolean; restoreParkedDraft: boolean }) => {
+      setQueuedMessageEdit(null);
+      // Clearing first matters: a restore appends to whatever is in the
+      // composer, so skipping it would merge the edited text into the draft.
+      if (options.clearComposer) replaceComposerPrompt("");
+      if (options.restoreParkedDraft) void restoreParkedDraft(edit.stashEntryId);
+    },
+    [replaceComposerPrompt, restoreParkedDraft],
+  );
+
+  const beginQueuedMessageEdit = useCallback(
+    async (messageId: MessageId, text: string) => {
+      // A second edit replaces the first, and the draft parked when the first
+      // started carries over rather than being restored into the composer only
+      // to be parked again.
+      let stashEntryId = queuedMessageEdit?.stashEntryId ?? null;
+      if (queuedMessageEdit === null && composerHasContentToPark()) {
+        stashEntryId = await stashCurrentPrompt();
+        // The park was refused and said so. Loading the queued message over a
+        // draft that failed to save would make it the second casualty.
+        if (stashEntryId === null) return;
+      }
+      setQueuedMessageEdit({ messageId, stashEntryId, targetKey: queuedMessageEditTargetKey });
+      replaceComposerPrompt(text);
+      focusComposer();
+    },
+    [
+      composerHasContentToPark,
+      focusComposer,
+      queuedMessageEdit,
+      queuedMessageEditTargetKey,
+      replaceComposerPrompt,
+      stashCurrentPrompt,
+    ],
+  );
+
+  const cancelQueuedMessageEdit = useCallback(() => {
+    if (queuedMessageEdit === null) return;
+    endQueuedMessageEdit(queuedMessageEdit, { clearComposer: true, restoreParkedDraft: true });
+    focusComposer();
+  }, [endQueuedMessageEdit, focusComposer, queuedMessageEdit]);
+
+  const saveQueuedMessageEdit = useCallback(async () => {
+    const edit = queuedMessageEdit;
+    if (edit === null) return;
+    const outcome = await onSaveQueuedMessageEdit(edit.messageId, promptRef.current);
+    // A transport failure is worth retrying, so the edit stays open on its text.
+    if (outcome === "failed") return;
+    // "unavailable" leaves the text exactly where the notice promises it is:
+    // in the composer, one Enter away from going out as a new message. The
+    // parked draft stays parked rather than clobbering it.
+    endQueuedMessageEdit(edit, {
+      clearComposer: outcome === "saved",
+      restoreParkedDraft: outcome === "saved",
+    });
+  }, [endQueuedMessageEdit, onSaveQueuedMessageEdit, promptRef, queuedMessageEdit]);
 
   const toggleStashMenu = useCallback(() => {
     if (isComposerCollapsedMobile) {
@@ -4894,6 +5074,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           composerEditorRef.current?.focusAt(nextCollapsedCursor);
         });
       },
+      beginQueuedMessageEdit: (messageId, text) => {
+        void beginQueuedMessageEdit(messageId, text);
+      },
       getSendContext: () => ({
         prompt: promptRef.current,
         images: composerImagesRef.current,
@@ -4927,6 +5110,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     [
       activeThread,
       addComposerAttachments,
+      beginQueuedMessageEdit,
       composerDraftTarget,
       composerCursor,
       composerTerminalContexts,
@@ -4974,7 +5158,26 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   return (
     <form
       ref={composerFormRef}
-      onSubmit={submitComposer}
+      onSubmit={(event) => {
+        // Both the Save button and Enter arrive here; an open edit is not a
+        // send, so it never reaches the submission pipeline.
+        if (queuedMessageEdit) {
+          event.preventDefault();
+          void saveQueuedMessageEdit();
+          return;
+        }
+        submitComposer(event);
+      }}
+      onKeyDown={(event) => {
+        // Escape is not one of the keys the prompt editor routes through
+        // `onComposerCommandKey`, so the cancel sits on the form instead. The
+        // stash menu, the banner stack, and the model picker each stop their
+        // own Escape before it can bubble this far.
+        if (event.key !== "Escape" || !queuedMessageEdit) return;
+        event.preventDefault();
+        event.stopPropagation();
+        cancelQueuedMessageEdit();
+      }}
       onPointerDownCapture={(event) => {
         const target = event.target;
         if (isInsideRestingComposerControlScope(target)) return;
@@ -5115,6 +5318,35 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     onAdvance={onAdvanceActivePendingUserInput}
                     onDismiss={onDismissActivePendingUserInput}
                   />
+                ) : queuedMessageEdit && pendingUserInputs.length === 0 ? (
+                  // Shown on a collapsed mobile composer too, unlike the plan
+                  // notice below: it is the only place that says the next
+                  // submit saves instead of sends, and the only way out on a
+                  // surface with no Escape key. A pending question still
+                  // outranks it, which is why the collapsed branch below is
+                  // still reachable.
+                  <ComposerBanner.Row layout="wrap-actions-narrow">
+                    <ComposerBanner.Icon>
+                      <SquarePenIcon />
+                    </ComposerBanner.Icon>
+                    <ComposerBanner.Content>
+                      <span className="min-w-0 flex-1 truncate text-muted-foreground">
+                        {EDIT_QUEUED_MESSAGE_ACCESSIBLE_LABEL}
+                      </span>
+                    </ComposerBanner.Content>
+                    <ComposerBanner.Actions>
+                      <Button
+                        type="button"
+                        size="micro"
+                        variant="ghost-muted"
+                        className="font-normal"
+                        onPointerDown={(event) => event.preventDefault()}
+                        onClick={cancelQueuedMessageEdit}
+                      >
+                        Cancel
+                      </Button>
+                    </ComposerBanner.Actions>
+                  </ComposerBanner.Row>
                 ) : !isComposerCollapsedMobile && showPlanFollowUpPrompt && activeProposedPlan ? (
                   <ComposerPlanFollowUpBanner
                     key={activeProposedPlan.id}
@@ -5925,6 +6157,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     preserveComposerFocusOnPointerDown={isMobileViewport || isComposerResting}
                     sendWhileRunning={sendWhileRunning}
                     showEnterHint={!isMobileViewport}
+                    isEditingQueuedMessage={queuedMessageEdit !== null}
+                    onSelectSendWhileRunningOption={selectSendWhileRunningOption}
                     onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                     onInterrupt={handleInterruptPrimaryAction}
                     onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryAction}

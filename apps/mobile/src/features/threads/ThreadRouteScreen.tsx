@@ -864,6 +864,7 @@ function ThreadRouteContent(
           feedbackSubmissions={composer.feedbackSubmissions}
           onDismissFeedback={composer.dismissFeedback}
           selectedThreadFeed={composer.selectedThreadFeed}
+          queuedMessages={composer.selectedThreadQueuedMessages}
           activeWorkStartedAt={composer.activeWorkStartedAt}
           isCompacting={composer.isCompacting}
           creationState={creationState}

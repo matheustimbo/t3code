@@ -187,6 +187,7 @@ function buildProps() {
     isWorking: false,
     activeTurnStartedAt: null,
     listRef: createRef<LegendListRef | null>(),
+    queuedMessages: [],
     latestTurn: null,
     runningTurnId: null,
     turnDiffSummaries: [],
@@ -194,6 +195,8 @@ function buildProps() {
     onOpenTurnDiff: () => {},
     supportsConversationRollback: false,
     onRevertToTurnCount: () => {},
+    onEditQueuedMessage: () => {},
+    onRemoveQueuedMessage: () => {},
     isRevertingCheckpoint: false,
     onImageExpand: () => {},
     activeThreadEnvironmentId: ACTIVE_THREAD_ENVIRONMENT_ID,
@@ -272,6 +275,29 @@ function buildSnapShotTimelineEntry(previewUrl?: string) {
 }
 
 describe("MessagesTimeline", () => {
+  it("removes queue controls when authoritative queue membership clears", () => {
+    const baseEntry = buildUserTimelineEntry("Edited queued prompt");
+    const staleEntry = {
+      ...baseEntry,
+      message: { ...baseEntry.message, queued: true },
+    };
+    const waiting = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[staleEntry]}
+        queuedMessages={[{ messageId: staleEntry.message.id }]}
+      />,
+    );
+    const started = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={[staleEntry]} queuedMessages={[]} />,
+    );
+
+    expect(waiting).toContain("Queued, sends next");
+    expect(waiting).toContain('aria-label="Edit queued message"');
+    expect(started).not.toContain("Queued, sends next");
+    expect(started).not.toContain('aria-label="Edit queued message"');
+  });
+
   it("renders previous and next controls with the minimap", () => {
     const first = buildUserTimelineEntry("First turn");
     const secondBase = buildUserTimelineEntry("Second turn");

@@ -5,6 +5,7 @@ import {
   ScrollView,
   View,
   type LayoutChangeEvent,
+  type PressableProps,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
   type StyleProp,
@@ -223,7 +224,10 @@ export function ComposerActionButton(props: {
   readonly icon: ComponentProps<typeof SymbolView>["name"];
   /** Widens the circle into a pill and shows the text. Omit for icon only. */
   readonly label?: string;
-  readonly onPress: () => void;
+  readonly onPress: NonNullable<PressableProps["onPress"]>;
+  /** Both are injected by ControlPillMenu when this button carries a menu. */
+  readonly onLongPress?: PressableProps["onLongPress"];
+  readonly onTouchStart?: PressableProps["onTouchStart"];
   readonly variant?: "primary" | "danger";
 }) {
   const foregroundClassName =
@@ -242,7 +246,9 @@ export function ComposerActionButton(props: {
         props.label ? "px-1" : "w-[44px]",
       )}
       disabled={props.disabled}
+      onLongPress={props.onLongPress}
       onPress={props.onPress}
+      onTouchStart={props.onTouchStart}
     >
       <View
         className={cn(

@@ -7,6 +7,7 @@ import type {
   ChatImageAttachment,
   EnvironmentId,
   MessageId,
+  QueuedMessageRef,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -160,6 +161,12 @@ import {
   WORK_GROUP_TOGGLE_HEIGHT,
 } from "./thread-work-log";
 import { appendPendingThreadMessages, type PendingThreadFeedEntry } from "./pending-thread-feed";
+import { withQueuedMessageOrdinals } from "./queued-message-ordinals";
+import {
+  EDIT_QUEUED_MESSAGE_ACCESSIBLE_LABEL,
+  queuedMessageStatus,
+  REMOVE_QUEUED_MESSAGE_LABEL,
+} from "@t3tools/client-runtime/composer/queued-messages";
 import type { QueuedThreadMessage } from "../../state/thread-outbox-model";
 import { useMarkdownCodeHighlight } from "./markdownCodeHighlightState";
 import {
@@ -231,8 +238,15 @@ function isFreshTimestamp(input: string): boolean {
 
 export interface ThreadFeedProps {
   readonly outboxMessages: ReadonlyArray<QueuedThreadMessage>;
+  readonly queuedMessages: ReadonlyArray<Pick<QueuedMessageRef, "messageId">>;
   readonly dispatchingMessageId: MessageId | null;
   readonly onEditPendingMessage: (message: QueuedThreadMessage) => void;
+  /** A message already on the server, waiting for the running turn to end. */
+  readonly onEditQueuedMessage: (message: {
+    readonly id: MessageId;
+    readonly text: string;
+  }) => void;
+  readonly onRemoveQueuedMessage: (message: { readonly id: MessageId }) => void;
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly workspaceRoot?: string | null;
@@ -1329,6 +1343,8 @@ function renderFeedEntry(
     | "skills"
     | "dispatchingMessageId"
     | "onEditPendingMessage"
+    | "onEditQueuedMessage"
+    | "onRemoveQueuedMessage"
   > & {
     readonly copiedRowId: string | null;
     readonly expandedWorkRows: Record<string, boolean>;
@@ -1550,8 +1566,34 @@ function renderFeedEntry(
           </View>
           <View className="mt-1 flex-row items-center justify-end gap-1 pr-0.5">
             <Text className="font-t3-medium text-xs tabular-nums text-adaptive-neutral-600-400">
-              {entry.pendingMessage && !entry.acknowledged ? "Pending" : timestampLabel}
+              {entry.pendingMessage && !entry.acknowledged
+                ? "Pending"
+                : entry.queuedOrdinal === undefined
+                  ? timestampLabel
+                  : queuedMessageStatus(entry.queuedOrdinal)}
             </Text>
+            {entry.queuedOrdinal !== undefined ? (
+              <>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={EDIT_QUEUED_MESSAGE_ACCESSIBLE_LABEL}
+                  hitSlop={8}
+                  className="size-7 items-center justify-center"
+                  onPress={() => props.onEditQueuedMessage(message)}
+                >
+                  <SymbolView name="pencil" size={14} tintColor={iconSubtleColor} />
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={REMOVE_QUEUED_MESSAGE_LABEL}
+                  hitSlop={8}
+                  className="size-7 items-center justify-center"
+                  onPress={() => props.onRemoveQueuedMessage(message)}
+                >
+                  <SymbolView name="trash" size={14} tintColor={iconSubtleColor} />
+                </Pressable>
+              </>
+            ) : null}
             {entry.pendingMessage &&
             !entry.acknowledged &&
             !entry.pendingMessage.creation &&
@@ -2430,19 +2472,25 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   }, [expandedWorkGroups]);
   const presentedFeed = useMemo(
     () =>
-      appendPendingThreadMessages(
-        deriveThreadFeedPresentation(
+      // Queue positions are numbered once here, over the rows that actually
+      // render, so no row has to count them for itself.
+      withQueuedMessageOrdinals(
+        appendPendingThreadMessages(
+          deriveThreadFeedPresentation(
+            props.feed,
+            props.latestTurn,
+            expandedTurnIds,
+            expandedWorkGroupIds,
+            props.activeWorkStartedAt,
+          ),
           props.feed,
-          props.latestTurn,
-          expandedTurnIds,
-          expandedWorkGroupIds,
-          props.activeWorkStartedAt,
+          props.outboxMessages,
         ),
-        props.feed,
-        props.outboxMessages,
+        props.queuedMessages,
       ),
     [
       props.outboxMessages,
+      props.queuedMessages,
       expandedTurnIds,
       expandedWorkGroupIds,
       props.activeWorkStartedAt,
@@ -2703,6 +2751,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             environmentId: props.environmentId,
             dispatchingMessageId: props.dispatchingMessageId,
             onEditPendingMessage: props.onEditPendingMessage,
+            onEditQueuedMessage: props.onEditQueuedMessage,
+            onRemoveQueuedMessage: props.onRemoveQueuedMessage,
             copiedRowId,
             expandedWorkRows,
             workRowSizing,
@@ -2736,6 +2786,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     [
       props.dispatchingMessageId,
       props.onEditPendingMessage,
+      props.onEditQueuedMessage,
+      props.onRemoveQueuedMessage,
       copiedRowId,
       disclosureToggleSettling,
       expandedWorkRows,

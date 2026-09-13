@@ -9,6 +9,9 @@ import type { OrchestrationEvent, OrchestrationEventType } from "@t3tools/contra
  */
 export const THREAD_DETAIL_EVENT_TYPES = [
   "thread.message-sent",
+  "thread.message-requeued",
+  "thread.turn-start-requested",
+  "thread.queued-message-cancelled",
   "thread.queued-message-edited",
   "thread.queued-message-dropped",
   "thread.proposed-plan-upserted",

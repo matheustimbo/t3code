@@ -1,6 +1,13 @@
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { useAtomValue } from "@effect/atom-react";
-import { resolveSendWhileRunning } from "@t3tools/client-runtime/composer/send-while-running";
+import {
+  resolveSendWhileRunning,
+  type SendWhileRunningAffordance,
+} from "@t3tools/client-runtime/composer/send-while-running";
+import {
+  EDIT_QUEUED_MESSAGE_ACCESSIBLE_LABEL,
+  EDIT_QUEUED_MESSAGE_LABEL,
+} from "@t3tools/client-runtime/composer/queued-messages";
 import type {
   EnvironmentId,
   MessageId,
@@ -9,6 +16,7 @@ import type {
   ProviderInteractionMode,
   RuntimeMode,
   ServerConfig as T3ServerConfig,
+  TurnDelivery,
   UsageLimitsReport,
 } from "@t3tools/contracts";
 import {
@@ -62,7 +70,10 @@ import {
   ComposerInlineControl,
   ComposerToolbarRow,
 } from "../../components/ComposerToolbar";
+import { ControlPillMenu } from "../../components/ControlPill";
 import { ProviderIcon } from "../../components/ProviderIcon";
+import { editingQueuedTurnMessagesAtom } from "../../state/edit-queued-thread-message";
+import { useSendWhileRunningPreferences } from "../../state/send-while-running-preferences";
 import type {
   DraftComposerAttachment,
   DraftComposerFileAttachment,
@@ -267,6 +278,55 @@ export function ComposerSurface(props: {
   );
 }
 
+/**
+ * The primary send action. Where the running provider offers a real choice of
+ * delivery, a long press opens the menu and picking one remembers it and sends
+ * in the same gesture. Mobile gets no one-shot modifier; that is a keyboard
+ * idiom with nothing to hold down here.
+ */
+function ComposerSendAction(props: {
+  readonly accessibilityLabel: string;
+  readonly label: string | null;
+  readonly disabled: boolean;
+  readonly onPress: () => void;
+  readonly delivery: SendWhileRunningAffordance | null;
+  readonly onPickDelivery: (turnDelivery: TurnDelivery) => void;
+}) {
+  const button = (
+    <ComposerActionButton
+      accessibilityLabel={props.accessibilityLabel}
+      icon="arrow.up"
+      variant="primary"
+      disabled={props.disabled}
+      onPress={props.onPress}
+      {...(props.label ? { label: props.label } : {})}
+    />
+  );
+  const delivery = props.delivery;
+  // iOS hangs the menu off the native host rather than the child, so a
+  // disabled button would still open it there while Android stayed inert.
+  if (delivery === null || props.disabled) return button;
+  const { onPickDelivery } = props;
+  return (
+    <ControlPillMenu
+      actions={delivery.options.map((option) => ({
+        id: option.turnDelivery,
+        title: option.label,
+        subtitle: option.description,
+        state: option === delivery.selected ? ("on" as const) : ("off" as const),
+        attributes: { destructive: option.destructive },
+      }))}
+      onPressAction={({ nativeEvent }) => {
+        const picked = delivery.options.find((option) => option.turnDelivery === nativeEvent.event);
+        if (picked) onPickDelivery(picked.turnDelivery);
+      }}
+      shouldOpenOnLongPress
+    >
+      {button}
+    </ControlPillMenu>
+  );
+}
+
 export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposerProps) {
   const { materialYouStyleLayoutActive, themeVariables: materialTheme } =
     useAppearancePreferences();
@@ -320,13 +380,16 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     props.selectedThread.session?.providerInstanceId,
     props.selectedThread.modelSelection.instanceId,
   ]);
+  const { preferences: deliveryPreferences, remember: rememberDelivery } =
+    useSendWhileRunningPreferences();
   const sendWhileRunning = useMemo(
     () =>
       resolveSendWhileRunning({
         isRunning: props.selectedThread.session?.status === "running",
         provider: sessionProviderStatus,
+        ...(deliveryPreferences ? { preferences: deliveryPreferences } : {}),
       }),
-    [props.selectedThread.session?.status, sessionProviderStatus],
+    [props.selectedThread.session?.status, sessionProviderStatus, deliveryPreferences],
   );
   // The outbox label describes real delivery, so it outranks the provider
   // wording whenever the send is not leaving right now.
@@ -349,6 +412,21 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     );
   }, [props.serverConfig, props.selectedThread.modelSelection.instanceId]);
   const composerOwnerKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
+  const editingQueuedMessages = useAtomValue(editingQueuedTurnMessagesAtom);
+  // Replacing a queued message is text-only on the wire, so attaching a file
+  // takes the draft back out of edit mode. The button label follows, which is
+  // how the user sees the mode change before committing to it.
+  const isEditingQueuedMessage =
+    props.draftAttachments.length === 0 && editingQueuedMessages[composerOwnerKey] !== undefined;
+  const sendAccessibilityLabel = isEditingQueuedMessage
+    ? EDIT_QUEUED_MESSAGE_ACCESSIBLE_LABEL
+    : sendLabel;
+  const sendButtonLabel = isEditingQueuedMessage ? EDIT_QUEUED_MESSAGE_LABEL : runningSendLabel;
+  // One option means the provider offers no choice, so there is no menu.
+  const deliveryChoice =
+    !isEditingQueuedMessage && sendWhileRunning !== null && sendWhileRunning.options.length > 1
+      ? sendWhileRunning
+      : null;
   const { onSendMessage, onChangeDraftMessage, onShowUsageLimits } = props;
   // T3 owns /usage-limits only where Limits has data for the selected provider;
   // elsewhere the name stays the provider's own and is sent through untouched.
@@ -512,6 +590,16 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     props.selectedThread.title,
     voiceInput.blocksSubmission,
   ]);
+
+  const handlePickDelivery = useCallback(
+    (turnDelivery: TurnDelivery) => {
+      if (sendWhileRunning !== null) {
+        rememberDelivery(sendWhileRunning.behavior, turnDelivery);
+      }
+      void handleSend();
+    },
+    [handleSend, rememberDelivery, sendWhileRunning],
+  );
 
   // ── Model menu ───────────────────────────────────────────
   const modelOptions = useMemo(
@@ -784,12 +872,13 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                     onPress={props.onStopThread}
                   />
                 ) : (
-                  <ComposerActionButton
-                    accessibilityLabel={sendBlockedReason ?? sendLabel}
-                    icon="arrow.up"
-                    variant="primary"
+                  <ComposerSendAction
+                    accessibilityLabel={sendBlockedReason ?? sendAccessibilityLabel}
+                    label={isEditingQueuedMessage ? sendButtonLabel : null}
                     disabled={!canSend}
                     onPress={handleSend}
+                    delivery={deliveryChoice}
+                    onPickDelivery={handlePickDelivery}
                   />
                 )}
               </View>
@@ -875,13 +964,13 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                       onPress={props.onStopThread}
                     />
                   ) : voicePresentation.showsSend ? (
-                    <ComposerActionButton
-                      accessibilityLabel={sendBlockedReason ?? sendLabel}
-                      icon="arrow.up"
-                      variant="primary"
+                    <ComposerSendAction
+                      accessibilityLabel={sendBlockedReason ?? sendAccessibilityLabel}
+                      label={sendButtonLabel}
                       disabled={!canSend}
                       onPress={handleSend}
-                      {...(runningSendLabel ? { label: runningSendLabel } : {})}
+                      delivery={deliveryChoice}
+                      onPickDelivery={handlePickDelivery}
                     />
                   ) : null}
                 </View>

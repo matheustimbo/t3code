@@ -1,45 +1,23 @@
-/**
- * What the composer's primary action does while a turn is already running, in
- * the words the user reads. Every string a client shows for this lives here, so
- * web and mobile cannot describe the same provider differently, and so no
- * client has to hardcode a provider name or a behavior sentence.
- *
- * @module sendWhileRunning
- */
 import type { ProviderConcurrentSend, ServerProvider, TurnDelivery } from "@t3tools/contracts";
 
 import { resolveProviderInstanceDisplayName } from "../state/providerInstanceDisplay.ts";
 
-/** `unknown` covers a server too old to report the capability, and a thread
-    whose session provider we cannot resolve. Both mean the same to the user. */
 export type SendWhileRunningDelivery = ProviderConcurrentSend | "unknown";
 
-/** What the user last chose, keyed by BEHAVIOR CLASS rather than by provider:
-    a user who learns they like queueing means it everywhere it means the same
-    thing. An absent key takes the default below, so a changed default reaches
-    everyone who never expressed a preference. */
 export type SendWhileRunningPreferences = Partial<Record<SendWhileRunningDelivery, TurnDelivery>>;
 
 export interface SendWhileRunningOption {
   readonly turnDelivery: TurnDelivery;
-  /** Goes on the button face, and into the accessible name. */
   readonly label: string;
   readonly description: string;
   readonly destructive: boolean;
 }
 
 export interface SendWhileRunningAffordance {
-  /** The session provider's behavior class. Also the preference key. */
   readonly behavior: SendWhileRunningDelivery;
-  /** What plain Enter sends right now. Always one of `options`, by identity. */
   readonly selected: SendWhileRunningOption;
-  /** What the one-shot modifier sends, or null when there is no choice to
-      make. Always one of `options`, by identity, and never `selected`. */
   readonly alternate: SendWhileRunningOption | null;
-  /** Every delivery this provider offers, in a fixed order, for a menu.
-      Length 1 means there is no choice and a client renders no menu. */
   readonly options: readonly SendWhileRunningOption[];
-  /** Non-null disables the action and replaces the accessible name. */
   readonly blockedReason: string | null;
 }
 
@@ -54,13 +32,9 @@ export interface SendWhileRunningInput {
     ServerProvider,
     "instanceId" | "driver" | "displayName" | "concurrentSend"
   > | null;
-  /** Read straight from the client's persisted store. Pass a referentially
-      stable object; a fresh one each render defeats the caller's memo. */
   readonly preferences?: SendWhileRunningPreferences;
 }
 
-/** T3 Code holds a queued message itself, so this reads the same whichever
-    provider is running and names none of them. */
 const queuedOption: SendWhileRunningOption = {
   turnDelivery: "queued",
   label: "Queue",
@@ -69,10 +43,6 @@ const queuedOption: SendWhileRunningOption = {
   destructive: false,
 };
 
-/**
- * Build the affordance for a class where both deliveries are real, so
- * `selected`, `alternate` and `options` are derived once and cannot disagree.
- */
 function withQueueChoice(
   behavior: SendWhileRunningDelivery,
   now: SendWhileRunningOption,
@@ -90,8 +60,6 @@ function withQueueChoice(
   };
 }
 
-/** The one-delivery classes: a provider that refuses a concurrent send, and a
-    server old enough that we cannot say, which also means it has no queue. */
 function withoutChoice(
   behavior: SendWhileRunningDelivery,
   only: SendWhileRunningOption,
@@ -100,10 +68,6 @@ function withoutChoice(
   return { behavior, selected: only, alternate: null, options: [only], blockedReason };
 }
 
-/**
- * Returns null while the thread is idle, which means the composer renders its
- * usual send button and adds no extra chrome.
- */
 export function resolveSendWhileRunning(
   input: SendWhileRunningInput,
 ): SendWhileRunningAffordance | null {
@@ -139,8 +103,6 @@ export function resolveSendWhileRunning(
         input.preferences,
       );
     case "provider-queue":
-      // Two of the three providers in this class are labelled by inference, so
-      // the copy must not promise the message becomes the literal next turn.
       return withQueueChoice(
         "provider-queue",
         {

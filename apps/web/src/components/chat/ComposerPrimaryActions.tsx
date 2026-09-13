@@ -1,12 +1,23 @@
 import { memo, type PointerEventHandler } from "react";
 import { ChevronDownIcon, ChevronLeftIcon, CornerDownLeftIcon } from "lucide-react";
-import type { SendWhileRunningAffordance } from "@t3tools/client-runtime/composer/send-while-running";
+import type {
+  SendWhileRunningAffordance,
+  SendWhileRunningOption,
+} from "@t3tools/client-runtime/composer/send-while-running";
 import { useEnvironmentIdentificationMode } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
 import { StageBackdropButtonArt, useSidebarStageBackdropVariant } from "../SidebarStageBackdrop";
 import { Button } from "../ui/button";
 import { Kbd } from "../ui/kbd";
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
+import {
+  Menu,
+  MenuItem,
+  MenuPopup,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuRadioItemIndicator,
+  MenuTrigger,
+} from "../ui/menu";
 import { Spinner } from "../ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { composerFloatingLayerProps } from "./composerEventScope";
@@ -38,6 +49,13 @@ interface ComposerPrimaryActionsProps {
   /** Enter only submits on non-mobile viewports, so the glyph goes on the
    * button face only where the key actually does something. */
   showEnterHint?: boolean;
+  /** The primary action saves the queued message being edited instead of
+   * sending, which is also why no delivery choice applies while it is true. */
+  isEditingQueuedMessage?: boolean;
+  /** Remembers the delivery for this behavior class and sends with it, in one
+   * gesture. Pass it wherever `sendWhileRunning` is passed; without it the
+   * delivery menu has nothing to do and stays unrendered. */
+  onSelectSendWhileRunningOption?: (option: SendWhileRunningOption) => void;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
@@ -92,6 +110,8 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   preserveComposerFocusOnPointerDown = false,
   sendWhileRunning = null,
   showEnterHint = false,
+  isEditingQueuedMessage = false,
+  onSelectSendWhileRunningOption,
   onPreviousPendingQuestion,
   onInterrupt,
   onImplementPlanInNewThread,
@@ -178,6 +198,25 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           })}
         </Button>
       </div>
+    );
+  }
+
+  // Ahead of every send branch: while an edit is open the composer is not
+  // sending anything, so no delivery choice can apply to it.
+  if (isEditingQueuedMessage) {
+    return (
+      <Button
+        type="submit"
+        size="sm"
+        className={cn(
+          "rounded-full bg-message-action text-message-action-foreground hover:bg-message-action-hover",
+          compact ? "h-9 px-3 sm:h-8" : "h-9 px-4 sm:h-8",
+        )}
+        {...pointerFocusProps}
+        disabled={isSendBusy || isSendDisabled || isConnecting || isEnvironmentUnavailable}
+      >
+        Save
+      </Button>
     );
   }
 
@@ -293,12 +332,19 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   const blocked = sendWhileRunning.blockedReason;
   const sendWhileRunningDisabled =
     blocked !== null || isSendBusy || isSendDisabled || isConnecting || isEnvironmentUnavailable;
+  // One delivery means there is no choice to make, so the control stays the
+  // plain button it has always been rather than growing a menu of one.
+  const deliveryOptions =
+    sendWhileRunning.options.length > 1 && onSelectSendWhileRunningOption
+      ? sendWhileRunning.options
+      : null;
 
   const sendWhileRunningButton = compact ? (
     <button
       type="submit"
       className={cn(
         "relative isolate flex size-9 items-center justify-center rounded-full shadow-xs transition-all duration-150 enabled:cursor-pointer enabled:inset-shadow-[0_1px_--theme(--color-white/16%)] hover:scale-105 active:inset-shadow-[0_1px_--theme(--color-black/8%)] active:shadow-none disabled:pointer-events-none disabled:opacity-30 disabled:shadow-none disabled:hover:scale-100 sm:size-8",
+        deliveryOptions ? "rounded-l-full rounded-r-none hover:scale-100" : null,
         sendWhileRunning.selected.destructive
           ? "bg-destructive text-white enabled:shadow-destructive/24 hover:bg-destructive/90"
           : "bg-message-action text-message-action-foreground enabled:shadow-message-action/24 hover:bg-message-action-hover",
@@ -316,6 +362,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       variant={sendWhileRunning.selected.destructive ? "destructive" : "default"}
       className={cn(
         "h-9 gap-1.5 rounded-full px-3 sm:h-8",
+        deliveryOptions ? "rounded-l-full rounded-r-none" : null,
         sendWhileRunning.selected.destructive
           ? undefined
           : "bg-message-action text-message-action-foreground hover:bg-message-action-hover",
@@ -333,17 +380,79 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     </Button>
   );
 
+  const sendWhileRunningAction = (
+    <Tooltip>
+      <TooltipTrigger render={sendWhileRunningButton} />
+      <TooltipPopup side="top">
+        {compact
+          ? `${sendWhileRunning.selected.label}. ${blocked ?? sendWhileRunning.selected.description}`
+          : (blocked ?? sendWhileRunning.selected.description)}
+      </TooltipPopup>
+    </Tooltip>
+  );
+
   return (
     <>
       {renderStopGenerationButton(false)}
-      <Tooltip>
-        <TooltipTrigger render={sendWhileRunningButton} />
-        <TooltipPopup side="top">
-          {compact
-            ? `${sendWhileRunning.selected.label}. ${blocked ?? sendWhileRunning.selected.description}`
-            : (blocked ?? sendWhileRunning.selected.description)}
-        </TooltipPopup>
-      </Tooltip>
+      {deliveryOptions && onSelectSendWhileRunningOption ? (
+        <div data-chat-composer-send-while-running-actions="true" className="flex items-center">
+          {sendWhileRunningAction}
+          <Menu>
+            <MenuTrigger
+              render={
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={sendWhileRunning.selected.destructive ? "destructive" : "default"}
+                  className={cn(
+                    "h-9 rounded-l-none rounded-r-full px-2 sm:h-8",
+                    sendWhileRunning.selected.destructive
+                      ? "border-l-white/20"
+                      : "border-l-message-action-foreground/20 bg-message-action text-message-action-foreground hover:bg-message-action-hover",
+                  )}
+                  aria-label="Send options"
+                  {...pointerFocusProps}
+                  disabled={sendWhileRunningDisabled}
+                />
+              }
+            >
+              <ChevronDownIcon className="size-3.5" />
+            </MenuTrigger>
+            <MenuPopup align="end" side="top" className="w-72" {...composerFloatingLayerProps}>
+              {/* Picking an option both remembers it for this behavior class and
+                  sends with it, so the radio marks the remembered choice while
+                  the click carries the send. */}
+              <MenuRadioGroup value={sendWhileRunning.selected.turnDelivery}>
+                {deliveryOptions.map((option) => (
+                  <MenuRadioItem
+                    key={option.turnDelivery}
+                    value={option.turnDelivery}
+                    closeOnClick
+                    disabled={sendWhileRunningDisabled}
+                    className={cn(
+                      "items-start py-1.5",
+                      option.destructive ? "text-destructive-foreground" : null,
+                    )}
+                    onClick={() => onSelectSendWhileRunningOption(option)}
+                  >
+                    <span className="flex min-w-0 flex-col gap-0.5">
+                      <span className="flex min-w-0 items-center gap-2">
+                        <span className="min-w-0 flex-1 truncate font-medium">{option.label}</span>
+                        <MenuRadioItemIndicator />
+                      </span>
+                      <span className="whitespace-normal text-muted-foreground text-xs leading-snug">
+                        {option.description}
+                      </span>
+                    </span>
+                  </MenuRadioItem>
+                ))}
+              </MenuRadioGroup>
+            </MenuPopup>
+          </Menu>
+        </div>
+      ) : (
+        sendWhileRunningAction
+      )}
     </>
   );
 });

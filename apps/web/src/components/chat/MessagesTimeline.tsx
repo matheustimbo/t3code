@@ -13,11 +13,18 @@ import {
   type AssistantCitation,
   type EnvironmentId,
   type MessageId,
+  type QueuedMessageRef,
   type ScopedThreadRef,
   type ServerProviderSkill,
   type ToolActivityIcon,
   type TurnId,
 } from "@t3tools/contracts";
+import {
+  EDIT_QUEUED_MESSAGE_ACCESSIBLE_LABEL,
+  QUEUED_MESSAGE_STATUS_DETAIL,
+  queuedMessageStatus,
+  REMOVE_QUEUED_MESSAGE_LABEL,
+} from "@t3tools/client-runtime/composer/queued-messages";
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { CodexArtifactTemplate } from "@t3tools/client-runtime/codex-artifact-templates";
 import {
@@ -222,6 +229,8 @@ interface TimelineRowSharedState {
   skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   activeThreadEnvironmentId: EnvironmentId;
   onRevertToTurnCount: (targetTurnCount: number, messageId: MessageId) => void;
+  onEditQueuedMessage: (messageId: MessageId) => void;
+  onRemoveQueuedMessage: (messageId: MessageId) => void;
   onUseArtifactTemplate: (template: CodexArtifactTemplate) => void;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onFileOpen: (attachment: ChatFileAttachment) => void;
@@ -327,6 +336,7 @@ interface MessagesTimelineProps {
   activeTurnStartedAt: string | null;
   listRef: React.RefObject<LegendListRef | null>;
   timelineEntries: ReturnType<typeof deriveTimelineEntries>;
+  queuedMessages: ReadonlyArray<Pick<QueuedMessageRef, "messageId">>;
   latestTurn: TimelineLatestTurn | null;
   runningTurnId: TurnId | null;
   turnDiffSummaries: ReadonlyArray<TurnDiffSummary>;
@@ -340,6 +350,8 @@ interface MessagesTimelineProps {
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
   supportsConversationRollback: boolean;
   onRevertToTurnCount: (targetTurnCount: number, messageId: MessageId) => void;
+  onEditQueuedMessage: (messageId: MessageId) => void;
+  onRemoveQueuedMessage: (messageId: MessageId) => void;
   onUseArtifactTemplate?: (template: CodexArtifactTemplate) => void;
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
@@ -391,6 +403,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onOpenAgents = NOOP_OPEN_AGENTS,
   listRef,
   timelineEntries,
+  queuedMessages,
   latestTurn,
   runningTurnId,
   turnDiffSummaries,
@@ -399,6 +412,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onOpenTurnDiff,
   supportsConversationRollback,
   onRevertToTurnCount,
+  onEditQueuedMessage,
+  onRemoveQueuedMessage,
   onUseArtifactTemplate = NOOP_USE_ARTIFACT_TEMPLATE,
   isRevertingCheckpoint,
   onImageExpand,
@@ -574,6 +589,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     const projection = deriveMessagesTimelineRowsWithState(
       {
         timelineEntries,
+        queuedMessages,
         latestTurn,
         runningTurnId,
         expandedTurnIds: paintedExpandedTurnIds,
@@ -594,6 +610,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     listIdentityKey,
     workspaceRoot,
     timelineEntries,
+    queuedMessages,
     latestTurn,
     runningTurnId,
     paintedExpandedTurnIds,
@@ -780,6 +797,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       skills,
       activeThreadEnvironmentId,
       onRevertToTurnCount,
+      onEditQueuedMessage,
+      onRemoveQueuedMessage,
       onUseArtifactTemplate,
       onImageExpand,
       onFileOpen,
@@ -804,6 +823,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       skills,
       activeThreadEnvironmentId,
       onRevertToTurnCount,
+      onEditQueuedMessage,
+      onRemoveQueuedMessage,
       onUseArtifactTemplate,
       onImageExpand,
       onFileOpen,
@@ -1410,6 +1431,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   const previewImages = userImages.filter((image) => image.name.startsWith("preview-annotation-"));
   const regularImages = userImages.filter((image) => !image.name.startsWith("preview-annotation-"));
   const revertTurnCount = row.revertTurnCount;
+  const queued = row.queuedOrdinal !== undefined;
 
   return (
     <div className="group flex flex-col items-end gap-1">
@@ -1568,17 +1590,27 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           markdownCwd={ctx.markdownCwd}
         />
       </div>
-      <div className="flex w-full max-w-[80%] items-center justify-end pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover:opacity-100">
+      <div
+        className={queued ? USER_MESSAGE_META_STRIP_CLASS : USER_MESSAGE_META_STRIP_ON_HOVER_CLASS}
+      >
         <div className="flex shrink-0 items-center gap-2">
           <Tooltip>
             <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>
-              {formatDayAwareTimestamp(row.message.createdAt, ctx.timestampFormat)}
+              {queued
+                ? queuedMessageStatus(row.queuedOrdinal ?? 1)
+                : formatDayAwareTimestamp(row.message.createdAt, ctx.timestampFormat)}
             </TooltipTrigger>
             <TooltipPopup>
-              {formatChatTimestampTooltip(row.message.createdAt, ctx.timestampFormat)}
+              {queued
+                ? QUEUED_MESSAGE_STATUS_DETAIL
+                : formatChatTimestampTooltip(row.message.createdAt, ctx.timestampFormat)}
             </TooltipPopup>
           </Tooltip>
-          <div className="flex items-center gap-0.5">
+          <div
+            className={queued ? USER_MESSAGE_ACTIONS_ON_HOVER_CLASS : USER_MESSAGE_ACTIONS_CLASS}
+          >
+            {queued && <EditQueuedMessageButton messageId={row.message.id} />}
+            {queued && <RemoveQueuedMessageButton messageId={row.message.id} />}
             {typeof revertTurnCount === "number" && (
               <RevertUserMessageButton turnCount={revertTurnCount} messageId={row.message.id} />
             )}
@@ -1589,6 +1621,62 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         </div>
       </div>
     </div>
+  );
+}
+
+// A queued row shows its place in line at rest, so the reveal classes move off
+// the strip and onto the buttons. A sent row keeps both class lists as they were.
+const USER_MESSAGE_META_REVEAL_CLASS =
+  "opacity-0 transition-opacity duration-200 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover:opacity-100";
+const USER_MESSAGE_META_STRIP_CLASS =
+  "flex w-full max-w-[80%] items-center justify-end pe-1 text-xs tabular-nums";
+const USER_MESSAGE_META_STRIP_ON_HOVER_CLASS = `${USER_MESSAGE_META_STRIP_CLASS} ${USER_MESSAGE_META_REVEAL_CLASS}`;
+const USER_MESSAGE_ACTIONS_CLASS = "flex items-center gap-0.5";
+const USER_MESSAGE_ACTIONS_ON_HOVER_CLASS = `${USER_MESSAGE_ACTIONS_CLASS} ${USER_MESSAGE_META_REVEAL_CLASS}`;
+
+function EditQueuedMessageButton({ messageId }: { messageId: MessageId }) {
+  const ctx = use(TimelineRowCtx);
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost"
+            onClick={() => ctx.onEditQueuedMessage(messageId)}
+            aria-label={EDIT_QUEUED_MESSAGE_ACCESSIBLE_LABEL}
+          />
+        }
+      >
+        <SquarePenIcon className="size-3" />
+      </TooltipTrigger>
+      <TooltipPopup side="top">{EDIT_QUEUED_MESSAGE_ACCESSIBLE_LABEL}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
+function RemoveQueuedMessageButton({ messageId }: { messageId: MessageId }) {
+  const ctx = use(TimelineRowCtx);
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost"
+            onClick={() => ctx.onRemoveQueuedMessage(messageId)}
+            aria-label={REMOVE_QUEUED_MESSAGE_LABEL}
+          />
+        }
+      >
+        <XIcon className="size-3" />
+      </TooltipTrigger>
+      <TooltipPopup side="top">{REMOVE_QUEUED_MESSAGE_LABEL}</TooltipPopup>
+    </Tooltip>
   );
 }
 

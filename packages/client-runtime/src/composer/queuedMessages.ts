@@ -1,12 +1,8 @@
-/**
- * Every string a client shows for a message already waiting in T3 Code's own
- * queue, so web and mobile cannot word the same state differently and neither
- * has to invent copy for it. It lives beside `sendWhileRunning.ts` because the
- * edit flow runs back through the composer.
- *
- * @module queuedMessages
- */
-import type { QueuedMessageUnavailableReason } from "@t3tools/contracts";
+import type {
+  MessageId,
+  QueuedMessageRef,
+  QueuedMessageUnavailableReason,
+} from "@t3tools/contracts";
 
 function ordinalSuffix(ordinal: number): string {
   if (ordinal % 100 >= 11 && ordinal % 100 <= 13) return "th";
@@ -22,15 +18,21 @@ function ordinalSuffix(ordinal: number): string {
   }
 }
 
-/** Status for the slot where a sent message shows its timestamp.
-    `ordinal` is 1-based and counted client-side from the ordered message
-    list; nothing stores queue position. */
+export function queuedMessageOrdinalMap(
+  queuedMessages: ReadonlyArray<Pick<QueuedMessageRef, "messageId">>,
+): ReadonlyMap<MessageId, number> {
+  const ordinals = new Map<MessageId, number>();
+  for (const [index, message] of queuedMessages.entries()) {
+    ordinals.set(message.messageId, index + 1);
+  }
+  return ordinals;
+}
+
 export function queuedMessageStatus(ordinal: number): string {
   if (ordinal <= 1) return "Queued, sends next";
   return `Queued, ${ordinal}${ordinalSuffix(ordinal)} in line`;
 }
 
-/** Longer form, for a tooltip or a screen reader. */
 export const QUEUED_MESSAGE_STATUS_DETAIL =
   "T3 Code sends this when the current turn finishes. You can edit or remove it until then.";
 
@@ -38,7 +40,6 @@ export const EDIT_QUEUED_MESSAGE_LABEL = "Edit";
 export const EDIT_QUEUED_MESSAGE_ACCESSIBLE_LABEL = "Edit queued message";
 export const REMOVE_QUEUED_MESSAGE_LABEL = "Remove from queue";
 
-/** Count for a thread-list indicator. */
 export function queuedMessageCountLabel(count: number): string {
   return count === 1 ? "1 message queued" : `${count} messages queued`;
 }
@@ -48,8 +49,22 @@ export interface QueuedMessageUnavailableNotice {
   readonly description: string;
 }
 
-/** The server refused an edit or a drop. The user must never lose typing to
-    this, so the edit copy says in words where their text still is. */
+export function queuedMessageActionFailureNotice(
+  action: "edit" | "remove",
+  error: unknown,
+): QueuedMessageUnavailableNotice {
+  return {
+    title:
+      action === "edit"
+        ? "Could not save the queued message"
+        : "Could not remove the queued message",
+    description:
+      error instanceof Error && error.message.length > 0
+        ? error.message
+        : "The server refused the request.",
+  };
+}
+
 export function queuedMessageUnavailableNotice(
   reason: QueuedMessageUnavailableReason,
   action: "edit" | "remove",

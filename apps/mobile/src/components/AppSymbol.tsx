@@ -66,6 +66,7 @@ import IconMinus from "@tabler/icons-react-native/IconMinus";
 import IconMoon from "@tabler/icons-react-native/IconMoon";
 import IconNetwork from "@tabler/icons-react-native/IconNetwork";
 import IconPalette from "@tabler/icons-react-native/IconPalette";
+import IconPencil from "@tabler/icons-react-native/IconPencil";
 import IconPhoto from "@tabler/icons-react-native/IconPhoto";
 import IconPin from "@tabler/icons-react-native/IconPin";
 import IconPinnedOff from "@tabler/icons-react-native/IconPinnedOff";
@@ -153,6 +154,7 @@ const ANDROID_ICON_BY_SF_SYMBOL: Partial<Record<SFSymbol, Icon>> = {
   macstudio: IconDeviceDesktop,
   magnifyingglass: IconSearch,
   paintbrush: IconPalette,
+  pencil: IconPencil,
   "person.crop.circle": IconUserCircle,
   photo: IconPhoto,
   pin: IconPin,

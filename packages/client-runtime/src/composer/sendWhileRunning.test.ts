@@ -19,9 +19,6 @@ const provider = (
   ...(concurrentSend ? { concurrentSend } : {}),
 });
 
-/** Spelled out here rather than imported, so a reworded implementation fails
-    these assertions instead of moving with them. The queue option is the same
-    for every behavior class, which is why one literal covers them all. */
 const queueOption: SendWhileRunningOption = {
   turnDelivery: "queued",
   label: "Queue",
