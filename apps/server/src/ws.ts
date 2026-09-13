@@ -170,7 +170,11 @@ import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
+import { OrchestrationQueuedMessageUnavailableError } from "./orchestration/Errors.ts";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
+const isOrchestrationQueuedMessageUnavailableError = Schema.is(
+  OrchestrationQueuedMessageUnavailableError,
+);
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const CONFIG_DISCOVERY_TIMEOUT = Duration.seconds(5);
@@ -677,6 +681,9 @@ const makeWsRpcLayer = (
           : new OrchestrationDispatchCommandError({
               message: cause instanceof Error ? cause.message : fallbackMessage,
               cause,
+              ...(isOrchestrationQueuedMessageUnavailableError(cause)
+                ? { queuedMessageUnavailableReason: cause.reason }
+                : {}),
             });
       const randomUUID = crypto.randomUUIDv4.pipe(
         Effect.mapError((cause) =>
