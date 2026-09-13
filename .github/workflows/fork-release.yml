@@ -110,6 +110,54 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  build_wsl_node_pty:
+    name: Build WSL node-pty (linux-x64)
+    needs: prepare
+    if: needs.prepare.outputs.release == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout fork release
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=t3...
+
+      # The Windows app runs its server backend inside WSL. Build node-pty on
+      # Linux so users do not need a compiler or network access on first launch.
+      - name: Build node-pty linux-x64 prebuild
+        shell: bash
+        run: |
+          set -euo pipefail
+          pty_pkg="$(node -e "console.log(require.resolve('node-pty/package.json', { paths: ['$GITHUB_WORKSPACE/apps/server'] }))")"
+          pty_dir="$(dirname "$pty_pkg")"
+          ( cd "$pty_dir" && npx --yes node-gyp rebuild )
+          mkdir -p wsl-prebuild
+          cp "$pty_dir/build/Release/pty.node" wsl-prebuild/pty.node
+          file wsl-prebuild/pty.node
+
+      - name: Upload node-pty linux-x64 prebuild
+        uses: actions/upload-artifact@v7
+        with:
+          # Keep this outside the fork-* publish pattern. It is an input to the
+          # Windows build, not a standalone release asset.
+          name: wsl-node-pty-x64
+          path: wsl-prebuild/pty.node
+          if-no-files-found: error
+          retention-days: 1
+
   desktop_mac:
     needs: prepare
     if: needs.prepare.outputs.release == 'true'
@@ -283,8 +331,122 @@ jobs:
           compression-level: 0
           retention-days: 1
 
+  desktop_windows:
+    name: Build Windows x64 desktop
+    needs: [prepare, build_wsl_node_pty]
+    if: needs.prepare.outputs.release == 'true'
+    runs-on: windows-2025
+    timeout-minutes: 45
+    steps:
+      - name: Checkout fork release
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      # setup-vp's cache contains Linux-shaped entries on Windows. Cache the
+      # Windows package store directly instead.
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: false
+          run-install: false
+
+      - id: package_cache_path
+        name: Resolve Windows package cache path
+        shell: pwsh
+        run: '"path=$(vp pm cache dir)" >> $env:GITHUB_OUTPUT'
+
+      - name: Cache Windows packages
+        uses: actions/cache@v6
+        with:
+          path: ${{ steps.package_cache_path.outputs.path }}
+          key: fork-windows-release-packages-v1-${{ hashFiles('pnpm-lock.yaml') }}
+
+      - name: Install desktop dependencies
+        run: vp install --filter=@t3tools/desktop... --filter=t3... --filter=@t3tools/scripts...
+
+      - id: resource_monitor_cache
+        name: Cache resource monitor
+        uses: actions/cache@v6
+        with:
+          path: native/resource-monitor/target/x86_64-pc-windows-msvc/release/t3-resource-monitor.exe
+          key: fork-resource-monitor-x86_64-pc-windows-msvc-${{ hashFiles('native/resource-monitor/Cargo.lock', 'native/resource-monitor/Cargo.toml', 'native/resource-monitor/src/**') }}
+
+      - name: Setup Rust
+        if: steps.resource_monitor_cache.outputs.cache-hit != 'true'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Install Spectre-mitigated MSVC libraries
+        if: steps.resource_monitor_cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $installPath = & $vswhere -products * -latest -property installationPath
+          $setupExe = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\setup.exe"
+          $proc = Start-Process -FilePath $setupExe `
+            -ArgumentList "modify", "--installPath", "`"$installPath`"", "--add", `
+            "Microsoft.VisualStudio.Component.VC.Runtimes.x86.x64.Spectre", "--quiet", "--norestart" `
+            -Wait -PassThru -NoNewWindow
+          if ($null -eq $proc -or $proc.ExitCode -ne 0) {
+            $code = if ($null -ne $proc) { $proc.ExitCode } else { 1 }
+            Write-Error "Visual Studio Installer failed with exit code $code"
+            exit $code
+          }
+
+      - name: Download WSL node-pty prebuild
+        uses: actions/download-artifact@v7
+        with:
+          name: wsl-node-pty-x64
+          path: wsl-prebuild
+
+      - name: Build fork desktop
+        shell: bash
+        env:
+          T3CODE_DESKTOP_DISTRIBUTION_LABEL: Fork
+          T3CODE_DESKTOP_UPDATE_REPOSITORY: matheustimbo/t3code
+          T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR: ${{ steps.resource_monitor_cache.outputs.cache-hit == 'true' }}
+          T3CODE_CLERK_PASSKEY_RP_DOMAINS: ${{ vars.CLERK_PASSKEY_RP_DOMAINS }}
+        run: |
+          set -euo pipefail
+          version="${{ needs.prepare.outputs.version }}"
+          node scripts/update-release-package-versions.ts "$version"
+
+          vp run dist:desktop:artifact \
+            --platform win \
+            --target nsis \
+            --arch x64 \
+            --build-version "$version" \
+            --wsl-prebuild "$GITHUB_WORKSPACE/wsl-prebuild/pty.node" \
+            --verbose
+
+          mkdir -p release-windows
+          shopt -s nullglob
+          for pattern in release/*.exe release/*.blockmap release/*.yml; do
+            for file in $pattern; do
+              cp "$file" release-windows/
+            done
+          done
+          test -n "$(find release-windows -maxdepth 1 -name '*.exe' -print -quit)"
+          test -f release-windows/latest.yml
+
+      - name: Upload desktop packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: fork-desktop-win-x64
+          path: release-windows/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+
   release:
-    needs: [prepare, server, desktop_mac]
+    needs: [prepare, server, desktop_mac, desktop_windows]
     if: needs.prepare.outputs.release == 'true'
     runs-on: ubuntu-24.04
     steps:
