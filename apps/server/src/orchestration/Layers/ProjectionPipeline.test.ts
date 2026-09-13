@@ -4608,3 +4608,177 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
     }),
   );
 });
+
+const queueLayer = it.layer(
+  OrchestrationEngineLive.pipe(
+    Layer.provideMerge(OrchestrationProjectionSnapshotQueryLive),
+    Layer.provide(ThreadBackgroundLiveness.layer),
+    Layer.provide(ThreadPlanProgress.layer),
+    Layer.provideMerge(OrchestrationProjectionPipelineLive),
+    Layer.provide(OrchestrationEventStoreLive),
+    Layer.provide(OrchestrationCommandReceiptRepositoryLive),
+    Layer.provide(RepositoryIdentityResolver.layer),
+    Layer.provideMerge(SqlitePersistenceMemory),
+    Layer.provideMerge(
+      ServerConfig.layerTest(process.cwd(), {
+        prefix: "t3-projection-pipeline-queued-messages-",
+      }),
+    ),
+    Layer.provideMerge(NodeServices.layer),
+  ),
+);
+
+queueLayer("editing and dropping queued messages through the projection", (it) => {
+  it.effect("keeps an edited message in place and forgets a dropped one", () =>
+    Effect.gen(function* () {
+      const engine = yield* OrchestrationEngineService;
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+      const projectId = ProjectId.make("project-queue");
+      const threadId = ThreadId.make("thread-queue");
+      const firstMessageId = MessageId.make("message-queue-first");
+      const secondMessageId = MessageId.make("message-queue-second");
+      const createdAt = "2026-01-01T00:00:00.000Z";
+      const firstSentAt = "2026-01-01T00:00:01.000Z";
+      const secondSentAt = "2026-01-01T00:00:02.000Z";
+
+      yield* engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("cmd-queue-project"),
+        projectId,
+        title: "Queue project",
+        workspaceRoot: "/tmp/project-queue",
+        createdAt,
+      });
+      yield* engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-queue-thread"),
+        threadId,
+        projectId,
+        title: "Queue thread",
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      });
+      yield* engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-queue-session-running"),
+        threadId,
+        session: {
+          threadId,
+          status: "running",
+          providerName: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          runtimeMode: "full-access",
+          activeTurnId: TurnId.make("turn-queue-running"),
+          lastError: null,
+          updatedAt: createdAt,
+        },
+        createdAt,
+      });
+
+      const queueMessage = (input: {
+        readonly commandId: string;
+        readonly messageId: MessageId;
+        readonly text: string;
+        readonly createdAt: string;
+      }) =>
+        engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make(input.commandId),
+          threadId,
+          message: {
+            messageId: input.messageId,
+            role: "user",
+            text: input.text,
+            attachments: [],
+          },
+          runtimeMode: "full-access",
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          delivery: "queued",
+          createdAt: input.createdAt,
+        });
+      yield* queueMessage({
+        commandId: "cmd-queue-first",
+        messageId: firstMessageId,
+        text: "run the build",
+        createdAt: firstSentAt,
+      });
+      yield* queueMessage({
+        commandId: "cmd-queue-second",
+        messageId: secondMessageId,
+        text: "and deploy it",
+        createdAt: secondSentAt,
+      });
+
+      const readThreadRow = sql<{
+        readonly latestUserMessageAt: string | null;
+        readonly queuedMessageCount: number;
+      }>`
+        SELECT
+          latest_user_message_at AS "latestUserMessageAt",
+          queued_message_count AS "queuedMessageCount"
+        FROM projection_threads
+        WHERE thread_id = ${threadId}
+      `;
+      assert.deepEqual(yield* readThreadRow, [
+        { latestUserMessageAt: secondSentAt, queuedMessageCount: 2 },
+      ]);
+
+      yield* engine.dispatch({
+        type: "thread.queued-message.edit",
+        commandId: CommandId.make("cmd-queue-edit"),
+        threadId,
+        messageId: firstMessageId,
+        expectedRevision: 0,
+        text: "run the build and the tests",
+        createdAt: "2026-01-01T00:00:03.000Z",
+      });
+
+      const editedThread = Option.getOrThrow(yield* snapshotQuery.getThreadDetailById(threadId));
+      assert.deepEqual(
+        editedThread.queuedMessages?.map((entry) => ({
+          messageId: entry.messageId,
+          createdAt: entry.createdAt,
+          revision: entry.revision,
+        })),
+        [
+          { messageId: firstMessageId, createdAt: firstSentAt, revision: 1 },
+          { messageId: secondMessageId, createdAt: secondSentAt, revision: 0 },
+        ],
+      );
+      assert.deepEqual(
+        editedThread.messages.map((message) => message.text),
+        ["run the build and the tests", "and deploy it"],
+      );
+      assert.deepEqual(yield* readThreadRow, [
+        { latestUserMessageAt: secondSentAt, queuedMessageCount: 2 },
+      ]);
+
+      yield* engine.dispatch({
+        type: "thread.queued-message.drop",
+        commandId: CommandId.make("cmd-queue-drop"),
+        threadId,
+        messageId: secondMessageId,
+        expectedRevision: 0,
+        createdAt: "2026-01-01T00:00:04.000Z",
+      });
+
+      const droppedThread = Option.getOrThrow(yield* snapshotQuery.getThreadDetailById(threadId));
+      assert.deepEqual(
+        droppedThread.queuedMessages?.map((entry) => entry.messageId),
+        [firstMessageId],
+      );
+      assert.deepEqual(
+        droppedThread.messages.map((message) => message.id),
+        [firstMessageId],
+      );
+      assert.deepEqual(yield* readThreadRow, [
+        { latestUserMessageAt: firstSentAt, queuedMessageCount: 1 },
+      ]);
+    }),
+  );
+});

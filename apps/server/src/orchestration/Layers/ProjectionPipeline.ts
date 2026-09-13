@@ -1032,9 +1032,15 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           return;
         }
 
+        // Every one of these changes the queue's depth, and a drop also deletes
+        // the message row `latestUserMessageAt` may be pointing at. The messages
+        // projector runs before this one, so the refresh reads the rows this
+        // event already landed.
         case "thread.turn-start-requested":
         case "thread.message-requeued":
-        case "thread.queued-message-cancelled": {
+        case "thread.queued-message-cancelled":
+        case "thread.queued-message-edited":
+        case "thread.queued-message-dropped": {
           const existingRow = yield* projectionThreadRepository.getById({
             threadId: event.payload.threadId,
           });
@@ -1230,6 +1236,29 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           });
           return;
         }
+
+        case "thread.queued-message-edited": {
+          const existingMessage = yield* projectionThreadMessageRepository.getByMessageId({
+            messageId: event.payload.messageId,
+          });
+          if (Option.isNone(existingMessage)) {
+            return;
+          }
+          yield* projectionThreadMessageRepository.upsert({
+            ...existingMessage.value,
+            text: event.payload.text,
+            queuedRevision: event.payload.revision,
+            updatedAt: event.payload.updatedAt,
+          });
+          return;
+        }
+
+        case "thread.queued-message-dropped":
+          yield* projectionThreadMessageRepository.deleteByMessageId({
+            messageId: event.payload.messageId,
+          });
+          attachmentSideEffects.prunedThreadRelativePaths.set(event.payload.threadId, new Set());
+          return;
 
         case "thread.reverted": {
           const existingRows = yield* projectionThreadMessageRepository.listByThreadId({
