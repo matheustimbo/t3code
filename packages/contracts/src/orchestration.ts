@@ -1305,9 +1305,6 @@ const ClientThreadTurnStartCommand = Schema.Struct({
   ),
 );
 
-/** Reactor-originated only. The reactor can prove the provider never saw the
-    message, because the compaction branch runs before the send request is
-    built. A client cannot prove that, so this must never join the client union. */
 const ThreadMessageRequeueCommand = Schema.Struct({
   type: Schema.Literal("thread.message.requeue"),
   commandId: CommandId,
@@ -1325,14 +1322,12 @@ const ThreadQueuedMessageCancelCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
-/** Edit is text-only by design: it cannot orphan an attachment, so it needs
-    none of the normalization or cleanup a turn start does. */
 const ThreadQueuedMessageEditCommand = Schema.Struct({
   type: Schema.Literal("thread.queued-message.edit"),
   commandId: CommandId,
   threadId: ThreadId,
   messageId: MessageId,
-  /** Read off the message being edited, never invented by the caller. */
+  /** The revision observed by the caller. The server rejects stale revisions. */
   expectedRevision: NonNegativeInt,
   text: Schema.String,
   createdAt: IsoDateTime,

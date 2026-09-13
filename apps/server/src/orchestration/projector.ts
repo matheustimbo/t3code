@@ -64,6 +64,35 @@ type ThreadPatch = Partial<Omit<OrchestrationThread, "id" | "projectId">>;
 const MAX_THREAD_MESSAGES = 2_000;
 const MAX_THREAD_CHECKPOINTS = 500;
 
+function retainCappedThreadMessages(
+  messages: ReadonlyArray<OrchestrationMessage>,
+): ReadonlyArray<OrchestrationMessage> {
+  if (messages.length <= MAX_THREAD_MESSAGES) return messages;
+
+  const retainedIndexes = new Set<number>();
+  let latestAdoptedUserIndex: number | null = null;
+  let latestAdoptedUserAt: string | null = null;
+  for (const [index, message] of messages.entries()) {
+    if (message.queued === true) {
+      retainedIndexes.add(index);
+    } else if (
+      message.role === "user" &&
+      !isImportedAgentSessionMessageId(message.id) &&
+      (latestAdoptedUserAt === null ||
+        compareDateTimeStrings(message.createdAt, latestAdoptedUserAt) > 0)
+    ) {
+      latestAdoptedUserIndex = index;
+      latestAdoptedUserAt = message.createdAt;
+    }
+  }
+  if (latestAdoptedUserIndex !== null) retainedIndexes.add(latestAdoptedUserIndex);
+
+  for (let index = messages.length - 1; retainedIndexes.size < MAX_THREAD_MESSAGES; index -= 1) {
+    retainedIndexes.add(index);
+  }
+  return messages.filter((_, index) => retainedIndexes.has(index));
+}
+
 // Async questions can stay open while the agent produces more activity.
 // Match the database snapshot's pending-question retention.
 function retainThreadActivities(activities: OrchestrationThread["activities"]) {
@@ -212,7 +241,11 @@ function retainThreadMessagesAfterRevert(
 ): ReadonlyArray<OrchestrationMessage> {
   const retainedMessageIds = new Set<string>();
   for (const message of messages) {
-    if (message.role === "system" || isImportedAgentSessionMessageId(message.id)) {
+    if (
+      message.queued === true ||
+      message.role === "system" ||
+      isImportedAgentSessionMessageId(message.id)
+    ) {
       retainedMessageIds.add(message.id);
       continue;
     }
@@ -224,6 +257,7 @@ function retainThreadMessagesAfterRevert(
   const retainedUserCount = messages.filter(
     (message) =>
       message.role === "user" &&
+      message.queued !== true &&
       !isImportedAgentSessionMessageId(message.id) &&
       retainedMessageIds.has(message.id),
   ).length;
@@ -812,7 +846,7 @@ export function projectEvent(
                 : entry,
             )
           : [...thread.messages, message];
-        const cappedMessages = messages.slice(-MAX_THREAD_MESSAGES);
+        const cappedMessages = retainCappedThreadMessages(messages);
         const existingQueuedMessages = thread.queuedMessages ?? [];
         const existingQueuedMessage = existingQueuedMessages.find(
           (entry) => entry.messageId === payload.messageId,
@@ -999,8 +1033,6 @@ export function projectEvent(
             }
             return message.createdAt;
           }, null);
-          // `thread.messages` is capped at MAX_THREAD_MESSAGES. A queued
-          // message is always among the newest, so this recompute is exact.
           return {
             ...nextBase,
             threads: updateThread(nextBase.threads, payload.threadId, {
@@ -1206,7 +1238,7 @@ export function projectEvent(
             thread.messages,
             retainedTurnIds,
             payload.turnCount,
-          ).slice(-MAX_THREAD_MESSAGES);
+          );
           const proposedPlans = retainThreadProposedPlansAfterRevert(
             thread.proposedPlans,
             retainedTurnIds,
@@ -1230,7 +1262,7 @@ export function projectEvent(
             ...nextBase,
             threads: updateThread(nextBase.threads, payload.threadId, {
               checkpoints,
-              messages,
+              messages: retainCappedThreadMessages(messages),
               proposedPlans,
               activities,
               latestTurn,

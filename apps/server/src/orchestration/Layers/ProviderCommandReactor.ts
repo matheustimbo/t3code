@@ -440,11 +440,6 @@ const make = Effect.gen(function* () {
     }
   });
 
-  /** The compaction pipeline cannot rely on restoreCompaction's session write to
-      trigger the decider's drain: restoreCompaction returns without writing when
-      the thread is stopping, has no session, or is in a status it refuses to
-      overwrite. This runs on every exit path instead, so a queued message either
-      starts or gets told why it did not. */
   const settleCompactionQueue = Effect.fn("settleCompactionQueue")(function* (threadId: ThreadId) {
     const thread = yield* resolveThreadDetail(threadId);
     if (!thread || (thread.queuedMessages ?? []).length === 0) {
@@ -1579,8 +1574,6 @@ const make = Effect.gen(function* () {
           Effect.asVoid,
         );
       }
-      // The queue is cancelled by the caller, not here, so the user reads one
-      // sentence telling them to send again rather than the raw provider cause.
       return appendTurnStartFailure("Context compaction failed", detail).pipe(
         Effect.ensuring(
           restoreCompaction(event.payload.threadId).pipe(

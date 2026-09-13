@@ -501,14 +501,9 @@ export const reconcileProviderSessions = Effect.gen(function* () {
     (yield* providerService.listSessions()).map((session) => session.threadId),
   );
   const { threads } = yield* query.getCommandReadModel();
-  /** A queued message provably never reached the provider, so cancelling it loses
-      nothing but the automatic send. We still do not send it: after a crash the
-      user should decide whether the thing they queued minutes ago is still what
-      they want. The text stays in the timeline to resend. */
   for (const thread of threads) {
     for (const queuedMessage of thread.queuedMessages ?? []) {
       const cancelledAt = DateTime.formatIso(yield* DateTime.now);
-      // Reporting a stranded message must never keep the server from booting.
       yield* orchestrationEngine
         .dispatch({
           type: "thread.queued-message.cancel",

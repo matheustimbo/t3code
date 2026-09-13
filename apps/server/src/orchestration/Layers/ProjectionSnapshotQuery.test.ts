@@ -715,6 +715,67 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         assert.equal(changedContext.value.session?.providerInstanceId, "claude-secondary");
         assert.equal(changedContext.value.session?.lastError, "Starting another session");
       }
+
+      yield* sql`
+        DELETE FROM projection_thread_activities
+        WHERE activity_id = 'activity-malformed-tool'
+      `;
+      yield* sql`
+        INSERT INTO projection_thread_messages (
+          message_id,
+          thread_id,
+          role,
+          text,
+          queued_turn_start_json,
+          queued_revision,
+          is_streaming,
+          created_at,
+          updated_at
+        )
+        VALUES
+          (
+            'queued-first',
+            'thread-1',
+            'user',
+            'First queued prompt',
+            '{"titleSeed":"First queued prompt"}',
+            0,
+            0,
+            '2026-02-24T00:00:11.000Z',
+            '2026-02-24T00:00:10.000Z'
+          ),
+          (
+            'queued-second',
+            'thread-1',
+            'user',
+            'Second queued prompt',
+            '{"titleSeed":"Second queued prompt"}',
+            0,
+            0,
+            '2026-02-24T00:00:10.000Z',
+            '2026-02-24T00:00:11.000Z'
+          )
+      `;
+      const snapshotWithQueue = yield* snapshotQuery.getSnapshot();
+      const commandReadModelWithQueue = yield* snapshotQuery.getCommandReadModel();
+      const threadDetailWithQueue = yield* snapshotQuery.getThreadDetailById(
+        ThreadId.make("thread-1"),
+      );
+      assert.deepEqual(
+        snapshotWithQueue.threads[0]?.queuedMessages?.map((message) => message.messageId),
+        ["queued-first", "queued-second"],
+      );
+      assert.deepEqual(
+        commandReadModelWithQueue.threads[0]?.queuedMessages?.map((message) => message.messageId),
+        ["queued-first", "queued-second"],
+      );
+      assert.equal(threadDetailWithQueue._tag, "Some");
+      if (threadDetailWithQueue._tag === "Some") {
+        assert.deepEqual(
+          threadDetailWithQueue.value.queuedMessages?.map((message) => message.messageId),
+          ["queued-first", "queued-second"],
+        );
+      }
     }),
   );
 

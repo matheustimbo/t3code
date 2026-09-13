@@ -119,11 +119,6 @@ export function isAutoSettlementCandidate(thread: OrchestrationThreadShell, now:
   if (thread.archivedAt !== null || thread.settledOverride !== null) return false;
   if (thread.hasPendingApprovals || thread.hasPendingUserInput) return false;
   if (thread.session?.status === "starting" || thread.session?.status === "running") return false;
-  // A thread holding the user's unsent text is not stale. This is exact, unlike
-  // threadHasQueuedTurnStart below it, which only guesses at the gap between a
-  // send and the turn that adopts it. Auto-settle is a soft skip, so blocking it
-  // indefinitely is safe; manual settle and snooze deliberately keep the bounded
-  // heuristic so the user is never locked out of their own thread.
   if ((thread.queuedMessageCount ?? 0) > 0) return false;
   if (thread.backgroundLiveness != null) return false;
   if (threadHasQueuedTurnStart(thread, now)) return false;

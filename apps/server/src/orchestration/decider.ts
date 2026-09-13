@@ -162,12 +162,6 @@ type PlannedOrchestrationEvent = Omit<OrchestrationEvent, "sequence">;
 
 const MAX_QUEUED_MESSAGES_PER_THREAD = 50;
 
-/** The queue's own depth counts as busy: a second queued send must join the
-    existing queue even if the session momentarily reads idle, or FIFO breaks.
-    The unadopted-turn-start term is not redundant with the session status. A
-    turn start reaches the read model seconds before any session write does,
-    because only the reactor writes `starting` and it does so behind a worker
-    shared by every thread. */
 function threadIsBusyForDelivery(
   thread: Pick<
     OrchestrationThread,
@@ -190,9 +184,6 @@ function threadIsBusyForDelivery(
   );
 }
 
-/** The admission fence is the engine's single serial command fiber, not a lock:
-    this runs against the read model the same fiber just advanced, inside the
-    same transaction, so a message cannot drain between the check and the event. */
 const requireQueuedMessage = Effect.fn("requireQueuedMessage")(function* (
   thread: Pick<OrchestrationThread, "id" | "messages" | "queuedMessages">,
   messageId: QueuedMessageRef["messageId"],
@@ -202,9 +193,6 @@ const requireQueuedMessage = Effect.fn("requireQueuedMessage")(function* (
     (candidate) => candidate.messageId === messageId,
   );
   if (entry === undefined) {
-    // The message row outliving its queue entry means the turn start drained
-    // it, so the text the user wants to change is already the agent's input.
-    // No row at all means another device dropped it, or it never existed here.
     const reason = thread.messages.some((message) => message.id === messageId)
       ? "already-sent"
       : "not-queued";
@@ -224,9 +212,6 @@ const requireQueuedMessage = Effect.fn("requireQueuedMessage")(function* (
   return entry;
 });
 
-/** The oldest queued message's turn start, or null when there is nothing to
-    drain or the thread is busy again. Runs the same payload construction the
-    direct send path uses, so a queued turn and a direct turn cannot disagree. */
 function drainOldestQueuedMessage(
   thread: Pick<
     OrchestrationThread,
@@ -2003,12 +1988,6 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       // as snoozed, without spending the return ticket.
       const isSessionActivity =
         command.session.status === "starting" || command.session.status === "running";
-      /** `interrupted` drains because Stop means "stop this, here is what I said next",
-          and because the same Stop reaches us as `ready` when the provider reports
-          `turn.completed` with an interrupted state instead of `turn.aborted`. Draining
-          only one of the two would make Stop's behavior depend on which event the
-          provider happens to send. `error` and `stopped` do not drain: sending into a
-          broken or exited session produces a second failure, not progress. */
       const drainedTurnStart =
         command.session.status === "ready" || command.session.status === "interrupted"
           ? yield* drainOldestQueuedMessage(

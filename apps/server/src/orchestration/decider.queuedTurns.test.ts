@@ -542,10 +542,6 @@ it.layer(NodeServices.layer)("editing and dropping a queued message", (it) => {
     }),
   );
 
-  // Settle and snooze block while `latestUserMessageAt` sits inside a two-minute
-  // window around the clock the decider reads, so both timestamps come from that
-  // same clock. Fixtures pinned to a calendar date land outside the window and
-  // would settle happily with the recompute deleted.
   it.effect("drops the newest queued message and unblocks settle and snooze", () =>
     Effect.gen(function* () {
       const now = yield* DateTime.now;

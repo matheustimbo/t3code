@@ -245,7 +245,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
         FROM projection_thread_messages
         WHERE thread_id = ${threadId}
           AND queued_turn_start_json IS NOT NULL
-        ORDER BY created_at ASC, rowid ASC
+        ORDER BY rowid ASC
       `,
   });
 

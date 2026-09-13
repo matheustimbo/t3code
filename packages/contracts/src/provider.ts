@@ -34,19 +34,14 @@ const ProviderSessionStatus = Schema.Literals([
 
 /**
  * What a provider does with a message the user sends while one of its turns is
- * already running. Classified by observable delivery, not by whether T3 reuses
- * its own turn id: Cursor, OpenCode and Antigravity all reuse it and call
- * themselves steers in their own code comments, yet only Claude actually
- * reaches the model mid-turn.
+ * already running.
  *
  *   - `steer`: the running turn picks the text up and keeps working.
  *     `ClaudeAdapter.ts` keeps the live turn state and offers the message into
  *     the running SDK prompt queue.
- *   - `provider-queue`: the provider takes the text and starts it as its next
- *     turn. A second native `turn/start` in `CodexSessionRuntime.ts` returns a
- *     queued turn id while `activeTurnId` keeps the old one, and Cursor and
- *     OpenCode each hold every prompt behind a one-permit semaphore
- *     (`AcpSessionRuntime.ts`, `OpenCodeAdapter.ts`).
+ *   - `provider-queue`: the provider accepts the text without cancelling the
+ *     running turn. The provider decides whether it reads the text during the
+ *     current turn or a later turn.
  *   - `interrupt`: delivery cancels the in-flight work first, so whatever the
  *     turn had not finished is lost. `GrokAdapter.ts` cancels the live ACP
  *     prompt; `AntigravityAdapter.ts` cancels its requests and awaits the

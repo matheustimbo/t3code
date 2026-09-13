@@ -726,7 +726,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           created_at AS "createdAt"
         FROM projection_thread_messages
         WHERE queued_turn_start_json IS NOT NULL
-        ORDER BY thread_id ASC, created_at ASC, rowid ASC
+        ORDER BY thread_id ASC, rowid ASC
       `,
   });
 
@@ -1382,7 +1382,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         FROM projection_thread_messages
         WHERE thread_id = ${threadId}
           AND queued_turn_start_json IS NOT NULL
-        ORDER BY created_at ASC, rowid ASC
+        ORDER BY rowid ASC
       `,
   });
 
@@ -1662,14 +1662,6 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
   // turn_id DESC places NULLs exactly where COALESCE-to-'' would, below every
   // real id.) The caller derives the continuation cursor from the oldest
   // returned row.
-  // Highest thread-DETAIL event sequence for this thread that the projection
-  // has applied (bounded by the global snapshot sequence read in the same
-  // transaction). This is the thread-scoped watermark a windowed page carries
-  // so clients can defer merging until their live subscription has caught up;
-  // the global sequence is not waitable per-thread. The filter shares
-  // THREAD_DETAIL_EVENT_TYPES with the subscription that delivers them; see
-  // that constant for why they cannot be allowed to drift. Served by the event
-  // store's (aggregate_kind, stream_id, sequence) index.
   const getThreadEventWatermarkRow = SqlSchema.findOneOption({
     Request: Schema.Struct({ threadId: ThreadId, maxSequence: Schema.Number }),
     Result: Schema.Struct({ threadSequence: Schema.NullOr(Schema.Number) }),

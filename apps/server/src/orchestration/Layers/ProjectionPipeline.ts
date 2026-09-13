@@ -1032,10 +1032,6 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           return;
         }
 
-        // Every one of these changes the queue's depth, and a drop also deletes
-        // the message row `latestUserMessageAt` may be pointing at. The messages
-        // projector runs before this one, so the refresh reads the rows this
-        // event already landed.
         case "thread.turn-start-requested":
         case "thread.message-requeued":
         case "thread.queued-message-cancelled":

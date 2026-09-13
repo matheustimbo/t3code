@@ -21,8 +21,6 @@ export const withInstanceIdentity =
     readonly displayName: string | undefined;
     readonly accentColor: string | undefined;
     readonly continuationGroupKey: string;
-    /** Taken from the driver's adapter, which is the one place that knows it.
-        Required so a new driver cannot ship without declaring the behavior. */
     readonly concurrentSend: ProviderConcurrentSend;
   }) =>
   (snapshot: ServerProviderDraft): ServerProvider => ({
