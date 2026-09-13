@@ -56,8 +56,9 @@ import Migration0041 from "./Migrations/041_AuthSessionClientConnection.ts";
 import Migration0042 from "./Migrations/042_ProjectionThreadLinkedPullRequest.ts";
 import Migration0043 from "./Migrations/043_ProjectionThreadsUnsettledAt.ts";
 // 44 and 45 are the fork's and have already run on released databases, so
-// every upstream migration from 44 up shifts by two rather than the fork
-// renumbering under them.
+// upstream migrations 44 through 50 shift by two. The fork's queued-message
+// migrations already occupy 53 and 54, so upstream's message-context
+// migration is appended as 55.
 import Migration0044 from "./Migrations/044_ProjectionProjectTicketTitles.ts";
 import Migration0045 from "./Migrations/045_ProjectionThreadTitleRevision.ts";
 import Migration0046 from "./Migrations/046_ClearAutomaticProjectModelDefaults.ts";
@@ -69,6 +70,7 @@ import Migration0051 from "./Migrations/051_ProjectionThreadsActiveOrderKey.ts";
 import Migration0052 from "./Migrations/052_ProjectionThreadPullRequests.ts";
 import Migration0053 from "./Migrations/053_ProjectionQueuedMessages.ts";
 import Migration0054 from "./Migrations/054_ProjectionQueuedMessageRevision.ts";
+import Migration0055 from "./Migrations/055_ProjectionThreadMessageContext.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -135,6 +137,7 @@ const migrationEntries = [
   [52, "ProjectionThreadPullRequests", Migration0052],
   [53, "ProjectionQueuedMessages", Migration0053],
   [54, "ProjectionQueuedMessageRevision", Migration0054],
+  [55, "ProjectionThreadMessageContext", Migration0055],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

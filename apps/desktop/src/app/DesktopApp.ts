@@ -1,4 +1,5 @@
 import * as Cause from "effect/Cause";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -141,6 +142,21 @@ const handleFatalStartupError = Effect.fn("desktop.startup.handleFatalStartupErr
 
 const fatalStartupCause = <E>(stage: string, cause: Cause.Cause<E>) =>
   handleFatalStartupError(stage, Cause.pretty(cause)).pipe(Effect.andThen(Effect.failCause(cause)));
+
+export const stopAllPoolInstances = Effect.fn("desktop.app.stopAllPoolInstances")(
+  function* (): Effect.fn.Return<void, never, DesktopBackendPool.DesktopBackendPool> {
+    // Stop every backend this app spawned with a timeout to guarantee the quit
+    // path makes progress even if a backend hangs during teardown. An attached
+    // backend belongs to another process and must survive our window closing.
+    const pool = yield* DesktopBackendPool.DesktopBackendPool;
+    const instances = yield* pool.managed;
+    yield* Effect.forEach(
+      instances,
+      (instance) => instance.stop({ timeout: Duration.seconds(5) }),
+      { concurrency: "unbounded" },
+    );
+  },
+);
 
 const bootstrap = Effect.gen(function* () {
   const pool = yield* DesktopBackendPool.DesktopBackendPool;
@@ -325,20 +341,11 @@ const scopedProgram = Effect.scoped(
     const shutdown = yield* DesktopShutdown.DesktopShutdown;
 
     yield* Effect.addFinalizer(() =>
-      Effect.gen(function* () {
-        const pool = yield* DesktopBackendPool.DesktopBackendPool;
-        // Stop every backend this app spawned, not just the primary. The
-        // electronApp.quit() path can race ahead of the layer-scope
-        // cascade, so leaving the WSL instance for its parent scope
-        // finalizer means it gets hard-killed by the OS instead of
-        // receiving SIGTERM + grace. Stops run concurrently.
-        // An attached backend is excluded: closing our window must not take
-        // down a server that was already serving other clients.
-        const instances = yield* pool.managed;
-        yield* Effect.forEach(instances, (instance) => instance.stop(), {
-          concurrency: "unbounded",
-        });
-      }).pipe(Effect.ensuring(shutdown.markComplete)),
+      // The electronApp.quit() path can race ahead of the layer-scope
+      // cascade, so leaving the WSL instance for its parent scope
+      // finalizer means it gets hard-killed by the OS instead of
+      // receiving SIGTERM + grace.
+      stopAllPoolInstances().pipe(Effect.ensuring(shutdown.markComplete)),
     );
 
     yield* startup;
