@@ -141,6 +141,21 @@ describe("editing a server-queued message", () => {
     expect(editingQueuedTurnMessageId(threadKey)).toBe(first);
   });
 
+  it("cancels the edit without discarding the composer text", async () => {
+    await beginEditQueuedTurnMessage({
+      environmentId,
+      threadId,
+      messageId: first,
+      text: "Queued text",
+    });
+    replaceEditingQueuedTurnMessageDraftText(threadKey, "Keep this draft");
+
+    endEditQueuedTurnMessage(threadKey);
+
+    expect(editingQueuedTurnMessageId(threadKey)).toBe(null);
+    expect(state.draft.text).toBe("Keep this draft");
+  });
+
   it("does not touch the draft for a message that left the queue", async () => {
     seedQueue([]);
     expect(

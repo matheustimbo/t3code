@@ -72,7 +72,10 @@ import {
 } from "../../components/ComposerToolbar";
 import { ControlPillMenu } from "../../components/ControlPill";
 import { ProviderIcon } from "../../components/ProviderIcon";
-import { editingQueuedTurnMessagesAtom } from "../../state/edit-queued-thread-message";
+import {
+  editingQueuedTurnMessagesAtom,
+  endEditQueuedTurnMessage,
+} from "../../state/edit-queued-thread-message";
 import { useSendWhileRunningPreferences } from "../../state/send-while-running-preferences";
 import type {
   DraftComposerAttachment,
@@ -422,6 +425,9 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     ? EDIT_QUEUED_MESSAGE_ACCESSIBLE_LABEL
     : sendLabel;
   const sendButtonLabel = isEditingQueuedMessage ? EDIT_QUEUED_MESSAGE_LABEL : runningSendLabel;
+  const cancelQueuedMessageEdit = useCallback(() => {
+    endEditQueuedTurnMessage(composerOwnerKey);
+  }, [composerOwnerKey]);
   // One option means the provider offers no choice, so there is no menu.
   const deliveryChoice =
     !isEditingQueuedMessage && sendWhileRunning !== null && sendWhileRunning.options.length > 1
@@ -926,13 +932,23 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                   />
                 ) : (
                   <View className="min-w-0 flex-1 flex-row items-center justify-between">
-                    <ComposerAttachmentButton
-                      supportsFiles={Boolean(
-                        props.serverConfig?.environment.capabilities.fileAttachments,
-                      )}
-                      onPickMedia={props.onPickDraftMedia}
-                      onPickFiles={props.onPickDraftFiles}
-                    />
+                    {isEditingQueuedMessage ? (
+                      <ComposerInlineControl
+                        accessibilityLabel="Cancel queued message edit"
+                        icon="xmark"
+                        label="Cancel edit"
+                        onPress={cancelQueuedMessageEdit}
+                        showChevron={false}
+                      />
+                    ) : (
+                      <ComposerAttachmentButton
+                        supportsFiles={Boolean(
+                          props.serverConfig?.environment.capabilities.fileAttachments,
+                        )}
+                        onPickMedia={props.onPickDraftMedia}
+                        onPickFiles={props.onPickDraftFiles}
+                      />
+                    )}
                     <View className="min-w-0 shrink">
                       <ComposerInlineControl
                         accessibilityLabel="Model and reasoning settings"
