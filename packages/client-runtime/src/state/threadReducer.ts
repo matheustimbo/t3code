@@ -447,6 +447,7 @@ export function applyThreadDetailEvent(
                   messageId: event.payload.messageId,
                   queuedTurnStart: event.payload.queuedTurnStart,
                   createdAt: event.payload.createdAt,
+                  revision: 0,
                 },
               ]
           : dropQueuedMessage(existingQueuedMessages, event.payload.messageId);
@@ -540,6 +541,7 @@ export function applyThreadDetailEvent(
               createdAt:
                 thread.messages.find((entry) => entry.id === event.payload.messageId)?.createdAt ??
                 event.payload.updatedAt,
+              revision: 0,
             },
           ];
       return {

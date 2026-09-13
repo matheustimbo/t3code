@@ -632,6 +632,7 @@ describe("applyThreadDetailEvent", () => {
           messageId: MessageId.make("queued-message"),
           queuedTurnStart,
           createdAt: "2026-04-01T06:00:00.000Z",
+          revision: 0,
         },
       ]);
 
