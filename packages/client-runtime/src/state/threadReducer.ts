@@ -105,6 +105,18 @@ function dropQueuedMessage(
     : queuedMessages;
 }
 
+function latestUserMessageAtOf(messages: OrchestrationThread["messages"]): string | null {
+  return messages.reduce<string | null>(
+    (latest, message) =>
+      message.role !== "user" ||
+      isImportedAgentSessionMessageId(message.id) ||
+      (latest !== null && message.createdAt <= latest)
+        ? latest
+        : message.createdAt,
+    null,
+  );
+}
+
 function setMessageQueued(
   messages: OrchestrationThread["messages"],
   messageId: MessageId,
@@ -565,6 +577,44 @@ export function applyThreadDetailEvent(
           updatedAt: event.occurredAt,
         },
       };
+
+    // The revision has to land here as well as the text: the next edit from
+    // this device sends the revision it last saw, and a device still holding
+    // the previous one is refused as stale.
+    case "thread.queued-message-edited":
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          messages: thread.messages.map((entry) =>
+            entry.id === event.payload.messageId
+              ? { ...entry, text: event.payload.text, updatedAt: event.payload.updatedAt }
+              : entry,
+          ),
+          queuedMessages: (thread.queuedMessages ?? []).map((entry) =>
+            entry.messageId === event.payload.messageId
+              ? { ...entry, revision: event.payload.revision }
+              : entry,
+          ),
+          updatedAt: event.occurredAt,
+        },
+      };
+
+    case "thread.queued-message-dropped": {
+      const messages = thread.messages.filter((entry) => entry.id !== event.payload.messageId);
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          messages,
+          queuedMessages: dropQueuedMessage(thread.queuedMessages ?? [], event.payload.messageId),
+          // Mirrors the server projector: this is the one event that can walk
+          // the thread's newest user message backwards.
+          latestUserMessageAt: latestUserMessageAtOf(messages),
+          updatedAt: event.occurredAt,
+        },
+      };
+    }
 
     // ── Session ─────────────────────────────────────────────────────
     case "thread.session-set": {

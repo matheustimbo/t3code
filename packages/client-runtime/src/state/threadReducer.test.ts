@@ -694,6 +694,82 @@ describe("applyThreadDetailEvent", () => {
       }
     });
 
+    it("applies an edit and a drop to a message still waiting its turn", () => {
+      const queuedTurnStart = { titleSeed: "Queued title" };
+      const sent = applyThreadDetailEvent(baseThread, {
+        ...baseEventFields,
+        sequence: 6,
+        occurredAt: "2026-04-01T06:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.message-sent",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          messageId: MessageId.make("queued-message"),
+          role: "user",
+          text: "run the build",
+          turnId: null,
+          streaming: false,
+          queuedTurnStart,
+          createdAt: "2026-04-01T06:00:00.000Z",
+          updatedAt: "2026-04-01T06:00:00.000Z",
+        },
+      });
+      expect(sent.kind).toBe("updated");
+      if (sent.kind !== "updated") return;
+
+      const edited = applyThreadDetailEvent(sent.thread, {
+        ...baseEventFields,
+        sequence: 7,
+        occurredAt: "2026-04-01T06:01:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.queued-message-edited",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          messageId: MessageId.make("queued-message"),
+          text: "run the build and the tests",
+          revision: 1,
+          updatedAt: "2026-04-01T06:01:00.000Z",
+        },
+      });
+      expect(edited.kind).toBe("updated");
+      if (edited.kind !== "updated") return;
+      expect(edited.thread.messages[0]).toMatchObject({
+        text: "run the build and the tests",
+        queued: true,
+        createdAt: "2026-04-01T06:00:00.000Z",
+      });
+      expect(edited.thread.queuedMessages).toEqual([
+        {
+          messageId: MessageId.make("queued-message"),
+          queuedTurnStart,
+          createdAt: "2026-04-01T06:00:00.000Z",
+          revision: 1,
+        },
+      ]);
+      expect(edited.thread.latestUserMessageAt).toBe("2026-04-01T06:00:00.000Z");
+
+      const dropped = applyThreadDetailEvent(edited.thread, {
+        ...baseEventFields,
+        sequence: 8,
+        occurredAt: "2026-04-01T06:02:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.queued-message-dropped",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          messageId: MessageId.make("queued-message"),
+          updatedAt: "2026-04-01T06:02:00.000Z",
+        },
+      });
+      expect(dropped.kind).toBe("updated");
+      if (dropped.kind !== "updated") return;
+      expect(dropped.thread.messages).toEqual([]);
+      expect(dropped.thread.queuedMessages).toEqual([]);
+      expect(dropped.thread.latestUserMessageAt).toBe(null);
+    });
+
     it("keeps imported replies turnless when delivered again", () => {
       const event = {
         ...baseEventFields,

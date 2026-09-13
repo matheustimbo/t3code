@@ -70,6 +70,7 @@ import {
   encodeThreadDetailPageCursor,
 } from "../threadDetailCursor.ts";
 import { projectActivityPayload } from "../ActivityPayloadProjection.ts";
+import { THREAD_DETAIL_EVENT_TYPES } from "../threadDetailEvents.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import { ORCHESTRATION_PROJECTOR_NAMES } from "./ProjectionPipeline.ts";
 import {
@@ -1665,11 +1666,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
   // has applied (bounded by the global snapshot sequence read in the same
   // transaction). This is the thread-scoped watermark a windowed page carries
   // so clients can defer merging until their live subscription has caught up;
-  // the global sequence is not waitable per-thread. The event_type filter
-  // must match ws.ts's isThreadDetailEvent exactly: the subscription only
-  // delivers these types, so a watermark counting any other event could
-  // never be reached by the client and would park the page forever. Served
-  // by the event store's (aggregate_kind, stream_id, sequence) index.
+  // the global sequence is not waitable per-thread. The filter shares
+  // THREAD_DETAIL_EVENT_TYPES with the subscription that delivers them; see
+  // that constant for why they cannot be allowed to drift. Served by the event
+  // store's (aggregate_kind, stream_id, sequence) index.
   const getThreadEventWatermarkRow = SqlSchema.findOneOption({
     Request: Schema.Struct({ threadId: ThreadId, maxSequence: Schema.Number }),
     Result: Schema.Struct({ threadSequence: Schema.NullOr(Schema.Number) }),
@@ -1680,14 +1680,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         WHERE aggregate_kind = 'thread'
           AND stream_id = ${threadId}
           AND sequence <= ${maxSequence}
-          AND event_type IN (
-            'thread.message-sent',
-            'thread.proposed-plan-upserted',
-            'thread.activity-appended',
-            'thread.turn-diff-completed',
-            'thread.reverted',
-            'thread.session-set'
-          )
+          AND ${sql.in("event_type", THREAD_DETAIL_EVENT_TYPES)}
       `,
   });
 
