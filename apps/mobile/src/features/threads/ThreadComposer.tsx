@@ -325,7 +325,9 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   // The outbox label describes real delivery, so it outranks the provider
   // wording whenever the send is not leaving right now.
   const runningSendLabel =
-    outboxSendLabel === "Send" && sendWhileRunning !== null ? sendWhileRunning.label : null;
+    outboxSendLabel === "Send" && sendWhileRunning !== null
+      ? sendWhileRunning.selected.label
+      : null;
   const sendLabel = runningSendLabel ?? outboxSendLabel;
   const currentModelSelection = props.selectedThread.modelSelection;
   const currentRuntimeMode = props.selectedThread.runtimeMode;

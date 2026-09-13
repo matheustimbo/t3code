@@ -299,13 +299,13 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       type="submit"
       className={cn(
         "relative isolate flex size-9 items-center justify-center rounded-full shadow-xs transition-all duration-150 enabled:cursor-pointer enabled:inset-shadow-[0_1px_--theme(--color-white/16%)] hover:scale-105 active:inset-shadow-[0_1px_--theme(--color-black/8%)] active:shadow-none disabled:pointer-events-none disabled:opacity-30 disabled:shadow-none disabled:hover:scale-100 sm:size-8",
-        sendWhileRunning.destructive
+        sendWhileRunning.selected.destructive
           ? "bg-destructive text-white enabled:shadow-destructive/24 hover:bg-destructive/90"
           : "bg-message-action text-message-action-foreground enabled:shadow-message-action/24 hover:bg-message-action-hover",
       )}
       {...pointerFocusProps}
       disabled={sendWhileRunningDisabled}
-      aria-label={blocked ?? sendWhileRunning.label}
+      aria-label={blocked ?? sendWhileRunning.selected.label}
     >
       {sendArrowIcon}
     </button>
@@ -313,10 +313,10 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     <Button
       type="submit"
       size="sm"
-      variant={sendWhileRunning.destructive ? "destructive" : "default"}
+      variant={sendWhileRunning.selected.destructive ? "destructive" : "default"}
       className={cn(
         "h-9 gap-1.5 rounded-full px-3 sm:h-8",
-        sendWhileRunning.destructive
+        sendWhileRunning.selected.destructive
           ? undefined
           : "bg-message-action text-message-action-foreground hover:bg-message-action-hover",
       )}
@@ -324,7 +324,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       disabled={sendWhileRunningDisabled}
       aria-label={blocked ?? undefined}
     >
-      {sendWhileRunning.label}
+      {sendWhileRunning.selected.label}
       {showEnterHint ? (
         <Kbd className="bg-transparent text-current opacity-70">
           <CornerDownLeftIcon aria-hidden="true" />
@@ -340,8 +340,8 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
         <TooltipTrigger render={sendWhileRunningButton} />
         <TooltipPopup side="top">
           {compact
-            ? `${sendWhileRunning.label}. ${blocked ?? sendWhileRunning.description}`
-            : (blocked ?? sendWhileRunning.description)}
+            ? `${sendWhileRunning.selected.label}. ${blocked ?? sendWhileRunning.selected.description}`
+            : (blocked ?? sendWhileRunning.selected.description)}
         </TooltipPopup>
       </Tooltip>
     </>
