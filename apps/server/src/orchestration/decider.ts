@@ -10,6 +10,7 @@ import {
   type OrchestrationEvent,
   type OrchestrationReadModel,
   type OrchestrationThread,
+  type QueuedMessageRef,
   type ThreadPullRequestKey,
   type ThreadPullRequestLink,
   type OrchestrationThreadActivity,
@@ -31,6 +32,7 @@ import type * as PlatformError from "effect/PlatformError";
 
 import {
   OrchestrationCommandInvariantError,
+  OrchestrationQueuedMessageUnavailableError,
   OrchestrationThreadSettleBlockedError,
   type OrchestrationCommandRejection,
 } from "./Errors.ts";
@@ -187,6 +189,40 @@ function threadIsBusyForDelivery(
     )
   );
 }
+
+/** The admission fence is the engine's single serial command fiber, not a lock:
+    this runs against the read model the same fiber just advanced, inside the
+    same transaction, so a message cannot drain between the check and the event. */
+const requireQueuedMessage = Effect.fn("requireQueuedMessage")(function* (
+  thread: Pick<OrchestrationThread, "id" | "messages" | "queuedMessages">,
+  messageId: QueuedMessageRef["messageId"],
+  expectedRevision: QueuedMessageRef["revision"],
+): Effect.fn.Return<QueuedMessageRef, OrchestrationQueuedMessageUnavailableError> {
+  const entry = (thread.queuedMessages ?? []).find(
+    (candidate) => candidate.messageId === messageId,
+  );
+  if (entry === undefined) {
+    // The message row outliving its queue entry means the turn start drained
+    // it, so the text the user wants to change is already the agent's input.
+    // No row at all means another device dropped it, or it never existed here.
+    const reason = thread.messages.some((message) => message.id === messageId)
+      ? "already-sent"
+      : "not-queued";
+    return yield* new OrchestrationQueuedMessageUnavailableError({
+      threadId: thread.id,
+      messageId,
+      reason,
+    });
+  }
+  if (entry.revision !== expectedRevision) {
+    return yield* new OrchestrationQueuedMessageUnavailableError({
+      threadId: thread.id,
+      messageId,
+      reason: "stale-revision",
+    });
+  }
+  return entry;
+});
 
 /** The oldest queued message's turn start, or null when there is nothing to
     drain or the thread is busy again. Runs the same payload construction the
@@ -1859,6 +1895,58 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           threadId: command.threadId,
           messageId: command.messageId,
           updatedAt: hasQueuedMessage ? command.createdAt : thread.updatedAt,
+        },
+      };
+    }
+
+    case "thread.queued-message.edit": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const queuedMessage = yield* requireQueuedMessage(
+        thread,
+        command.messageId,
+        command.expectedRevision,
+      );
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.queued-message-edited",
+        payload: {
+          threadId: command.threadId,
+          messageId: command.messageId,
+          text: command.text,
+          revision: queuedMessage.revision + 1,
+          updatedAt: command.createdAt,
+        },
+      };
+    }
+
+    case "thread.queued-message.drop": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      yield* requireQueuedMessage(thread, command.messageId, command.expectedRevision);
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.queued-message-dropped",
+        payload: {
+          threadId: command.threadId,
+          messageId: command.messageId,
+          updatedAt: command.createdAt,
         },
       };
     }

@@ -56,6 +56,8 @@ import {
   ThreadTurnStartRequestedPayload,
   ThreadMessageRequeuedPayload,
   ThreadQueuedMessageCancelledPayload,
+  ThreadQueuedMessageDroppedPayload,
+  ThreadQueuedMessageEditedPayload,
 } from "./Schemas.ts";
 
 type ThreadPatch = Partial<Omit<OrchestrationThread, "id" | "projectId">>;
@@ -937,6 +939,76 @@ export function projectEvent(
               queuedMessages: (thread.queuedMessages ?? []).filter(
                 (entry) => entry.messageId !== payload.messageId,
               ),
+              updatedAt: event.occurredAt,
+            }),
+          };
+        }),
+      );
+
+    case "thread.queued-message-edited":
+      return decodeForEvent(
+        ThreadQueuedMessageEditedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) {
+            return nextBase;
+          }
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              messages: thread.messages.map((entry) =>
+                entry.id === payload.messageId
+                  ? { ...entry, text: payload.text, updatedAt: payload.updatedAt }
+                  : entry,
+              ),
+              queuedMessages: (thread.queuedMessages ?? []).map((entry) =>
+                entry.messageId === payload.messageId
+                  ? { ...entry, revision: payload.revision }
+                  : entry,
+              ),
+              updatedAt: event.occurredAt,
+            }),
+          };
+        }),
+      );
+
+    case "thread.queued-message-dropped":
+      return decodeForEvent(
+        ThreadQueuedMessageDroppedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) {
+            return nextBase;
+          }
+          const messages = thread.messages.filter((entry) => entry.id !== payload.messageId);
+          const latestUserMessageAt = messages.reduce<string | null>((latest, message) => {
+            if (
+              message.role !== "user" ||
+              isImportedAgentSessionMessageId(message.id) ||
+              (latest !== null && compareDateTimeStrings(message.createdAt, latest) <= 0)
+            ) {
+              return latest;
+            }
+            return message.createdAt;
+          }, null);
+          // `thread.messages` is capped at MAX_THREAD_MESSAGES. A queued
+          // message is always among the newest, so this recompute is exact.
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              messages,
+              queuedMessages: (thread.queuedMessages ?? []).filter(
+                (entry) => entry.messageId !== payload.messageId,
+              ),
+              latestUserMessageAt,
               updatedAt: event.occurredAt,
             }),
           };

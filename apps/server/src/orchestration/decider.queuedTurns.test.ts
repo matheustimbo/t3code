@@ -12,6 +12,7 @@ import {
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
 import { decideOrchestrationCommand } from "./decider.ts";
@@ -353,6 +354,284 @@ it.layer(NodeServices.layer)("queued turn starts", (it) => {
         },
       ]);
       assert.strictEqual(afterSecond.threads[0]?.messages[0]?.queued, true);
+    }),
+  );
+});
+
+function editCommand(input: {
+  readonly commandId: string;
+  readonly messageId: string;
+  readonly text: string;
+  readonly expectedRevision: number;
+}) {
+  return {
+    type: "thread.queued-message.edit" as const,
+    commandId: CommandId.make(input.commandId),
+    threadId: THREAD_ID,
+    messageId: MessageId.make(input.messageId),
+    expectedRevision: input.expectedRevision,
+    text: input.text,
+    createdAt: NOW,
+  } satisfies OrchestrationCommand;
+}
+
+function dropCommand(input: {
+  readonly commandId: string;
+  readonly messageId: string;
+  readonly expectedRevision: number;
+  readonly createdAt?: string;
+}) {
+  return {
+    type: "thread.queued-message.drop" as const,
+    commandId: CommandId.make(input.commandId),
+    threadId: THREAD_ID,
+    messageId: MessageId.make(input.messageId),
+    expectedRevision: input.expectedRevision,
+    createdAt: input.createdAt ?? NOW,
+  } satisfies OrchestrationCommand;
+}
+
+const decideOne = Effect.fn("decideOne")(function* (input: {
+  readonly command: OrchestrationCommand;
+  readonly readModel: OrchestrationReadModel;
+}) {
+  const decided = yield* decideOrchestrationCommand(input);
+  const events = Array.isArray(decided) ? decided : [decided];
+  let next = input.readModel;
+  for (const [index, event] of events.entries()) {
+    next = yield* projectEvent(next, withSequence(event, next.snapshotSequence + index + 1));
+  }
+  return { events, readModel: next };
+});
+
+it.layer(NodeServices.layer)("editing and dropping a queued message", (it) => {
+  it.effect("edits the text in place without moving the message in the queue", () =>
+    Effect.gen(function* () {
+      const { events, readModel } = yield* decideOne({
+        command: editCommand({
+          commandId: "cmd-edit-a",
+          messageId: "message-a",
+          text: "the tests too",
+          expectedRevision: 0,
+        }),
+        readModel: makeReadModel(makeQueuedThread()),
+      });
+
+      assert.deepStrictEqual(
+        events.map((event) => event.type),
+        ["thread.queued-message-edited"],
+      );
+      assert.deepStrictEqual(readModel.threads[0]?.queuedMessages, [
+        {
+          messageId: MessageId.make("message-a"),
+          queuedTurnStart: { titleSeed: "A" },
+          createdAt: "2026-01-01T00:00:01.000Z",
+          revision: 1,
+        },
+        {
+          messageId: MessageId.make("message-b"),
+          queuedTurnStart: { titleSeed: "B" },
+          createdAt: "2026-01-01T00:00:02.000Z",
+          revision: 0,
+        },
+      ]);
+      assert.strictEqual(readModel.threads[0]?.messages[0]?.text, "the tests too");
+      assert.strictEqual(readModel.threads[0]?.messages[0]?.createdAt, "2026-01-01T00:00:01.000Z");
+      assert.strictEqual(readModel.threads[0]?.latestUserMessageAt, "2026-01-01T00:00:02.000Z");
+    }),
+  );
+
+  it.effect("still drains the edited message first when the thread goes idle", () =>
+    Effect.gen(function* () {
+      const edited = yield* decideOne({
+        command: editCommand({
+          commandId: "cmd-edit-then-drain",
+          messageId: "message-a",
+          text: "the tests too",
+          expectedRevision: 0,
+        }),
+        readModel: makeReadModel(makeQueuedThread()),
+      });
+      const drained = yield* decideOne({
+        command: sessionSetCommand("cmd-ready-after-edit", "ready"),
+        readModel: edited.readModel,
+      });
+
+      assert.deepStrictEqual(
+        drained.events.map((event) => event.type),
+        ["thread.session-set", "thread.turn-start-requested"],
+      );
+      const turnStart = drained.events[1];
+      assert.strictEqual(
+        turnStart?.type === "thread.turn-start-requested" ? turnStart.payload.messageId : null,
+        MessageId.make("message-a"),
+      );
+      assert.strictEqual(drained.readModel.threads[0]?.messages[0]?.text, "the tests too");
+      assert.strictEqual(drained.readModel.threads[0]?.messages[0]?.queued, false);
+    }),
+  );
+
+  it.effect("refuses an edit once the queued turn has started", () =>
+    Effect.gen(function* () {
+      const drained = yield* decideOne({
+        command: sessionSetCommand("cmd-ready-before-edit", "ready"),
+        readModel: makeReadModel(makeQueuedThread()),
+      });
+      const rejection = yield* decideOrchestrationCommand({
+        command: editCommand({
+          commandId: "cmd-edit-too-late",
+          messageId: "message-a",
+          text: "too late",
+          expectedRevision: 0,
+        }),
+        readModel: drained.readModel,
+      }).pipe(Effect.flip);
+
+      assert.strictEqual(rejection._tag, "OrchestrationQueuedMessageUnavailableError");
+      assert.strictEqual(
+        rejection._tag === "OrchestrationQueuedMessageUnavailableError" ? rejection.reason : null,
+        "already-sent",
+      );
+    }),
+  );
+
+  it.effect("refuses an edit that carries a revision another device already replaced", () =>
+    Effect.gen(function* () {
+      const edited = yield* decideOne({
+        command: editCommand({
+          commandId: "cmd-edit-first",
+          messageId: "message-a",
+          text: "from the desktop",
+          expectedRevision: 0,
+        }),
+        readModel: makeReadModel(makeQueuedThread()),
+      });
+      const rejection = yield* decideOrchestrationCommand({
+        command: editCommand({
+          commandId: "cmd-edit-stale",
+          messageId: "message-a",
+          text: "from the phone",
+          expectedRevision: 0,
+        }),
+        readModel: edited.readModel,
+      }).pipe(Effect.flip);
+
+      assert.strictEqual(
+        rejection._tag === "OrchestrationQueuedMessageUnavailableError" ? rejection.reason : null,
+        "stale-revision",
+      );
+      assert.strictEqual(edited.readModel.threads[0]?.messages[0]?.text, "from the desktop");
+    }),
+  );
+
+  it.effect("refuses to drop a message the thread never queued", () =>
+    Effect.gen(function* () {
+      const rejection = yield* decideOrchestrationCommand({
+        command: dropCommand({
+          commandId: "cmd-drop-unknown",
+          messageId: "message-never-sent",
+          expectedRevision: 0,
+        }),
+        readModel: makeReadModel(makeQueuedThread()),
+      }).pipe(Effect.flip);
+
+      assert.strictEqual(
+        rejection._tag === "OrchestrationQueuedMessageUnavailableError" ? rejection.reason : null,
+        "not-queued",
+      );
+    }),
+  );
+
+  // Settle and snooze block while `latestUserMessageAt` sits inside a two-minute
+  // window around the clock the decider reads, so both timestamps come from that
+  // same clock. Fixtures pinned to a calendar date land outside the window and
+  // would settle happily with the recompute deleted.
+  it.effect("drops the newest queued message and unblocks settle and snooze", () =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const queuedAt = DateTime.formatIso(now);
+      const previousUserMessageAt = DateTime.formatIso(
+        DateTime.makeUnsafe(DateTime.toEpochMillis(now) - 86_400_000),
+      );
+      const messageId = MessageId.make("message-just-queued");
+      const initial = makeReadModel(
+        makeQueuedThread({
+          session: null,
+          latestUserMessageAt: queuedAt,
+          messages: [
+            makeUserMessage("message-earlier", previousUserMessageAt, false),
+            makeUserMessage(String(messageId), queuedAt),
+          ],
+          queuedMessages: [
+            {
+              messageId,
+              queuedTurnStart: {},
+              createdAt: queuedAt,
+              revision: 0,
+            },
+          ],
+        }),
+      );
+
+      const settleCommand = {
+        type: "thread.settle" as const,
+        commandId: CommandId.make("cmd-settle-before-drop"),
+        threadId: THREAD_ID,
+      } satisfies OrchestrationCommand;
+      const snoozeCommand = {
+        type: "thread.snooze" as const,
+        commandId: CommandId.make("cmd-snooze-before-drop"),
+        threadId: THREAD_ID,
+        snoozedUntil: "2030-01-01T00:00:00.000Z",
+      } satisfies OrchestrationCommand;
+
+      const blockedSettle = yield* decideOrchestrationCommand({
+        command: settleCommand,
+        readModel: initial,
+      }).pipe(Effect.flip);
+      assert.strictEqual(blockedSettle._tag, "OrchestrationThreadSettleBlockedError");
+      const blockedSnooze = yield* decideOrchestrationCommand({
+        command: snoozeCommand,
+        readModel: initial,
+      }).pipe(Effect.flip);
+      assert.strictEqual(blockedSnooze._tag, "OrchestrationCommandInvariantError");
+
+      const dropped = yield* decideOne({
+        command: dropCommand({
+          commandId: "cmd-drop-newest",
+          messageId: String(messageId),
+          expectedRevision: 0,
+          createdAt: queuedAt,
+        }),
+        readModel: initial,
+      });
+      assert.deepStrictEqual(
+        dropped.events.map((event) => event.type),
+        ["thread.queued-message-dropped"],
+      );
+      assert.deepStrictEqual(dropped.readModel.threads[0]?.queuedMessages, []);
+      assert.deepStrictEqual(
+        dropped.readModel.threads[0]?.messages.map((message) => message.id),
+        [MessageId.make("message-earlier")],
+      );
+      assert.strictEqual(dropped.readModel.threads[0]?.latestUserMessageAt, previousUserMessageAt);
+
+      const settled = yield* decideOne({
+        command: { ...settleCommand, commandId: CommandId.make("cmd-settle-after-drop") },
+        readModel: dropped.readModel,
+      });
+      assert.deepStrictEqual(
+        settled.events.map((event) => event.type),
+        ["thread.settled"],
+      );
+      const snoozed = yield* decideOne({
+        command: { ...snoozeCommand, commandId: CommandId.make("cmd-snooze-after-drop") },
+        readModel: dropped.readModel,
+      });
+      assert.deepStrictEqual(
+        snoozed.events.map((event) => event.type),
+        ["thread.snoozed"],
+      );
     }),
   );
 });
