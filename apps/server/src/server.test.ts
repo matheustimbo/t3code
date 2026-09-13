@@ -8456,7 +8456,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 toolCallId: "call-build",
                 status: "completed",
                 title: "Build complete",
-                latestUserMessageAt: null,
                 data: {
                   item: {
                     command: "build",
