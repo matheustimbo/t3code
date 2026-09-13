@@ -16,7 +16,7 @@ import * as Schema from "effect/Schema";
 
 import { decideOrchestrationCommand } from "./decider.ts";
 import { projectEvent } from "./projector.ts";
-import { isThreadDetailEvent } from "../ws.ts";
+import { isThreadDetailEvent } from "./threadDetailEvents.ts";
 
 const decodeCommand = Schema.decodeUnknownEffect(OrchestrationCommand);
 
@@ -80,6 +80,7 @@ function makeReadModel(pullRequests: ReadonlyArray<ThreadPullRequestLink>): Orch
         id: THREAD_ID,
         projectId: ProjectId.make("project-1"),
         title: "Thread",
+        latestUserMessageAt: null,
         modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
         runtimeMode: "full-access",
         interactionMode: "default",

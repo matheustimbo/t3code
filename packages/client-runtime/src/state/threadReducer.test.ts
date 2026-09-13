@@ -32,6 +32,7 @@ const baseThread: OrchestrationThread = {
   branch: null,
   worktreePath: null,
   latestTurn: null,
+  latestUserMessageAt: null,
   createdAt: "2026-04-01T00:00:00.000Z",
   updatedAt: "2026-04-01T00:00:00.000Z",
   archivedAt: null,
@@ -40,6 +41,7 @@ const baseThread: OrchestrationThread = {
   pullRequests: [],
   deletedAt: null,
   messages: [],
+  queuedMessages: [],
   proposedPlans: [],
   activities: [],
   checkpoints: [],
@@ -599,6 +601,173 @@ describe("applyThreadDetailEvent", () => {
         expect(result.thread.messages).toHaveLength(1);
         expect(result.thread.messages[0]?.text).toBe("Hello, world!");
       }
+    });
+
+    it("tracks queued messages and clears them when their turn starts", () => {
+      const queuedTurnStart = { titleSeed: "Queued title" };
+      const sent = applyThreadDetailEvent(baseThread, {
+        ...baseEventFields,
+        sequence: 6,
+        occurredAt: "2026-04-01T06:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.message-sent",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          messageId: MessageId.make("queued-message"),
+          role: "user",
+          text: "queued text",
+          turnId: null,
+          streaming: false,
+          queuedTurnStart,
+          createdAt: "2026-04-01T06:00:00.000Z",
+          updatedAt: "2026-04-01T06:00:00.000Z",
+        },
+      });
+      expect(sent.kind).toBe("updated");
+      if (sent.kind !== "updated") return;
+      expect(sent.thread.messages[0]).toMatchObject({ queued: true, text: "queued text" });
+      expect(sent.thread.queuedMessages).toEqual([
+        {
+          messageId: MessageId.make("queued-message"),
+          queuedTurnStart,
+          createdAt: "2026-04-01T06:00:00.000Z",
+          revision: 0,
+        },
+      ]);
+
+      const requeued = applyThreadDetailEvent(sent.thread, {
+        ...baseEventFields,
+        sequence: 7,
+        occurredAt: "2026-04-01T06:01:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.message-requeued",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          messageId: MessageId.make("queued-message"),
+          queuedTurnStart,
+          updatedAt: "2026-04-01T06:01:00.000Z",
+        },
+      });
+      expect(requeued.kind).toBe("updated");
+      if (requeued.kind !== "updated") return;
+      expect(requeued.thread.queuedMessages).toHaveLength(1);
+
+      const started = applyThreadDetailEvent(requeued.thread, {
+        ...baseEventFields,
+        sequence: 8,
+        occurredAt: "2026-04-01T06:02:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.turn-start-requested",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          messageId: MessageId.make("queued-message"),
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          createdAt: "2026-04-01T06:02:00.000Z",
+        },
+      });
+      expect(started.kind).toBe("updated");
+      if (started.kind !== "updated") return;
+      expect(started.thread.messages[0]?.queued).toBe(false);
+      expect(started.thread.queuedMessages).toEqual([]);
+
+      const canceled = applyThreadDetailEvent(requeued.thread, {
+        ...baseEventFields,
+        sequence: 9,
+        occurredAt: "2026-04-01T06:03:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.queued-message-cancelled",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          messageId: MessageId.make("queued-message"),
+          updatedAt: "2026-04-01T06:03:00.000Z",
+        },
+      });
+      expect(canceled.kind).toBe("updated");
+      if (canceled.kind === "updated") {
+        expect(canceled.thread.messages[0]?.queued).toBe(false);
+        expect(canceled.thread.queuedMessages).toEqual([]);
+      }
+    });
+
+    it("applies an edit and a drop to a message still waiting its turn", () => {
+      const queuedTurnStart = { titleSeed: "Queued title" };
+      const sent = applyThreadDetailEvent(baseThread, {
+        ...baseEventFields,
+        sequence: 6,
+        occurredAt: "2026-04-01T06:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.message-sent",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          messageId: MessageId.make("queued-message"),
+          role: "user",
+          text: "run the build",
+          turnId: null,
+          streaming: false,
+          queuedTurnStart,
+          createdAt: "2026-04-01T06:00:00.000Z",
+          updatedAt: "2026-04-01T06:00:00.000Z",
+        },
+      });
+      expect(sent.kind).toBe("updated");
+      if (sent.kind !== "updated") return;
+
+      const edited = applyThreadDetailEvent(sent.thread, {
+        ...baseEventFields,
+        sequence: 7,
+        occurredAt: "2026-04-01T06:01:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.queued-message-edited",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          messageId: MessageId.make("queued-message"),
+          text: "run the build and the tests",
+          revision: 1,
+          updatedAt: "2026-04-01T06:01:00.000Z",
+        },
+      });
+      expect(edited.kind).toBe("updated");
+      if (edited.kind !== "updated") return;
+      expect(edited.thread.messages[0]).toMatchObject({
+        text: "run the build and the tests",
+        queued: true,
+        createdAt: "2026-04-01T06:00:00.000Z",
+      });
+      expect(edited.thread.queuedMessages).toEqual([
+        {
+          messageId: MessageId.make("queued-message"),
+          queuedTurnStart,
+          createdAt: "2026-04-01T06:00:00.000Z",
+          revision: 1,
+        },
+      ]);
+      expect(edited.thread.latestUserMessageAt).toBe("2026-04-01T06:00:00.000Z");
+
+      const dropped = applyThreadDetailEvent(edited.thread, {
+        ...baseEventFields,
+        sequence: 8,
+        occurredAt: "2026-04-01T06:02:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.queued-message-dropped",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          messageId: MessageId.make("queued-message"),
+          updatedAt: "2026-04-01T06:02:00.000Z",
+        },
+      });
+      expect(dropped.kind).toBe("updated");
+      if (dropped.kind !== "updated") return;
+      expect(dropped.thread.messages).toEqual([]);
+      expect(dropped.thread.queuedMessages).toEqual([]);
+      expect(dropped.thread.latestUserMessageAt).toBe(null);
     });
 
     it("keeps imported replies turnless when delivered again", () => {

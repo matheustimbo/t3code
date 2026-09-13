@@ -178,3 +178,67 @@ describe("projectThreadAwareness", () => {
     });
   });
 });
+
+describe("threads holding queued messages", () => {
+  const readySession = {
+    threadId: "thread-1" as ThreadId,
+    status: "ready",
+    providerName: "Codex",
+    runtimeMode: "full-access",
+    activeTurnId: null,
+    lastError: null,
+    updatedAt: NOW,
+  } satisfies NonNullable<OrchestrationThreadShell["session"]>;
+
+  it("reports a thread whose queue still has work as starting, not finished", () => {
+    expect(
+      projectThreadAwareness({
+        environmentId: "env-1" as EnvironmentId,
+        project,
+        thread: thread({
+          session: readySession,
+          latestTurn: {
+            turnId: "turn-1" as TurnId,
+            state: "completed",
+            requestedAt: NOW,
+            startedAt: NOW,
+            completedAt: NOW,
+            assistantMessageId: null,
+          },
+          queuedMessageCount: 1,
+        }),
+      }),
+    ).toMatchObject({ phase: "starting", headline: "Starting agent" });
+  });
+
+  it("reports the same thread as finished once its queue empties", () => {
+    expect(
+      projectThreadAwareness({
+        environmentId: "env-1" as EnvironmentId,
+        project,
+        thread: thread({
+          session: readySession,
+          latestTurn: {
+            turnId: "turn-1" as TurnId,
+            state: "completed",
+            requestedAt: NOW,
+            startedAt: NOW,
+            completedAt: NOW,
+            assistantMessageId: null,
+          },
+          queuedMessageCount: 0,
+        }),
+      }),
+    ).toMatchObject({ phase: "completed", headline: "Agent finished" });
+  });
+
+  it("keeps a stranded queue out of the starting phase when no session can drain it", () => {
+    expect(
+      projectThreadAwareness({
+        environmentId: "env-1" as EnvironmentId,
+        project,
+        thread: thread({ session: null, queuedMessageCount: 1 }),
+      }),
+    ).toBeNull();
+  });
+});

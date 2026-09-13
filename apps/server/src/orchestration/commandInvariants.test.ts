@@ -51,6 +51,7 @@ const readModel: OrchestrationReadModel = {
       id: ThreadId.make("thread-1"),
       projectId: ProjectId.make("project-a"),
       title: "Thread A",
+      latestUserMessageAt: null,
       modelSelection: {
         instanceId: ProviderInstanceId.make("codex"),
         model: "gpt-5-codex",
@@ -77,6 +78,7 @@ const readModel: OrchestrationReadModel = {
       id: ThreadId.make("thread-2"),
       projectId: ProjectId.make("project-b"),
       title: "Thread B",
+      latestUserMessageAt: null,
       modelSelection: {
         instanceId: ProviderInstanceId.make("codex"),
         model: "gpt-5-codex",

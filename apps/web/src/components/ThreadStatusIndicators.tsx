@@ -1,5 +1,6 @@
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { queuedMessageCountLabel } from "@t3tools/client-runtime/composer/queued-messages";
 import { pullRequestDetailToVcsStatus } from "@t3tools/client-runtime/state/pull-requests";
 import {
   resolveEnvironmentMachineKind,
@@ -14,7 +15,13 @@ import {
   visibleThreadPullRequests,
   type ThreadPullRequestBadge,
 } from "@t3tools/shared/threadPullRequests";
-import { FolderGit2Icon, GitPullRequestArrowIcon, LayersIcon, TerminalIcon } from "lucide-react";
+import {
+  FolderGit2Icon,
+  GitPullRequestArrowIcon,
+  LayersIcon,
+  ListEndIcon,
+  TerminalIcon,
+} from "lucide-react";
 import { useMemo, type MouseEvent } from "react";
 import { buttonVariants, InlineButton } from "./ui/button";
 import { cn } from "../lib/utils";
@@ -477,6 +484,47 @@ export function ThreadStatusLabel({
  * like the command palette. Shows the change request state icon (if present) and the
  * thread status dot, matching the sidebar's leading indicators.
  */
+/**
+ * Messages already handed to T3 Code's own queue, waiting for the running turn
+ * to finish. An additional glyph beside the status, never a replacement for it:
+ * a thread with a queued message is almost always also "Working", and the
+ * status must keep saying so. Renders nothing at a count of zero.
+ */
+export function QueuedMessagesIndicator({
+  threadId,
+  count,
+}: {
+  threadId: string;
+  count: number | undefined;
+}) {
+  const queuedMessageCount = count ?? 0;
+  if (queuedMessageCount === 0) return null;
+  const label = queuedMessageCountLabel(queuedMessageCount);
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            role="img"
+            aria-label={label}
+            data-testid={`sidebar-queued-indicator-${threadId}`}
+            className="inline-flex shrink-0 items-center gap-0.5 text-muted-foreground/70"
+          />
+        }
+      >
+        <ListEndIcon aria-hidden className="size-3 shrink-0" />
+        {queuedMessageCount > 1 ? (
+          <span aria-hidden className="text-[10px] tabular-nums">
+            {queuedMessageCount}
+          </span>
+        ) : null}
+      </TooltipTrigger>
+      <TooltipPopup side="top">{label}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
 export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummary }) {
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
   const lastVisitedAt = useUiStateStore(
@@ -503,7 +551,7 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
     pr === null && supportsMultiplePullRequests
       ? resolveThreadCurrentPullRequestLink(thread.pullRequests)
       : null;
-  if (!prStatus && !threadStatus && !pendingLink) {
+  if (!prStatus && !threadStatus && !pendingLink && (thread.queuedMessageCount ?? 0) === 0) {
     return null;
   }
 
@@ -533,6 +581,7 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
         />
       ) : null}
       {threadStatus ? <ThreadStatusLabel status={threadStatus} /> : null}
+      <QueuedMessagesIndicator threadId={thread.id} count={thread.queuedMessageCount} />
     </span>
   );
 }

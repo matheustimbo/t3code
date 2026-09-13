@@ -119,6 +119,7 @@ export function isAutoSettlementCandidate(thread: OrchestrationThreadShell, now:
   if (thread.archivedAt !== null || thread.settledOverride !== null) return false;
   if (thread.hasPendingApprovals || thread.hasPendingUserInput) return false;
   if (thread.session?.status === "starting" || thread.session?.status === "running") return false;
+  if ((thread.queuedMessageCount ?? 0) > 0) return false;
   if (thread.backgroundLiveness != null) return false;
   if (threadHasQueuedTurnStart(thread, now)) return false;
   if (thread.snoozedUntil == null || Date.parse(thread.snoozedUntil) <= Date.parse(now))

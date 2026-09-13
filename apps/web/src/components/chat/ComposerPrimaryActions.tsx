@@ -1,11 +1,25 @@
 import { memo, type PointerEventHandler } from "react";
-import { ChevronDownIcon, ChevronLeftIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronLeftIcon, CornerDownLeftIcon } from "lucide-react";
+import type {
+  SendWhileRunningAffordance,
+  SendWhileRunningOption,
+} from "@t3tools/client-runtime/composer/send-while-running";
 import { useEnvironmentIdentificationMode } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
 import { StageBackdropButtonArt, useSidebarStageBackdropVariant } from "../SidebarStageBackdrop";
 import { Button } from "../ui/button";
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
+import { Kbd } from "../ui/kbd";
+import {
+  Menu,
+  MenuItem,
+  MenuPopup,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuRadioItemIndicator,
+  MenuTrigger,
+} from "../ui/menu";
 import { Spinner } from "../ui/spinner";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { composerFloatingLayerProps } from "./composerEventScope";
 
 interface PendingActionState {
@@ -29,9 +43,19 @@ interface ComposerPrimaryActionsProps {
   isPreparingWorktree: boolean;
   hasSendableContent: boolean;
   preserveComposerFocusOnPointerDown?: boolean;
-  /** Enter-to-send is disabled on mobile viewports, where stop would otherwise
-   * be the only primary action and a running turn could not be steered. */
-  showSendWhileRunning?: boolean;
+  /** What sending does while the turn runs, named in the user's words. Null
+   * while idle, which keeps the idle composer exactly as it is. */
+  sendWhileRunning?: SendWhileRunningAffordance | null;
+  /** Enter only submits on non-mobile viewports, so the glyph goes on the
+   * button face only where the key actually does something. */
+  showEnterHint?: boolean;
+  /** The primary action saves the queued message being edited instead of
+   * sending, which is also why no delivery choice applies while it is true. */
+  isEditingQueuedMessage?: boolean;
+  /** Remembers the delivery for this behavior class and sends with it, in one
+   * gesture. Pass it wherever `sendWhileRunning` is passed; without it the
+   * delivery menu has nothing to do and stays unrendered. */
+  onSelectSendWhileRunningOption?: (option: SendWhileRunningOption) => void;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
@@ -55,6 +79,18 @@ const formatPendingPrimaryActionLabel = (input: {
   return input.questionIndex > 0 ? "Submit answers" : "Submit answer";
 };
 
+const sendArrowIcon = (
+  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+    <path
+      d="M7 11.5V2.5M7 2.5L3 6.5M7 2.5L11 6.5"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </svg>
+);
+
 const preventPointerFocus: PointerEventHandler<HTMLElement> = (event) => {
   event.preventDefault();
 };
@@ -72,7 +108,10 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   isPreparingWorktree,
   hasSendableContent,
   preserveComposerFocusOnPointerDown = false,
-  showSendWhileRunning = false,
+  sendWhileRunning = null,
+  showEnterHint = false,
+  isEditingQueuedMessage = false,
+  onSelectSendWhileRunningOption,
   onPreviousPendingQuestion,
   onInterrupt,
   onImplementPlanInNewThread,
@@ -93,7 +132,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
         "flex cursor-pointer items-center justify-center rounded-full bg-destructive/90 text-white shadow-xs shadow-destructive/24 inset-shadow-[0_1px_--theme(--color-white/16%)] transition-all duration-150 hover:bg-destructive hover:scale-105 active:inset-shadow-[0_1px_--theme(--color-black/8%)] active:shadow-none",
         insidePendingAction
           ? "size-8 sm:size-7"
-          : showSendWhileRunning && hasSendableContent
+          : sendWhileRunning !== null && hasSendableContent
             ? "size-9 sm:size-8"
             : "size-8 sm:h-8 sm:w-8",
       )}
@@ -159,6 +198,25 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           })}
         </Button>
       </div>
+    );
+  }
+
+  // Ahead of every send branch: while an edit is open the composer is not
+  // sending anything, so no delivery choice can apply to it.
+  if (isEditingQueuedMessage) {
+    return (
+      <Button
+        type="submit"
+        size="sm"
+        className={cn(
+          "rounded-full bg-message-action text-message-action-foreground hover:bg-message-action-hover",
+          compact ? "h-9 px-3 sm:h-8" : "h-9 px-4 sm:h-8",
+        )}
+        {...pointerFocusProps}
+        disabled={isSendBusy || isSendDisabled || isConnecting || isEnvironmentUnavailable}
+      >
+        Save
+      </Button>
     );
   }
 
@@ -258,15 +316,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       {isConnecting || isSendBusy ? (
         <Spinner className="size-3.5" aria-hidden="true" />
       ) : (
-        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-          <path
-            d="M7 11.5V2.5M7 2.5L3 6.5M7 2.5L11 6.5"
-            stroke="currentColor"
-            strokeWidth="1.8"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
+        sendArrowIcon
       )}
     </button>
   );
@@ -275,10 +325,134 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     return sendButton;
   }
 
+  if (sendWhileRunning === null || !hasSendableContent) {
+    return renderStopGenerationButton(false);
+  }
+
+  const blocked = sendWhileRunning.blockedReason;
+  const sendWhileRunningDisabled =
+    blocked !== null || isSendBusy || isSendDisabled || isConnecting || isEnvironmentUnavailable;
+  // One delivery means there is no choice to make, so the control stays the
+  // plain button it has always been rather than growing a menu of one.
+  const deliveryOptions =
+    sendWhileRunning.options.length > 1 && onSelectSendWhileRunningOption
+      ? sendWhileRunning.options
+      : null;
+
+  const sendWhileRunningButton = compact ? (
+    <button
+      type="submit"
+      className={cn(
+        "relative isolate flex size-9 items-center justify-center rounded-full shadow-xs transition-all duration-150 enabled:cursor-pointer enabled:inset-shadow-[0_1px_--theme(--color-white/16%)] hover:scale-105 active:inset-shadow-[0_1px_--theme(--color-black/8%)] active:shadow-none disabled:pointer-events-none disabled:opacity-30 disabled:shadow-none disabled:hover:scale-100 sm:size-8",
+        deliveryOptions ? "rounded-l-full rounded-r-none hover:scale-100" : null,
+        sendWhileRunning.selected.destructive
+          ? "bg-destructive text-white enabled:shadow-destructive/24 hover:bg-destructive/90"
+          : "bg-message-action text-message-action-foreground enabled:shadow-message-action/24 hover:bg-message-action-hover",
+      )}
+      {...pointerFocusProps}
+      disabled={sendWhileRunningDisabled}
+      aria-label={blocked ?? sendWhileRunning.selected.label}
+    >
+      {sendArrowIcon}
+    </button>
+  ) : (
+    <Button
+      type="submit"
+      size="sm"
+      variant={sendWhileRunning.selected.destructive ? "destructive" : "default"}
+      className={cn(
+        "h-9 gap-1.5 rounded-full px-3 sm:h-8",
+        deliveryOptions ? "rounded-l-full rounded-r-none" : null,
+        sendWhileRunning.selected.destructive
+          ? undefined
+          : "bg-message-action text-message-action-foreground hover:bg-message-action-hover",
+      )}
+      {...pointerFocusProps}
+      disabled={sendWhileRunningDisabled}
+      aria-label={blocked ?? undefined}
+    >
+      {sendWhileRunning.selected.label}
+      {showEnterHint ? (
+        <Kbd className="bg-transparent text-current opacity-70">
+          <CornerDownLeftIcon aria-hidden="true" />
+        </Kbd>
+      ) : null}
+    </Button>
+  );
+
+  const sendWhileRunningAction = (
+    <Tooltip>
+      <TooltipTrigger render={sendWhileRunningButton} />
+      <TooltipPopup side="top">
+        {compact
+          ? `${sendWhileRunning.selected.label}. ${blocked ?? sendWhileRunning.selected.description}`
+          : (blocked ?? sendWhileRunning.selected.description)}
+      </TooltipPopup>
+    </Tooltip>
+  );
+
   return (
     <>
       {renderStopGenerationButton(false)}
-      {showSendWhileRunning && hasSendableContent ? sendButton : null}
+      {deliveryOptions && onSelectSendWhileRunningOption ? (
+        <div data-chat-composer-send-while-running-actions="true" className="flex items-center">
+          {sendWhileRunningAction}
+          <Menu>
+            <MenuTrigger
+              render={
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={sendWhileRunning.selected.destructive ? "destructive" : "default"}
+                  className={cn(
+                    "h-9 rounded-l-none rounded-r-full px-2 sm:h-8",
+                    sendWhileRunning.selected.destructive
+                      ? "border-l-white/20"
+                      : "border-l-message-action-foreground/20 bg-message-action text-message-action-foreground hover:bg-message-action-hover",
+                  )}
+                  aria-label="Send options"
+                  {...pointerFocusProps}
+                  disabled={sendWhileRunningDisabled}
+                />
+              }
+            >
+              <ChevronDownIcon className="size-3.5" />
+            </MenuTrigger>
+            <MenuPopup align="end" side="top" className="w-72" {...composerFloatingLayerProps}>
+              {/* Picking an option both remembers it for this behavior class and
+                  sends with it, so the radio marks the remembered choice while
+                  the click carries the send. */}
+              <MenuRadioGroup value={sendWhileRunning.selected.turnDelivery}>
+                {deliveryOptions.map((option) => (
+                  <MenuRadioItem
+                    key={option.turnDelivery}
+                    value={option.turnDelivery}
+                    closeOnClick
+                    disabled={sendWhileRunningDisabled}
+                    className={cn(
+                      "items-start py-1.5",
+                      option.destructive ? "text-destructive-foreground" : null,
+                    )}
+                    onClick={() => onSelectSendWhileRunningOption(option)}
+                  >
+                    <span className="flex min-w-0 flex-col gap-0.5">
+                      <span className="flex min-w-0 items-center gap-2">
+                        <span className="min-w-0 flex-1 truncate font-medium">{option.label}</span>
+                        <MenuRadioItemIndicator />
+                      </span>
+                      <span className="whitespace-normal text-muted-foreground text-xs leading-snug">
+                        {option.description}
+                      </span>
+                    </span>
+                  </MenuRadioItem>
+                ))}
+              </MenuRadioGroup>
+            </MenuPopup>
+          </Menu>
+        </div>
+      ) : (
+        sendWhileRunningAction
+      )}
     </>
   );
 });

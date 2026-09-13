@@ -133,6 +133,8 @@ export const RuntimeMode = Schema.Literals([
 ]);
 export type RuntimeMode = typeof RuntimeMode.Type;
 export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
+export const TurnDelivery = Schema.Literals(["now", "queued"]);
+export type TurnDelivery = typeof TurnDelivery.Type;
 export const ProviderInteractionMode = Schema.Literals(["default", "plan"]);
 export type ProviderInteractionMode = typeof ProviderInteractionMode.Type;
 export const DEFAULT_PROVIDER_INTERACTION_MODE: ProviderInteractionMode = "default";
@@ -493,6 +495,7 @@ export const OrchestrationMessage = Schema.Struct({
   attachments: Schema.optional(Schema.Array(ChatAttachment)),
   turnId: Schema.NullOr(TurnId),
   streaming: Schema.Boolean,
+  queued: Schema.optional(Schema.Boolean),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -518,6 +521,25 @@ const SourceProposedPlanReference = Schema.Struct({
   threadId: ThreadId,
   planId: OrchestrationProposedPlanId,
 });
+
+export const QueuedTurnStart = Schema.Struct({
+  modelSelection: Schema.optional(ModelSelection),
+  titleSeed: Schema.optional(TrimmedNonEmptyString),
+  sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
+});
+export type QueuedTurnStart = typeof QueuedTurnStart.Type;
+
+export const QueuedMessageRef = Schema.Struct({
+  messageId: MessageId,
+  queuedTurnStart: QueuedTurnStart,
+  createdAt: IsoDateTime,
+  /** Bumped by each accepted edit, starting at 0 when the message is queued.
+      An editing client sends the value it read here so a stale device cannot
+      clobber a newer edit made on another device. Defaulted for older servers,
+      which never edit and so are always at 0. */
+  revision: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+});
+export type QueuedMessageRef = typeof QueuedMessageRef.Type;
 
 export const OrchestrationSessionStatus = Schema.Literals([
   "idle",
@@ -715,6 +737,12 @@ export const OrchestrationThread = Schema.Struct({
   ),
   branchPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
+  // Same type as the shell's field, not an optional widening of it, so a thread
+  // still satisfies every shell-shaped Pick the clients sort and group by.
+  // Defaulted rather than required so payloads from older servers still decode.
+  latestUserMessageAt: Schema.NullOr(IsoDateTime).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   archivedAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
@@ -749,6 +777,7 @@ export const OrchestrationThread = Schema.Struct({
   titleRegeneration: Schema.optional(Schema.NullOr(ThreadTitleRegeneration)),
   deletedAt: Schema.NullOr(IsoDateTime),
   messages: Schema.Array(OrchestrationMessage),
+  queuedMessages: Schema.optional(Schema.Array(QueuedMessageRef)),
   proposedPlans: Schema.Array(OrchestrationProposedPlan).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
@@ -826,6 +855,7 @@ export const OrchestrationThreadShell = Schema.Struct({
   hasPendingApprovals: Schema.Boolean,
   hasPendingUserInput: Schema.Boolean,
   hasActionableProposedPlan: Schema.Boolean,
+  queuedMessageCount: Schema.optional(NonNegativeInt),
   /**
    * Native background work alive after the turn settles: "working" while
    * subagents/workflows run, "monitoring" when watch loops are the only
@@ -1233,8 +1263,18 @@ export const ThreadTurnStartCommand = Schema.Struct({
   ),
   bootstrap: Schema.optional(ThreadTurnStartBootstrap),
   sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
+  /** Absent means "now". Optional so every existing caller and every older client
+      keeps compiling and decoding unchanged. */
+  delivery: Schema.optional(TurnDelivery),
   createdAt: IsoDateTime,
-});
+}).check(
+  Schema.makeFilter(
+    (input) =>
+      input.delivery !== "queued" ||
+      input.bootstrap === undefined ||
+      "a queued send cannot bootstrap a thread",
+  ),
+);
 
 const ClientThreadTurnStartCommand = Schema.Struct({
   type: Schema.Literal("thread.turn.start"),
@@ -1252,6 +1292,60 @@ const ClientThreadTurnStartCommand = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   bootstrap: Schema.optional(ThreadTurnStartBootstrap),
   sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
+  /** Absent means "now". Optional so every existing caller and every older client
+      keeps compiling and decoding unchanged. */
+  delivery: Schema.optional(TurnDelivery),
+  createdAt: IsoDateTime,
+}).check(
+  Schema.makeFilter(
+    (input) =>
+      input.delivery !== "queued" ||
+      input.bootstrap === undefined ||
+      "a queued send cannot bootstrap a thread",
+  ),
+);
+
+const ThreadMessageRequeueCommand = Schema.Struct({
+  type: Schema.Literal("thread.message.requeue"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  messageId: MessageId,
+  queuedTurnStart: QueuedTurnStart,
+  createdAt: IsoDateTime,
+});
+
+const ThreadQueuedMessageCancelCommand = Schema.Struct({
+  type: Schema.Literal("thread.queued-message.cancel"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  messageId: MessageId,
+  createdAt: IsoDateTime,
+});
+
+const ThreadQueuedMessageEditCommand = Schema.Struct({
+  type: Schema.Literal("thread.queued-message.edit"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  messageId: MessageId,
+  /** The revision observed by the caller. The server rejects stale revisions. */
+  expectedRevision: NonNegativeInt,
+  text: Schema.String,
+  createdAt: IsoDateTime,
+});
+
+const ThreadQueuedMessageDropCommand = Schema.Struct({
+  type: Schema.Literal("thread.queued-message.drop"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  messageId: MessageId,
+  expectedRevision: NonNegativeInt,
+  createdAt: IsoDateTime,
+});
+
+const ThreadQueueDrainCommand = Schema.Struct({
+  type: Schema.Literal("thread.queue.drain"),
+  commandId: CommandId,
+  threadId: ThreadId,
   createdAt: IsoDateTime,
 });
 
@@ -1343,6 +1437,11 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadRuntimeModeSetCommand,
   ThreadInteractionModeSetCommand,
   ThreadTurnStartCommand,
+  ThreadMessageRequeueCommand,
+  ThreadQueuedMessageCancelCommand,
+  ThreadQueuedMessageEditCommand,
+  ThreadQueuedMessageDropCommand,
+  ThreadQueueDrainCommand,
   ThreadTurnInterruptCommand,
   ThreadApprovalRespondCommand,
   ThreadUserInputRespondCommand,
@@ -1376,6 +1475,8 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadRuntimeModeSetCommand,
   ThreadInteractionModeSetCommand,
   ClientThreadTurnStartCommand,
+  ThreadQueuedMessageEditCommand,
+  ThreadQueuedMessageDropCommand,
   ThreadTurnInterruptCommand,
   ThreadApprovalRespondCommand,
   ThreadUserInputRespondCommand,
@@ -1545,6 +1646,10 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.runtime-mode-set",
   "thread.interaction-mode-set",
   "thread.message-sent",
+  "thread.message-requeued",
+  "thread.queued-message-cancelled",
+  "thread.queued-message-edited",
+  "thread.queued-message-dropped",
   "thread.turn-start-requested",
   "thread.turn-interrupt-requested",
   "thread.approval-response-requested",
@@ -1746,9 +1851,46 @@ export const ThreadMessageSentPayload = Schema.Struct({
   attachments: Schema.optional(Schema.Array(ChatAttachment)),
   turnId: Schema.NullOr(TurnId),
   streaming: Schema.Boolean,
+  queuedTurnStart: Schema.optional(QueuedTurnStart),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
+
+export const ThreadMessageRequeuedPayload = Schema.Struct({
+  threadId: ThreadId,
+  messageId: MessageId,
+  queuedTurnStart: QueuedTurnStart,
+  updatedAt: IsoDateTime,
+});
+
+// Cancel is server-internal: it removes the queue entry but keeps the message
+// row for resend. Drop is client-originated and deletes the message row.
+export const ThreadQueuedMessageCancelledPayload = Schema.Struct({
+  threadId: ThreadId,
+  messageId: MessageId,
+  updatedAt: IsoDateTime,
+});
+
+export const ThreadQueuedMessageEditedPayload = Schema.Struct({
+  threadId: ThreadId,
+  messageId: MessageId,
+  text: Schema.String,
+  revision: NonNegativeInt,
+  updatedAt: IsoDateTime,
+});
+
+export const ThreadQueuedMessageDroppedPayload = Schema.Struct({
+  threadId: ThreadId,
+  messageId: MessageId,
+  updatedAt: IsoDateTime,
+});
+
+export const QueuedMessageUnavailableReason = Schema.Literals([
+  "already-sent",
+  "not-queued",
+  "stale-revision",
+]);
+export type QueuedMessageUnavailableReason = typeof QueuedMessageUnavailableReason.Type;
 
 export const ThreadTurnStartRequestedPayload = Schema.Struct({
   threadId: ThreadId,
@@ -1967,6 +2109,26 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.message-sent"),
     payload: ThreadMessageSentPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.message-requeued"),
+    payload: ThreadMessageRequeuedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.queued-message-cancelled"),
+    payload: ThreadQueuedMessageCancelledPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.queued-message-edited"),
+    payload: ThreadQueuedMessageEditedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.queued-message-dropped"),
+    payload: ThreadQueuedMessageDroppedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,
@@ -2249,6 +2411,7 @@ export class OrchestrationDispatchCommandError extends Schema.TaggedError<Orches
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect()),
     bootstrapThreadDisposition: Schema.optional(Schema.Literal("deleted")),
+    queuedMessageUnavailableReason: Schema.optional(QueuedMessageUnavailableReason),
   },
 ) {}
 

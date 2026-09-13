@@ -13,6 +13,7 @@ import {
   OrchestrationShellSnapshot,
   OrchestrationThread,
   OrchestrationThreadDetailSnapshot,
+  QueuedTurnStart,
   ProjectScript,
   ProjectIconOverride,
   TicketProviderBindings,
@@ -27,6 +28,7 @@ import {
   type OrchestrationSession,
   type OrchestrationThreadActivity,
   type OrchestrationThreadShell,
+  type QueuedMessageRef,
   ModelSelection,
   ProjectId,
   ThreadLinkedPullRequest,
@@ -68,6 +70,7 @@ import {
   encodeThreadDetailPageCursor,
 } from "../threadDetailCursor.ts";
 import { projectActivityPayload } from "../ActivityPayloadProjection.ts";
+import { THREAD_DETAIL_EVENT_TYPES } from "../threadDetailEvents.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import { ORCHESTRATION_PROJECTOR_NAMES } from "./ProjectionPipeline.ts";
 import {
@@ -115,8 +118,17 @@ const ProjectionThreadMessageDbRowSchema = ProjectionThreadMessage.mapFields(
   Struct.assign({
     isStreaming: Schema.Number,
     attachments: Schema.NullOr(Schema.fromJsonString(Schema.Array(ChatAttachment))),
+    queuedTurnStart: Schema.NullOr(Schema.fromJsonString(QueuedTurnStart)),
+    queuedRevision: Schema.Number,
   }),
 );
+const ProjectionQueuedMessageDbRowSchema = Schema.Struct({
+  threadId: ThreadId,
+  messageId: MessageId,
+  queuedTurnStart: Schema.fromJsonString(QueuedTurnStart),
+  queuedRevision: Schema.Number,
+  createdAt: IsoDateTime,
+});
 const ProjectionTurnStartMessageDbRowSchema = ProjectionThreadMessageDbRowSchema.mapFields(
   Struct.assign({ hasOtherUserMessages: Schema.Number }),
 );
@@ -584,6 +596,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
+          queued_message_count AS "queuedMessageCount",
           deleted_at AS "deletedAt"
         FROM projection_threads
         ORDER BY created_at ASC, thread_id ASC
@@ -625,6 +638,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
+          queued_message_count AS "queuedMessageCount",
           deleted_at AS "deletedAt"
         FROM projection_threads
         WHERE deleted_at IS NULL
@@ -668,6 +682,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
+          queued_message_count AS "queuedMessageCount",
           deleted_at AS "deletedAt"
         FROM projection_threads
         WHERE deleted_at IS NULL
@@ -688,11 +703,30 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           role,
           text,
           attachments_json AS "attachments",
+          queued_turn_start_json AS "queuedTurnStart",
+          queued_revision AS "queuedRevision",
           is_streaming AS "isStreaming",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
         FROM projection_thread_messages
         ORDER BY thread_id ASC, created_at ASC, message_id ASC
+      `,
+  });
+
+  const listQueuedMessageRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: ProjectionQueuedMessageDbRowSchema,
+    execute: () =>
+      sql`
+        SELECT
+          thread_id AS "threadId",
+          message_id AS "messageId",
+          queued_turn_start_json AS "queuedTurnStart",
+          queued_revision AS "queuedRevision",
+          created_at AS "createdAt"
+        FROM projection_thread_messages
+        WHERE queued_turn_start_json IS NOT NULL
+        ORDER BY thread_id ASC, rowid ASC
       `,
   });
 
@@ -1232,6 +1266,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
+          queued_message_count AS "queuedMessageCount",
           deleted_at AS "deletedAt"
         FROM projection_threads
         WHERE thread_id = ${threadId}
@@ -1288,6 +1323,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         role,
         text,
         attachments_json AS "attachments",
+        queued_turn_start_json AS "queuedTurnStart",
+        queued_revision AS "queuedRevision",
         is_streaming AS "isStreaming",
         created_at AS "createdAt",
         updated_at AS "updatedAt",
@@ -1320,12 +1357,32 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           role,
           text,
           attachments_json AS "attachments",
+          queued_turn_start_json AS "queuedTurnStart",
+          queued_revision AS "queuedRevision",
           is_streaming AS "isStreaming",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
         FROM projection_thread_messages
         WHERE thread_id = ${threadId}
         ORDER BY created_at ASC, message_id ASC
+      `,
+  });
+
+  const listQueuedMessageRowsByThread = SqlSchema.findAll({
+    Request: ThreadIdLookupInput,
+    Result: ProjectionQueuedMessageDbRowSchema,
+    execute: ({ threadId }) =>
+      sql`
+        SELECT
+          thread_id AS "threadId",
+          message_id AS "messageId",
+          queued_turn_start_json AS "queuedTurnStart",
+          queued_revision AS "queuedRevision",
+          created_at AS "createdAt"
+        FROM projection_thread_messages
+        WHERE thread_id = ${threadId}
+          AND queued_turn_start_json IS NOT NULL
+        ORDER BY rowid ASC
       `,
   });
 
@@ -1605,15 +1662,6 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
   // turn_id DESC places NULLs exactly where COALESCE-to-'' would, below every
   // real id.) The caller derives the continuation cursor from the oldest
   // returned row.
-  // Highest thread-DETAIL event sequence for this thread that the projection
-  // has applied (bounded by the global snapshot sequence read in the same
-  // transaction). This is the thread-scoped watermark a windowed page carries
-  // so clients can defer merging until their live subscription has caught up;
-  // the global sequence is not waitable per-thread. The event_type filter
-  // must match ws.ts's isThreadDetailEvent exactly: the subscription only
-  // delivers these types, so a watermark counting any other event could
-  // never be reached by the client and would park the page forever. Served
-  // by the event store's (aggregate_kind, stream_id, sequence) index.
   const getThreadEventWatermarkRow = SqlSchema.findOneOption({
     Request: Schema.Struct({ threadId: ThreadId, maxSequence: Schema.Number }),
     Result: Schema.Struct({ threadSequence: Schema.NullOr(Schema.Number) }),
@@ -1624,14 +1672,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         WHERE aggregate_kind = 'thread'
           AND stream_id = ${threadId}
           AND sequence <= ${maxSequence}
-          AND event_type IN (
-            'thread.message-sent',
-            'thread.proposed-plan-upserted',
-            'thread.activity-appended',
-            'thread.turn-diff-completed',
-            'thread.reverted',
-            'thread.session-set'
-          )
+          AND ${sql.in("event_type", THREAD_DETAIL_EVENT_TYPES)}
       `,
   });
 
@@ -1698,6 +1739,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           role,
           text,
           attachments_json AS "attachments",
+          queued_turn_start_json AS "queuedTurnStart",
+          queued_revision AS "queuedRevision",
           is_streaming AS "isStreaming",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
@@ -2006,6 +2049,14 @@ pending_approval_requests AS (
               ),
             ),
           ),
+          listQueuedMessageRows(undefined).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getSnapshot:listQueuedMessages:query",
+                "ProjectionSnapshotQuery.getSnapshot:listQueuedMessages:decodeRows",
+              ),
+            ),
+          ),
           listThreadProposedPlanRows(undefined).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
@@ -2070,6 +2121,7 @@ pending_approval_requests AS (
             projectRows,
             threadRows,
             messageRows,
+            queuedMessageRows,
             proposedPlanRows,
             pullRequestRows,
             activityRows,
@@ -2080,6 +2132,7 @@ pending_approval_requests AS (
           ]) =>
             Effect.gen(function* () {
               const messagesByThread = new Map<string, Array<OrchestrationMessage>>();
+              const queuedMessagesByThread = new Map<string, Array<QueuedMessageRef>>();
               const proposedPlansByThread = new Map<string, Array<OrchestrationProposedPlan>>();
               const pullRequestsByThread = groupPullRequestRowsByThread(pullRequestRows);
               const activitiesByThread = new Map<string, Array<OrchestrationThreadActivity>>();
@@ -2109,10 +2162,22 @@ pending_approval_requests AS (
                   ...(row.attachments !== null ? { attachments: row.attachments } : {}),
                   turnId: row.turnId,
                   streaming: row.isStreaming === 1,
+                  queued: row.queuedTurnStart !== null,
                   createdAt: row.createdAt,
                   updatedAt: row.updatedAt,
                 });
                 messagesByThread.set(row.threadId, threadMessages);
+              }
+
+              for (const row of queuedMessageRows) {
+                const queuedMessages = queuedMessagesByThread.get(row.threadId) ?? [];
+                queuedMessages.push({
+                  messageId: row.messageId,
+                  queuedTurnStart: row.queuedTurnStart,
+                  revision: row.queuedRevision,
+                  createdAt: row.createdAt,
+                });
+                queuedMessagesByThread.set(row.threadId, queuedMessages);
               }
 
               for (const row of proposedPlanRows) {
@@ -2253,6 +2318,7 @@ pending_approval_requests AS (
                 ),
                 branchPullRequest: row.branchPullRequest,
                 latestTurn: latestTurnByThread.get(row.threadId) ?? null,
+                latestUserMessageAt: row.latestUserMessageAt,
                 createdAt: row.createdAt,
                 updatedAt: row.updatedAt,
                 archivedAt: row.archivedAt,
@@ -2267,6 +2333,7 @@ pending_approval_requests AS (
                 titleRegeneration: mapTitleRegeneration(row),
                 deletedAt: row.deletedAt,
                 messages: messagesByThread.get(row.threadId) ?? [],
+                queuedMessages: queuedMessagesByThread.get(row.threadId) ?? [],
                 proposedPlans: proposedPlansByThread.get(row.threadId) ?? [],
                 activities: activitiesByThread.get(row.threadId) ?? [],
                 checkpoints: checkpointsByThread.get(row.threadId) ?? [],
@@ -2312,6 +2379,14 @@ pending_approval_requests AS (
               toPersistenceSqlOrDecodeError(
                 "ProjectionSnapshotQuery.getCommandReadModel:listThreads:query",
                 "ProjectionSnapshotQuery.getCommandReadModel:listThreads:decodeRows",
+              ),
+            ),
+          ),
+          listQueuedMessageRows(undefined).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getCommandReadModel:listQueuedMessages:query",
+                "ProjectionSnapshotQuery.getCommandReadModel:listQueuedMessages:decodeRows",
               ),
             ),
           ),
@@ -2362,6 +2437,7 @@ pending_approval_requests AS (
           ([
             projectRows,
             threadRows,
+            queuedMessageRows,
             proposedPlanRows,
             pullRequestRows,
             sessionRows,
@@ -2457,6 +2533,7 @@ pending_approval_requests AS (
                 latestTurnByThread.set(row.threadId, mapLatestTurn(row));
               }
               const proposedPlansByThread = new Map<string, Array<OrchestrationProposedPlan>>();
+              const queuedMessagesByThread = new Map<string, Array<QueuedMessageRef>>();
               const pullRequestsByThread = groupPullRequestRowsByThread(pullRequestRows);
               const sessionByThread = new Map<string, OrchestrationSession>();
 
@@ -2476,6 +2553,21 @@ pending_approval_requests AS (
                 const threadProposedPlans = proposedPlansByThread.get(row.threadId) ?? [];
                 threadProposedPlans.push(mapProposedPlanRow(row));
                 proposedPlansByThread.set(row.threadId, threadProposedPlans);
+              }
+
+              for (let index = 0; index < queuedMessageRows.length; index += 1) {
+                const row = queuedMessageRows[index];
+                if (!row) {
+                  continue;
+                }
+                const threadQueuedMessages = queuedMessagesByThread.get(row.threadId) ?? [];
+                threadQueuedMessages.push({
+                  messageId: row.messageId,
+                  queuedTurnStart: row.queuedTurnStart,
+                  revision: row.queuedRevision,
+                  createdAt: row.createdAt,
+                });
+                queuedMessagesByThread.set(row.threadId, threadQueuedMessages);
               }
 
               for (let index = 0; index < threadRows.length; index += 1) {
@@ -2500,6 +2592,7 @@ pending_approval_requests AS (
                   ),
                   branchPullRequest: row.branchPullRequest,
                   latestTurn: latestTurnByThread.get(row.threadId) ?? null,
+                  latestUserMessageAt: row.latestUserMessageAt,
                   createdAt: row.createdAt,
                   updatedAt: row.updatedAt,
                   archivedAt: row.archivedAt,
@@ -2514,6 +2607,7 @@ pending_approval_requests AS (
                   titleRegeneration: mapTitleRegeneration(row),
                   deletedAt: row.deletedAt,
                   messages: [],
+                  queuedMessages: queuedMessagesByThread.get(row.threadId) ?? [],
                   proposedPlans: proposedPlansByThread.get(row.threadId) ?? [],
                   activities: [],
                   checkpoints: [],
@@ -2673,6 +2767,7 @@ pending_approval_requests AS (
                         hasPendingApprovals: row.pendingApprovalCount > 0,
                         hasPendingUserInput: row.pendingUserInputCount > 0,
                         hasActionableProposedPlan: row.hasActionableProposedPlan > 0,
+                        queuedMessageCount: row.queuedMessageCount,
                         backgroundLiveness: threadBackgroundLiveness.getThreadBackgroundLiveness(
                           row.threadId,
                         ),
@@ -2836,6 +2931,7 @@ pending_approval_requests AS (
                   hasPendingApprovals: row.pendingApprovalCount > 0,
                   hasPendingUserInput: row.pendingUserInputCount > 0,
                   hasActionableProposedPlan: row.hasActionableProposedPlan > 0,
+                  queuedMessageCount: row.queuedMessageCount,
                   backgroundLiveness: threadBackgroundLiveness.getThreadBackgroundLiveness(
                     row.threadId,
                   ),
@@ -3175,6 +3271,7 @@ pending_approval_requests AS (
         hasPendingApprovals: threadRow.value.pendingApprovalCount > 0,
         hasPendingUserInput: threadRow.value.pendingUserInputCount > 0,
         hasActionableProposedPlan: threadRow.value.hasActionableProposedPlan > 0,
+        queuedMessageCount: threadRow.value.queuedMessageCount,
         backgroundLiveness: threadBackgroundLiveness.getThreadBackgroundLiveness(
           threadRow.value.threadId,
         ),
@@ -3218,6 +3315,7 @@ pending_approval_requests AS (
         text: row.text,
         turnId: row.turnId,
         streaming: row.isStreaming === 1,
+        queued: row.queuedTurnStart !== null,
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
         ...(row.attachments !== null ? { attachments: row.attachments } : {}),
@@ -3364,6 +3462,7 @@ pending_approval_requests AS (
       const [
         threadRow,
         messageRows,
+        queuedMessageRows,
         proposedPlanRows,
         pullRequestRows,
         activities,
@@ -3387,6 +3486,14 @@ pending_approval_requests AS (
             toPersistenceSqlOrDecodeError(
               "ProjectionSnapshotQuery.getThreadDetailById:listMessages:query",
               "ProjectionSnapshotQuery.getThreadDetailById:listMessages:decodeRows",
+            ),
+          ),
+        ),
+        listQueuedMessageRowsByThread({ threadId }).pipe(
+          Effect.mapError(
+            toPersistenceSqlOrDecodeError(
+              "ProjectionSnapshotQuery.getThreadDetailById:listQueuedMessages:query",
+              "ProjectionSnapshotQuery.getThreadDetailById:listQueuedMessages:decodeRows",
             ),
           ),
         ),
@@ -3457,6 +3564,7 @@ pending_approval_requests AS (
         ),
         branchPullRequest: threadRow.value.branchPullRequest,
         latestTurn: Option.isSome(latestTurnRow) ? mapLatestTurn(latestTurnRow.value) : null,
+        latestUserMessageAt: threadRow.value.latestUserMessageAt,
         createdAt: threadRow.value.createdAt,
         updatedAt: threadRow.value.updatedAt,
         archivedAt: threadRow.value.archivedAt,
@@ -3477,6 +3585,7 @@ pending_approval_requests AS (
             text: row.text,
             turnId: row.turnId,
             streaming: row.isStreaming === 1,
+            queued: row.queuedTurnStart !== null,
             createdAt: row.createdAt,
             updatedAt: row.updatedAt,
           };
@@ -3485,6 +3594,12 @@ pending_approval_requests AS (
           }
           return message;
         }),
+        queuedMessages: queuedMessageRows.map((row) => ({
+          messageId: row.messageId,
+          queuedTurnStart: row.queuedTurnStart,
+          revision: row.queuedRevision,
+          createdAt: row.createdAt,
+        })),
         proposedPlans: proposedPlanRows.map(mapProposedPlanRow),
         activities,
         checkpoints: checkpointRows.map((row) => ({

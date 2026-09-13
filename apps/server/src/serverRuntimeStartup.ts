@@ -3,6 +3,7 @@ import {
   DEFAULT_MODEL,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_SERVER_SETTINGS,
+  EventId,
   type ServerSettings as ServerSettingsValue,
   type ModelSelection,
   type OrchestrationProjectShell,
@@ -500,6 +501,40 @@ export const reconcileProviderSessions = Effect.gen(function* () {
     (yield* providerService.listSessions()).map((session) => session.threadId),
   );
   const { threads } = yield* query.getCommandReadModel();
+  for (const thread of threads) {
+    for (const queuedMessage of thread.queuedMessages ?? []) {
+      const cancelledAt = DateTime.formatIso(yield* DateTime.now);
+      yield* orchestrationEngine
+        .dispatch({
+          type: "thread.queued-message.cancel",
+          commandId: CommandId.make(yield* crypto.randomUUIDv4),
+          threadId: thread.id,
+          messageId: queuedMessage.messageId,
+          createdAt: cancelledAt,
+        })
+        .pipe(Effect.ignore({ log: true, message: "failed to cancel a restart-stranded message" }));
+      yield* orchestrationEngine
+        .dispatch({
+          type: "thread.activity.append",
+          commandId: CommandId.make(yield* crypto.randomUUIDv4),
+          threadId: thread.id,
+          activity: {
+            id: EventId.make(yield* crypto.randomUUIDv4),
+            tone: "error",
+            kind: "provider.turn.start.failed",
+            summary: "Queued message was not sent",
+            payload: {
+              requestId: queuedMessage.messageId,
+              detail: "T3 Code restarted before this message was sent. Send it again to continue.",
+            },
+            turnId: null,
+            createdAt: cancelledAt,
+          },
+          createdAt: cancelledAt,
+        })
+        .pipe(Effect.ignore({ log: true, message: "failed to report a restart-stranded message" }));
+    }
+  }
   // Provider startup can report ready before the continuation is submitted.
   // Find those markers in one read rather than querying every idle thread.
   const preparedThreadIds = new Set(

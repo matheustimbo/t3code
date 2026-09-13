@@ -26,7 +26,7 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { makeCursorTextGeneration } from "../../textGeneration/CursorTextGeneration.ts";
 import { ProviderDriverError } from "../Errors.ts";
-import { makeCursorAdapter } from "../Layers/CursorAdapter.ts";
+import { CURSOR_CONCURRENT_SEND, makeCursorAdapter } from "../Layers/CursorAdapter.ts";
 import {
   buildInitialCursorProviderSnapshot,
   checkCursorProviderStatus,
@@ -121,6 +121,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         displayName,
         accentColor,
         continuationGroupKey: continuationIdentity.continuationKey,
+        concurrentSend: CURSOR_CONCURRENT_SEND,
       });
       const effectiveConfig = { ...config, enabled } satisfies CursorSettings;
       const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(

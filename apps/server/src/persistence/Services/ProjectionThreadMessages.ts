@@ -9,7 +9,9 @@
 import {
   ChatAttachment,
   MessageId,
+  NonNegativeInt,
   OrchestrationMessageRole,
+  QueuedTurnStart,
   ThreadId,
   TurnId,
   IsoDateTime,
@@ -29,6 +31,8 @@ export const ProjectionThreadMessage = Schema.Struct({
   role: OrchestrationMessageRole,
   text: Schema.String,
   attachments: Schema.optional(Schema.Array(ChatAttachment)),
+  queuedTurnStart: Schema.NullOr(QueuedTurnStart),
+  queuedRevision: NonNegativeInt,
   isStreaming: Schema.Boolean,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -63,6 +67,9 @@ export const DeleteProjectionThreadMessagesInput = Schema.Struct({
   threadId: ThreadId,
 });
 export type DeleteProjectionThreadMessagesInput = typeof DeleteProjectionThreadMessagesInput.Type;
+
+export const DeleteProjectionThreadMessageInput = Schema.Struct({ messageId: MessageId });
+export type DeleteProjectionThreadMessageInput = typeof DeleteProjectionThreadMessageInput.Type;
 
 /**
  * ProjectionThreadMessageRepositoryShape - Service API for projected thread messages.
@@ -105,6 +112,16 @@ export interface ProjectionThreadMessageRepositoryShape {
     input: ListProjectionThreadMessagesInput,
   ) => Effect.Effect<ReadonlyArray<ProjectionThreadMessage>, ProjectionRepositoryError>;
 
+  /** List queued messages in server-assigned FIFO order. */
+  readonly listQueuedByThreadId: (
+    input: ListProjectionThreadMessagesInput,
+  ) => Effect.Effect<ReadonlyArray<ProjectionThreadMessage>, ProjectionRepositoryError>;
+
+  /** Count queued messages without hydrating message bodies. */
+  readonly countQueuedByThreadId: (
+    input: ListProjectionThreadMessagesInput,
+  ) => Effect.Effect<number, ProjectionRepositoryError>;
+
   /** Read the latest user-message timestamp without loading message bodies. */
   readonly getLatestUserMessageAt: (
     input: ListProjectionThreadMessagesInput,
@@ -115,6 +132,12 @@ export interface ProjectionThreadMessageRepositoryShape {
    */
   readonly deleteByThreadId: (
     input: DeleteProjectionThreadMessagesInput,
+  ) => Effect.Effect<void, ProjectionRepositoryError>;
+
+  /** Delete one projected message. `deleteByThreadId` is the thread-teardown path;
+      this is the only way to remove a single row. */
+  readonly deleteByMessageId: (
+    input: DeleteProjectionThreadMessageInput,
   ) => Effect.Effect<void, ProjectionRepositoryError>;
 }
 

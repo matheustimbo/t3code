@@ -28,6 +28,8 @@ import type { HomeGroupDisplayAction } from "../home/homeListItems";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { buildThreadTitleRegenerationMenuItems } from "./thread-title-regeneration-menu";
 import { QueuedMessageIcon } from "./queued-message-icon";
+import { QueuedTurnIcon } from "./queued-turn-icon";
+import { queuedMessageCountLabel } from "@t3tools/client-runtime/composer/queued-messages";
 import { resolveThreadStatus } from "./threadPresentation";
 import { ThreadSearchMatchExcerpt } from "./thread-search-match";
 
@@ -502,6 +504,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
     thread.title,
     pr?.accessibilityLabel,
     props.hasQueuedMessages ? "messages queued to send" : null,
+    thread.queuedMessageCount ? queuedMessageCountLabel(thread.queuedMessageCount) : null,
   ]
     .filter(Boolean)
     .join(", ");
@@ -703,6 +706,10 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
                 {props.hasQueuedMessages ? (
                   <QueuedMessageIcon selected={visuallySelected && !materialYouStyleLayoutActive} />
                 ) : null}
+                <QueuedTurnIcon
+                  count={thread.queuedMessageCount}
+                  selected={visuallySelected && !materialYouStyleLayoutActive}
+                />
                 {statusPill}
                 <Text
                   className={cn(
@@ -781,6 +788,10 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
               {props.hasQueuedMessages ? (
                 <QueuedMessageIcon selected={visuallySelected && !materialYouStyleLayoutActive} />
               ) : null}
+              <QueuedTurnIcon
+                count={thread.queuedMessageCount}
+                selected={visuallySelected && !materialYouStyleLayoutActive}
+              />
               {statusPill}
               <Text
                 className={cn(

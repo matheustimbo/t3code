@@ -55,6 +55,7 @@ describe("streaming row projection", () => {
         createdAt: time(0),
         updatedAt: time(0),
         streaming: false,
+        queued: false,
       },
       {
         id: MessageId.make("history-assistant"),
@@ -64,6 +65,7 @@ describe("streaming row projection", () => {
         createdAt: time(3),
         updatedAt: time(4),
         streaming: false,
+        queued: false,
       },
       {
         id: MessageId.make("live-user"),
@@ -73,6 +75,7 @@ describe("streaming row projection", () => {
         createdAt: time(5),
         updatedAt: time(5),
         streaming: false,
+        queued: false,
       },
       {
         id: MessageId.make("live-assistant"),
@@ -82,6 +85,7 @@ describe("streaming row projection", () => {
         createdAt: time(7),
         updatedAt: time(7),
         streaming: true,
+        queued: false,
       },
     ];
     const work: WorkLogEntry[] = [
@@ -386,6 +390,7 @@ describe("streaming row projection", () => {
       id: ThreadId.make("streaming-thread"),
       projectId: ProjectId.make("project"),
       title: "Long thread",
+      latestUserMessageAt: null,
       modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
       runtimeMode: "full-access",
       interactionMode: "default",
@@ -1296,6 +1301,149 @@ describe("deriveMessagesTimelineRows", () => {
 
     expect(userRow?.revertTurnCount).toBe(1);
     expect(assistantRow?.assistantTurnDiffSummary).toBe(assistantTurnDiffSummary);
+  });
+
+  describe("queued user messages", () => {
+    function messageEntry(options: {
+      id: string;
+      role: "user" | "assistant";
+      second: number;
+      queued?: boolean;
+      turnId?: string;
+    }) {
+      const createdAt = new Date(Date.UTC(2026, 0, 1, 0, 0, options.second)).toISOString();
+      return {
+        id: `${options.id}-entry`,
+        kind: "message" as const,
+        createdAt,
+        message: {
+          id: options.id as never,
+          role: options.role,
+          text: options.id,
+          turnId: (options.turnId ?? null) as never,
+          createdAt,
+          updatedAt: createdAt,
+          streaming: false,
+          ...(options.queued === undefined ? {} : { queued: options.queued }),
+        },
+      };
+    }
+
+    function queuedOrdinalsById(
+      entries: ReturnType<typeof messageEntry>[],
+      queuedIds: ReadonlyArray<string>,
+    ) {
+      const rows = deriveMessagesTimelineRows({
+        timelineEntries: entries,
+        queuedMessages: queuedIds.map((messageId) => ({ messageId: MessageId.make(messageId) })),
+        isWorking: false,
+        activeTurnStartedAt: null,
+        turnDiffSummaries: [],
+        supportsConversationRollback: false,
+      });
+      return rows.flatMap((row) =>
+        row.kind === "message" ? [[row.message.id as string, row.queuedOrdinal] as const] : [],
+      );
+    }
+
+    it("uses server queue order when client timestamps are skewed", () => {
+      expect(
+        queuedOrdinalsById(
+          [
+            messageEntry({ id: "sent-user", role: "user", second: 0 }),
+            messageEntry({ id: "assistant", role: "assistant", second: 1, turnId: "turn-1" }),
+            messageEntry({ id: "sent-user-2", role: "user", second: 2, queued: false }),
+            messageEntry({ id: "queued-b", role: "user", second: 3, queued: true }),
+            messageEntry({ id: "queued-a", role: "user", second: 4, queued: true }),
+          ],
+          ["queued-a", "queued-b"],
+        ),
+      ).toEqual([
+        ["sent-user", undefined],
+        ["assistant", undefined],
+        ["sent-user-2", undefined],
+        ["queued-b", 2],
+        ["queued-a", 1],
+      ]);
+    });
+
+    it("renumbers the queue when an earlier message leaves it", () => {
+      const queuedA = messageEntry({ id: "queued-a", role: "user", second: 3, queued: true });
+      const queuedB = messageEntry({ id: "queued-b", role: "user", second: 4, queued: true });
+      const queuedC = messageEntry({ id: "queued-c", role: "user", second: 5, queued: true });
+
+      expect(
+        queuedOrdinalsById([queuedA, queuedB, queuedC], ["queued-a", "queued-b", "queued-c"]),
+      ).toEqual([
+        ["queued-a", 1],
+        ["queued-b", 2],
+        ["queued-c", 3],
+      ]);
+      expect(queuedOrdinalsById([queuedB, queuedC], ["queued-b", "queued-c"])).toEqual([
+        ["queued-b", 1],
+        ["queued-c", 2],
+      ]);
+    });
+
+    it("clears queued UI when the queue no longer contains a stale flagged message", () => {
+      expect(
+        queuedOrdinalsById(
+          [messageEntry({ id: "started", role: "user", second: 3, queued: true })],
+          [],
+        ),
+      ).toEqual([["started", undefined]]);
+    });
+
+    it("offers no checkpoint revert for a queued message that a sent one would get", () => {
+      const revertTurnCountsById = (queued: boolean) => {
+        const rows = deriveMessagesTimelineRows({
+          timelineEntries: [
+            messageEntry({ id: "sent-user", role: "user", second: 0 }),
+            messageEntry({ id: "assistant-1", role: "assistant", second: 1, turnId: "turn-1" }),
+            messageEntry({ id: "later-user", role: "user", second: 2, queued }),
+            messageEntry({ id: "assistant-2", role: "assistant", second: 3, turnId: "turn-2" }),
+          ],
+          queuedMessages: queued ? [{ messageId: MessageId.make("later-user") }] : [],
+          isWorking: false,
+          activeTurnStartedAt: null,
+          turnDiffSummaries: [
+            {
+              turnId: "turn-1" as never,
+              completedAt: "2026-01-01T00:00:01Z",
+              assistantMessageId: "assistant-1" as never,
+              checkpointTurnCount: 2,
+              checkpointRef: "checkpoint-1" as never,
+              status: "ready" as const,
+              files: [],
+            },
+            {
+              turnId: "turn-2" as never,
+              completedAt: "2026-01-01T00:00:03Z",
+              assistantMessageId: "assistant-2" as never,
+              checkpointTurnCount: 3,
+              checkpointRef: "checkpoint-2" as never,
+              status: "ready" as const,
+              files: [],
+            },
+          ],
+          supportsConversationRollback: true,
+        });
+        return rows.flatMap((row) =>
+          row.kind === "message" && row.message.role === "user"
+            ? [[row.message.id as string, row.revertTurnCount] as const]
+            : [],
+        );
+      };
+
+      expect(revertTurnCountsById(false)).toEqual([
+        ["sent-user", 1],
+        ["later-user", 2],
+      ]);
+      expect(revertTurnCountsById(true)).toEqual([
+        ["sent-user", 1],
+        ["later-user", undefined],
+      ]);
+    });
   });
 
   it("folds the first assistant message and settled work before the terminal response", () => {

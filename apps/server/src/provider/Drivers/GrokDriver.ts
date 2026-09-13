@@ -13,7 +13,7 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { makeGrokTextGeneration } from "../../textGeneration/GrokTextGeneration.ts";
 import { ProviderDriverError } from "../Errors.ts";
-import { makeGrokAdapter } from "../Layers/GrokAdapter.ts";
+import { GROK_CONCURRENT_SEND, makeGrokAdapter } from "../Layers/GrokAdapter.ts";
 import {
   buildInitialGrokProviderSnapshot,
   checkGrokProviderStatus,
@@ -89,6 +89,7 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
         displayName,
         accentColor,
         continuationGroupKey: continuationIdentity.continuationKey,
+        concurrentSend: GROK_CONCURRENT_SEND,
       });
       const effectiveConfig = { ...config, enabled } satisfies GrokSettings;
       const adapter = yield* makeGrokAdapter(effectiveConfig, {

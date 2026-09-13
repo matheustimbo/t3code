@@ -1,4 +1,5 @@
-import type { AssistantCitation } from "@t3tools/contracts";
+import type { SendWhileRunningAffordance } from "@t3tools/client-runtime/composer/send-while-running";
+import type { AssistantCitation, TurnDelivery } from "@t3tools/contracts";
 import {
   serializeAssistantCitation,
   withAssistantCitationComment,
@@ -34,6 +35,32 @@ export function composerSubmissionIntentForEnter(input: {
     return null;
   }
   return input.modifierKey && input.isDraftThread ? "background" : "foreground";
+}
+
+/**
+ * Which delivery a submit gesture puts on the wire, given what the composer is
+ * offering right now. Kept apart from `composerSubmissionIntentForEnter`, whose
+ * modifier means only "background if draft": a draft thread never has a running
+ * server turn, so the two readings of Cmd/Ctrl+Enter cannot collide on one
+ * gesture, and neither function has to know about the other.
+ *
+ * `undefined` means "send no `delivery` field at all", which leaves an idle
+ * thread's payload byte-identical to what it was before this existed. Holding
+ * the modifier with no alternate on offer still returns the selected delivery,
+ * because a gesture the user made should send something.
+ */
+export function composerTurnDeliveryForSubmission(input: {
+  sendWhileRunning: Pick<SendWhileRunningAffordance, "selected" | "alternate"> | null;
+  modifierKey: boolean;
+}): TurnDelivery | undefined {
+  const affordance = input.sendWhileRunning;
+  if (affordance === null) {
+    return undefined;
+  }
+  const option = input.modifierKey
+    ? (affordance.alternate ?? affordance.selected)
+    : affordance.selected;
+  return option.turnDelivery;
 }
 
 const isInlineTokenSegment = (segment: ComposerPromptSegment): boolean => segment.type !== "text";

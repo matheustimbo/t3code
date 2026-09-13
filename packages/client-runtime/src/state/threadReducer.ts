@@ -10,6 +10,7 @@ import type {
   OrchestrationSession,
   OrchestrationThread,
   OrchestrationThreadActivity,
+  QueuedMessageRef,
   ThreadPullRequestLink,
   TurnId,
 } from "@t3tools/contracts";
@@ -90,6 +91,43 @@ function isResolvableContextWindowActivity(activity: OrchestrationThreadActivity
 }
 
 /**
+ * The queue is empty on almost every thread, and these run on every message
+ * and every turn start. Returning the same array and the same message objects
+ * when nothing changed is what keeps the timeline's row memoization alive; a
+ * fresh array each event re-renders the whole list.
+ */
+function dropQueuedMessage(
+  queuedMessages: ReadonlyArray<QueuedMessageRef>,
+  messageId: MessageId,
+): ReadonlyArray<QueuedMessageRef> {
+  return queuedMessages.some((entry) => entry.messageId === messageId)
+    ? queuedMessages.filter((entry) => entry.messageId !== messageId)
+    : queuedMessages;
+}
+
+function latestUserMessageAtOf(messages: OrchestrationThread["messages"]): string | null {
+  return messages.reduce<string | null>(
+    (latest, message) =>
+      message.role !== "user" ||
+      isImportedAgentSessionMessageId(message.id) ||
+      (latest !== null && message.createdAt <= latest)
+        ? latest
+        : message.createdAt,
+    null,
+  );
+}
+
+function setMessageQueued(
+  messages: OrchestrationThread["messages"],
+  messageId: MessageId,
+  queued: boolean,
+): OrchestrationThread["messages"] {
+  return messages.some((entry) => entry.id === messageId && entry.queued !== queued)
+    ? messages.map((entry) => (entry.id === messageId ? { ...entry, queued } : entry))
+    : messages;
+}
+
+/**
  * Apply a single orchestration event to an `OrchestrationThread`, returning
  * the updated thread, a deletion signal, or an "unchanged" marker when the
  * event doesn't affect this thread.
@@ -124,6 +162,7 @@ export function applyThreadDetailEvent(
           worktreePath: event.payload.worktreePath,
           branchPullRequest: null,
           latestTurn: null,
+          latestUserMessageAt: null,
           createdAt: event.payload.createdAt,
           updatedAt: event.payload.updatedAt,
           archivedAt: null,
@@ -136,6 +175,7 @@ export function applyThreadDetailEvent(
           deletedAt: null,
           pullRequests: [],
           messages: [],
+          queuedMessages: [],
           proposedPlans: [],
           activities: [],
           checkpoints: [],
@@ -344,6 +384,8 @@ export function applyThreadDetailEvent(
             : {}),
           runtimeMode: event.payload.runtimeMode,
           interactionMode: event.payload.interactionMode,
+          messages: setMessageQueued(thread.messages, event.payload.messageId, false),
+          queuedMessages: dropQueuedMessage(thread.queuedMessages ?? [], event.payload.messageId),
           updatedAt: event.occurredAt,
         },
       };
@@ -382,6 +424,7 @@ export function applyThreadDetailEvent(
           : {}),
         turnId: event.payload.turnId,
         streaming: event.payload.streaming,
+        queued: event.payload.queuedTurnStart !== undefined,
         createdAt: event.payload.createdAt,
         updatedAt: event.payload.updatedAt,
       };
@@ -400,10 +443,34 @@ export function applyThreadDetailEvent(
           streaming: message.streaming,
           ...(message.turnId !== undefined ? { turnId: message.turnId } : {}),
           ...(message.streaming ? {} : { updatedAt: message.updatedAt }),
+          queued: message.queued,
           ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
         };
       });
       if (!found) messages.push(message);
+      const existingQueuedMessages = thread.queuedMessages ?? [];
+      const queuedMessages =
+        event.payload.queuedTurnStart !== undefined
+          ? existingQueuedMessages.some((entry) => entry.messageId === event.payload.messageId)
+            ? existingQueuedMessages
+            : [
+                ...existingQueuedMessages,
+                {
+                  messageId: event.payload.messageId,
+                  queuedTurnStart: event.payload.queuedTurnStart,
+                  createdAt: event.payload.createdAt,
+                  revision: 0,
+                },
+              ]
+          : dropQueuedMessage(existingQueuedMessages, event.payload.messageId);
+      const previousLatestUserMessageAt = thread.latestUserMessageAt ?? null;
+      const latestUserMessageAt =
+        event.payload.role === "user" &&
+        !isImportedAgentSessionMessageId(event.payload.messageId) &&
+        (previousLatestUserMessageAt === null ||
+          event.payload.createdAt > previousLatestUserMessageAt)
+          ? event.payload.createdAt
+          : previousLatestUserMessageAt;
       // Update latestTurn for assistant messages bound to a turn. A completed
       // assistant message only settles the turn once the session is no longer
       // running it — providers may emit several assistant messages per turn
@@ -463,8 +530,87 @@ export function applyThreadDetailEvent(
         thread: {
           ...thread,
           messages,
+          queuedMessages,
           checkpoints,
           latestTurn,
+          latestUserMessageAt,
+          updatedAt: event.occurredAt,
+        },
+      };
+    }
+
+    case "thread.message-requeued": {
+      const existingQueuedMessages = thread.queuedMessages ?? [];
+      const queuedMessages = existingQueuedMessages.some(
+        (entry) => entry.messageId === event.payload.messageId,
+      )
+        ? existingQueuedMessages
+        : [
+            ...existingQueuedMessages,
+            {
+              messageId: event.payload.messageId,
+              queuedTurnStart: event.payload.queuedTurnStart,
+              createdAt:
+                thread.messages.find((entry) => entry.id === event.payload.messageId)?.createdAt ??
+                event.payload.updatedAt,
+              revision: 0,
+            },
+          ];
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          messages: setMessageQueued(thread.messages, event.payload.messageId, true),
+          queuedMessages,
+          updatedAt: event.occurredAt,
+        },
+      };
+    }
+
+    case "thread.queued-message-cancelled":
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          messages: setMessageQueued(thread.messages, event.payload.messageId, false),
+          queuedMessages: dropQueuedMessage(thread.queuedMessages ?? [], event.payload.messageId),
+          updatedAt: event.occurredAt,
+        },
+      };
+
+    // The revision has to land here as well as the text: the next edit from
+    // this device sends the revision it last saw, and a device still holding
+    // the previous one is refused as stale.
+    case "thread.queued-message-edited":
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          messages: thread.messages.map((entry) =>
+            entry.id === event.payload.messageId
+              ? { ...entry, text: event.payload.text, updatedAt: event.payload.updatedAt }
+              : entry,
+          ),
+          queuedMessages: (thread.queuedMessages ?? []).map((entry) =>
+            entry.messageId === event.payload.messageId
+              ? { ...entry, revision: event.payload.revision }
+              : entry,
+          ),
+          updatedAt: event.occurredAt,
+        },
+      };
+
+    case "thread.queued-message-dropped": {
+      const messages = thread.messages.filter((entry) => entry.id !== event.payload.messageId);
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          messages,
+          queuedMessages: dropQueuedMessage(thread.queuedMessages ?? [], event.payload.messageId),
+          // Mirrors the server projector: this is the one event that can walk
+          // the thread's newest user message backwards.
+          latestUserMessageAt: latestUserMessageAtOf(messages),
           updatedAt: event.occurredAt,
         },
       };

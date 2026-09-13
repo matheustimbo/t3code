@@ -14,6 +14,7 @@ import {
   type ProviderRuntimeEvent,
   type ProviderSession,
   type ProviderUserInputAnswers,
+  type ProviderConcurrentSend,
   ProviderDriverKind,
   ProviderInstanceId,
   RuntimeRequestId,
@@ -85,6 +86,13 @@ import {
   rewriteCursorSkillMentions,
 } from "../Drivers/CursorSkills.ts";
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
+
+/**
+ * The adapter reuses the T3 turn id and reads like a steer, but every ACP prompt
+ * goes through `AcpSessionRuntime`'s one-permit `promptSerializationSemaphore`,
+ * so the second prompt waits for the first to finish.
+ */
+export const CURSOR_CONCURRENT_SEND: ProviderConcurrentSend = "provider-queue";
 
 const PROVIDER = ProviderDriverKind.make("cursor");
 const CURSOR_RESUME_VERSION = 1 as const;
@@ -1238,7 +1246,11 @@ export function makeCursorAdapter(
 
     return {
       provider: PROVIDER,
-      capabilities: { sessionModelSwitch: "in-session", supportsConversationRollback: false },
+      capabilities: {
+        sessionModelSwitch: "in-session",
+        concurrentSend: CURSOR_CONCURRENT_SEND,
+        supportsConversationRollback: false,
+      },
       compaction: { type: "slash-command", command: "/compress" },
       startSession,
       sendTurn,

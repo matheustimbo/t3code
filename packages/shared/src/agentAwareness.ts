@@ -40,6 +40,7 @@ export interface ProjectThreadAwarenessInput {
     | "updatedAt"
     | "hasPendingApprovals"
     | "hasPendingUserInput"
+    | "queuedMessageCount"
   >;
 }
 
@@ -91,6 +92,18 @@ function resolveThreadAwarenessPhase(
   }
   if (thread.session?.status === "running" || thread.latestTurn?.state === "running") {
     return "running";
+  }
+  // A message waiting its turn is work the user is owed, not work that is
+  // finished. The drain starts it on the same idle transition that gets us
+  // here, so the honest phase is the one that already means "about to run".
+  // Reporting completed instead pushes "Agent finished" while the message
+  // still sits in the queue. A session that cannot drain (stopped, or gone
+  // after a restart) is deliberately excluded: nothing is starting there.
+  if (
+    (thread.queuedMessageCount ?? 0) > 0 &&
+    (thread.session?.status === "ready" || thread.session?.status === "idle")
+  ) {
+    return "starting";
   }
   if (thread.latestTurn?.state === "completed") {
     return "completed";

@@ -30,7 +30,7 @@ import { ServerConfig } from "../../config.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderDriverError } from "../Errors.ts";
-import { makeClaudeAdapter } from "../Layers/ClaudeAdapter.ts";
+import { CLAUDE_CONCURRENT_SEND, makeClaudeAdapter } from "../Layers/ClaudeAdapter.ts";
 import { makeClaudeScopedLimitNames } from "../Layers/claudeUsageLimits.ts";
 import {
   checkClaudeProviderStatus,
@@ -143,6 +143,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         displayName,
         accentColor,
         continuationGroupKey,
+        concurrentSend: CLAUDE_CONCURRENT_SEND,
       });
 
       // One per instance: the status probe writes the model-scoped bucket

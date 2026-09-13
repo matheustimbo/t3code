@@ -30,6 +30,25 @@ messages while disconnected. Uploads resume when you reconnect. Drafts and queue
 messages survive app restarts. Signing out of T3 Connect keeps that work on your
 device until you sign back into the same account.
 
+## Queue a message while the agent works
+
+While the agent works, open the composer send menu to choose how to deliver the
+message. The available choices depend on the provider:
+
+- **Queue** waits for the current turn to finish.
+- **Steer** gives the message to the current turn.
+- **Send now** gives the message to the provider, which decides when to read it.
+- **Interrupt** stops the current turn and starts the message.
+
+T3 Code remembers your choice for providers with the same delivery behavior. On
+web and desktop, press Command+Enter or Ctrl+Enter to use the other choice once.
+A queued message has **Edit** and **Remove from queue** actions until delivery
+starts.
+
+On mobile, **Pending** means the message is waiting in the local offline outbox;
+**Queued** means it has reached the server and is waiting for the current turn
+to finish.
+
 ## Custom models
 
 On web and desktop, use Settings → Providers → **Models** to add an unlisted model with a custom

@@ -1,4 +1,4 @@
-import { ThreadId } from "@t3tools/contracts";
+import { MessageId, QueuedMessageUnavailableReason, ThreadId } from "@t3tools/contracts";
 import * as SchemaIssue from "effect/SchemaIssue";
 import * as Schema from "effect/Schema";
 
@@ -52,9 +52,30 @@ export class OrchestrationThreadSettleBlockedError extends Schema.TaggedError<Or
   }
 }
 
+export class OrchestrationQueuedMessageUnavailableError extends Schema.TaggedError<OrchestrationQueuedMessageUnavailableError>()(
+  "OrchestrationQueuedMessageUnavailableError",
+  {
+    threadId: ThreadId,
+    messageId: MessageId,
+    reason: QueuedMessageUnavailableReason,
+  },
+) {
+  /** A client that understands `queuedMessageUnavailableReason` renders its own
+      copy and never reads this. It is the fallback for everyone else. */
+  override get message(): string {
+    const messages: Record<QueuedMessageUnavailableReason, string> = {
+      "already-sent": "This message already started its turn.",
+      "not-queued": "This message is no longer queued.",
+      "stale-revision": "This message changed on another device. Reload it and try again.",
+    };
+    return messages[this.reason];
+  }
+}
+
 export const OrchestrationCommandRejection = Schema.Union([
   OrchestrationCommandInvariantError,
   OrchestrationThreadSettleBlockedError,
+  OrchestrationQueuedMessageUnavailableError,
 ]);
 export type OrchestrationCommandRejection = typeof OrchestrationCommandRejection.Type;
 export const isOrchestrationCommandRejection = Schema.is(OrchestrationCommandRejection);

@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
@@ -25,6 +26,8 @@ import {
   ProjectCreateCommand,
   OrchestrationMessage,
   ThreadMessageSentPayload,
+  ThreadQueuedMessageDroppedPayload,
+  ThreadQueuedMessageEditedPayload,
   ThreadMetaUpdatedPayload,
   ThreadLinkedPullRequest,
   ThreadTurnStartCommand,
@@ -47,6 +50,12 @@ const decodeThreadTurnStartCommand = Schema.decodeUnknownEffect(ThreadTurnStartC
 const decodeClientOrchestrationCommand = Schema.decodeUnknownEffect(ClientOrchestrationCommand);
 const decodeOrchestrationMessage = Schema.decodeUnknownEffect(OrchestrationMessage);
 const decodeThreadMessageSentPayload = Schema.decodeUnknownEffect(ThreadMessageSentPayload);
+const decodeThreadQueuedMessageEditedPayload = Schema.decodeUnknownEffect(
+  ThreadQueuedMessageEditedPayload,
+);
+const decodeThreadQueuedMessageDroppedPayload = Schema.decodeUnknownEffect(
+  ThreadQueuedMessageDroppedPayload,
+);
 const decodeThreadTurnStartRequestedPayload = Schema.decodeUnknownEffect(
   ThreadTurnStartRequestedPayload,
 );
@@ -69,6 +78,12 @@ const decodeOrchestrationEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
 const decodeThreadMetaUpdatedPayload = Schema.decodeUnknownEffect(ThreadMetaUpdatedPayload);
 const decodeDispatchCommandError = Schema.decodeUnknownEffect(OrchestrationDispatchCommandError);
 const decodeSnapShotAccessibility = Schema.decodeUnknownEffect(SnapShotAccessibility);
+const encodeThreadQueuedMessageEditedPayload = Schema.encodeEffect(
+  ThreadQueuedMessageEditedPayload,
+);
+const encodeThreadQueuedMessageDroppedPayload = Schema.encodeEffect(
+  ThreadQueuedMessageDroppedPayload,
+);
 
 it.effect("decodes a dispatch error after its bootstrap thread was deleted", () =>
   Effect.gen(function* () {
@@ -251,6 +266,151 @@ it.effect("decodes thread.turn.start defaults for provider and runtime mode", ()
     assert.strictEqual(parsed.modelSelection, undefined);
     assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
     assert.strictEqual(parsed.interactionMode, DEFAULT_PROVIDER_INTERACTION_MODE);
+    assert.strictEqual(parsed.delivery, undefined);
+  }),
+);
+
+it.effect("rejects queued thread.turn.start bootstrap payloads at decode", () =>
+  Effect.gen(function* () {
+    const input = {
+      type: "thread.turn.start" as const,
+      commandId: "cmd-queued-bootstrap",
+      threadId: "thread-1",
+      message: {
+        messageId: "message-queued-bootstrap",
+        role: "user" as const,
+        text: "hello",
+        attachments: [],
+      },
+      bootstrap: { runSetupScript: true },
+      delivery: "queued" as const,
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+    const serverResult = yield* Effect.exit(decodeThreadTurnStartCommand(input));
+    assert.isTrue(Exit.isFailure(serverResult));
+    if (Exit.isFailure(serverResult)) {
+      assert.isTrue(
+        Cause.pretty(serverResult.cause).includes("a queued send cannot bootstrap a thread"),
+      );
+    }
+
+    const clientResult = yield* Effect.exit(
+      decodeClientOrchestrationCommand({
+        ...input,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      }),
+    );
+    assert.isTrue(Exit.isFailure(clientResult));
+    if (Exit.isFailure(clientResult)) {
+      assert.isTrue(
+        Cause.pretty(clientResult.cause).includes("a queued send cannot bootstrap a thread"),
+      );
+    }
+  }),
+);
+
+it.effect("keeps queue lifecycle commands out of the client command union", () =>
+  Effect.gen(function* () {
+    const commands: ReadonlyArray<unknown> = [
+      {
+        type: "thread.message.requeue" as const,
+        commandId: "cmd-requeue",
+        threadId: "thread-1",
+        messageId: "message-1",
+        queuedTurnStart: {},
+        createdAt: "2026-01-01T00:00:00.000Z",
+      },
+      {
+        type: "thread.queued-message.cancel" as const,
+        commandId: "cmd-cancel",
+        threadId: "thread-1",
+        messageId: "message-1",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      },
+      {
+        type: "thread.queue.drain" as const,
+        commandId: "cmd-drain",
+        threadId: "thread-1",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      },
+    ];
+    for (const command of commands) {
+      assert.deepStrictEqual(yield* decodeOrchestrationCommand(command), command);
+      assert.ok(yield* decodeClientOrchestrationCommand(command).pipe(Effect.flip));
+    }
+  }),
+);
+
+it.effect("decodes client commands for editing and dropping queued messages", () =>
+  Effect.gen(function* () {
+    const edited = yield* decodeClientOrchestrationCommand({
+      type: "thread.queued-message.edit",
+      commandId: "cmd-edit",
+      threadId: "thread-1",
+      messageId: "message-1",
+      expectedRevision: 0,
+      text: "edited text",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(edited.type, "thread.queued-message.edit");
+    if (edited.type !== "thread.queued-message.edit") {
+      assert.fail(`Expected queued message edit, received ${edited.type}.`);
+    }
+    assert.strictEqual(edited.commandId, "cmd-edit");
+    assert.strictEqual(edited.threadId, "thread-1");
+    assert.strictEqual(edited.messageId, "message-1");
+    assert.strictEqual(edited.expectedRevision, 0);
+    assert.strictEqual(edited.text, "edited text");
+    assert.strictEqual(edited.createdAt, "2026-01-01T00:00:00.000Z");
+
+    const dropped = yield* decodeClientOrchestrationCommand({
+      type: "thread.queued-message.drop",
+      commandId: "cmd-drop",
+      threadId: "thread-1",
+      messageId: "message-1",
+      expectedRevision: 1,
+      createdAt: "2026-01-01T00:01:00.000Z",
+    });
+    assert.strictEqual(dropped.type, "thread.queued-message.drop");
+    if (dropped.type !== "thread.queued-message.drop") {
+      assert.fail(`Expected queued message drop, received ${dropped.type}.`);
+    }
+    assert.strictEqual(dropped.commandId, "cmd-drop");
+    assert.strictEqual(dropped.threadId, "thread-1");
+    assert.strictEqual(dropped.messageId, "message-1");
+    assert.strictEqual(dropped.expectedRevision, 1);
+    assert.strictEqual(dropped.createdAt, "2026-01-01T00:01:00.000Z");
+  }),
+);
+
+it.effect("round-trips queued message edit and drop event payloads", () =>
+  Effect.gen(function* () {
+    const edited = {
+      threadId: "thread-1",
+      messageId: "message-1",
+      text: "edited text",
+      revision: 1,
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+    const dropped = {
+      threadId: "thread-1",
+      messageId: "message-2",
+      updatedAt: "2026-01-01T00:01:00.000Z",
+    };
+
+    assert.deepStrictEqual(
+      yield* encodeThreadQueuedMessageEditedPayload(
+        yield* decodeThreadQueuedMessageEditedPayload(edited),
+      ),
+      edited,
+    );
+    assert.deepStrictEqual(
+      yield* encodeThreadQueuedMessageDroppedPayload(
+        yield* decodeThreadQueuedMessageDroppedPayload(dropped),
+      ),
+      dropped,
+    );
   }),
 );
 

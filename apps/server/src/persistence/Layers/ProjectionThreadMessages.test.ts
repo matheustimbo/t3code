@@ -24,6 +24,8 @@ layer("ProjectionThreadMessageRepository", (it) => {
         turnId: null,
         role: "user",
         text: "Imported prompt",
+        queuedTurnStart: null,
+        queuedRevision: 0,
         isStreaming: false,
         createdAt: "2026-02-28T19:05:06.000Z",
         updatedAt: "2026-02-28T19:05:06.000Z",
@@ -43,6 +45,8 @@ layer("ProjectionThreadMessageRepository", (it) => {
           turnId: null,
           ...message,
           text: "Message body",
+          queuedTurnStart: null,
+          queuedRevision: 0,
           isStreaming: false,
           updatedAt: "2026-02-28T19:06:00.000Z",
         });
@@ -53,6 +57,8 @@ layer("ProjectionThreadMessageRepository", (it) => {
         turnId: null,
         role: "user",
         text: "Other thread",
+        queuedTurnStart: null,
+        queuedRevision: 0,
         isStreaming: false,
         createdAt: "2026-02-28T19:05:05.000Z",
         updatedAt: "2026-02-28T19:05:05.000Z",
@@ -90,6 +96,8 @@ layer("ProjectionThreadMessageRepository", (it) => {
         role: "assistant",
         text: "hello",
         attachments,
+        queuedTurnStart: null,
+        queuedRevision: 0,
         createdAt,
         updatedAt: createdAt,
       });
@@ -99,6 +107,8 @@ layer("ProjectionThreadMessageRepository", (it) => {
         turnId: null,
         role: "assistant",
         text: " world",
+        queuedTurnStart: null,
+        queuedRevision: 0,
         createdAt: "2026-02-28T19:05:01.000Z",
         updatedAt: "2026-02-28T19:05:01.000Z",
       });
@@ -116,6 +126,8 @@ layer("ProjectionThreadMessageRepository", (it) => {
         role: "assistant",
         text: "",
         attachments: [],
+        queuedTurnStart: null,
+        queuedRevision: 0,
         createdAt: "2026-02-28T19:05:02.000Z",
         updatedAt: "2026-02-28T19:05:02.000Z",
       });
@@ -156,6 +168,8 @@ layer("ProjectionThreadMessageRepository", (it) => {
         role: "user",
         text: "initial",
         attachments: persistedAttachments,
+        queuedTurnStart: null,
+        queuedRevision: 0,
         isStreaming: false,
         createdAt,
         updatedAt,
@@ -167,6 +181,8 @@ layer("ProjectionThreadMessageRepository", (it) => {
         turnId: null,
         role: "user",
         text: "updated",
+        queuedTurnStart: null,
+        queuedRevision: 0,
         isStreaming: false,
         createdAt,
         updatedAt: "2026-02-28T19:00:02.000Z",
@@ -183,6 +199,103 @@ layer("ProjectionThreadMessageRepository", (it) => {
         assert.equal(rowById.value.text, "updated");
         assert.deepEqual(rowById.value.attachments, persistedAttachments);
       }
+    }),
+  );
+
+  it.effect("orders queued messages by receipt row when client timestamps go backwards", () =>
+    Effect.gen(function* () {
+      const repository = yield* ProjectionThreadMessageRepository;
+      const threadId = ThreadId.make("thread-queued-fifo");
+      const messages = [
+        ["queued-first", "2026-02-28T19:00:02.000Z"],
+        ["queued-second", "2026-02-28T19:00:01.000Z"],
+      ] as const;
+      for (const [messageId, createdAt] of messages) {
+        yield* repository.upsert({
+          messageId: MessageId.make(messageId),
+          threadId,
+          turnId: null,
+          role: "user",
+          text: messageId,
+          queuedTurnStart: { titleSeed: messageId },
+          queuedRevision: 0,
+          isStreaming: false,
+          createdAt,
+          updatedAt: createdAt,
+        });
+      }
+
+      const queued = yield* repository.listQueuedByThreadId({ threadId });
+      assert.deepEqual(
+        queued.map((message) => message.messageId),
+        ["queued-first", "queued-second"],
+      );
+      assert.equal(yield* repository.countQueuedByThreadId({ threadId }), 2);
+    }),
+  );
+
+  it.effect("deletes one queued message and preserves sibling FIFO order after edit", () =>
+    Effect.gen(function* () {
+      const repository = yield* ProjectionThreadMessageRepository;
+      const threadId = ThreadId.make("thread-queued-edit-delete");
+      const messages = [
+        ["queued-first", "2026-02-28T19:00:00.000Z"],
+        ["queued-second", "2026-02-28T19:00:01.000Z"],
+        ["queued-third", "2026-02-28T19:00:02.000Z"],
+      ] as const;
+
+      for (const [messageId, createdAt] of messages) {
+        yield* repository.upsert({
+          messageId: MessageId.make(messageId),
+          threadId,
+          turnId: null,
+          role: "user",
+          text: messageId,
+          queuedTurnStart: { titleSeed: messageId },
+          queuedRevision: 0,
+          isStreaming: false,
+          createdAt,
+          updatedAt: createdAt,
+        });
+      }
+
+      yield* repository.upsert({
+        messageId: MessageId.make("queued-second"),
+        threadId,
+        turnId: null,
+        role: "user",
+        text: "edited queued-second",
+        queuedTurnStart: { titleSeed: "queued-second" },
+        queuedRevision: 1,
+        isStreaming: false,
+        createdAt: "2026-02-28T19:00:01.000Z",
+        updatedAt: "2026-02-28T19:01:00.000Z",
+      });
+
+      const afterEdit = yield* repository.listQueuedByThreadId({ threadId });
+      assert.deepEqual(
+        afterEdit.map((message) => message.messageId),
+        ["queued-first", "queued-second", "queued-third"],
+      );
+      assert.equal(afterEdit[1]?.text, "edited queued-second");
+      assert.equal(afterEdit[1]?.createdAt, "2026-02-28T19:00:01.000Z");
+      assert.equal(afterEdit[1]?.queuedRevision, 1);
+
+      yield* repository.deleteByMessageId({ messageId: MessageId.make("queued-second") });
+
+      const afterDelete = yield* repository.listQueuedByThreadId({ threadId });
+      assert.deepEqual(
+        afterDelete.map((message) => message.messageId),
+        ["queued-first", "queued-third"],
+      );
+      assert.deepEqual(
+        (yield* repository.listByThreadId({ threadId })).map((message) => message.messageId),
+        ["queued-first", "queued-third"],
+      );
+      const deleted = yield* repository.getByMessageId({
+        messageId: MessageId.make("queued-second"),
+      });
+      assert.equal(deleted._tag, "None");
     }),
   );
 
@@ -208,6 +321,8 @@ layer("ProjectionThreadMessageRepository", (it) => {
             sizeBytes: 5,
           },
         ],
+        queuedTurnStart: null,
+        queuedRevision: 0,
         isStreaming: false,
         createdAt,
         updatedAt: "2026-02-28T19:10:01.000Z",
@@ -220,6 +335,8 @@ layer("ProjectionThreadMessageRepository", (it) => {
         role: "assistant",
         text: "cleared",
         attachments: [],
+        queuedTurnStart: null,
+        queuedRevision: 0,
         isStreaming: false,
         createdAt,
         updatedAt: "2026-02-28T19:10:02.000Z",
@@ -245,6 +362,8 @@ layer("ProjectionThreadMessageRepository", (it) => {
         turnId,
         role: "assistant",
         text: "large text that the existence query must not select",
+        queuedTurnStart: null,
+        queuedRevision: 0,
         isStreaming: false,
         createdAt,
         updatedAt: createdAt,

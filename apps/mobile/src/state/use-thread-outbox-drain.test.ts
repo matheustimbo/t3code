@@ -92,6 +92,12 @@ vi.mock("./threads", () => ({
   threadEnvironment: {},
 }));
 
+// The persisted blob behind this reaches expo-sqlite. Delivery resolution
+// itself is covered directly in queued-turn-delivery.test.ts.
+vi.mock("./send-while-running-preferences", () => ({
+  readSendWhileRunningPreferences: () => undefined,
+}));
+
 vi.mock("./use-atom-command", () => ({
   useAtomCommand: () => async () => undefined,
 }));

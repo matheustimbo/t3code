@@ -376,7 +376,8 @@ describe("ProviderCommandReactor", () => {
       getCapabilities: (_provider) =>
         Effect.succeed({
           sessionModelSwitch: input?.sessionModelSwitch ?? "in-session",
-        }),
+          concurrentSend: "steer",
+        } as const),
       assertConversationRollbackSupported: () => unsupported(),
       getInstanceInfo: (instanceId) => {
         const raw = String(instanceId);
@@ -446,8 +447,8 @@ describe("ProviderCommandReactor", () => {
               }
             }
             const isReplay =
-              command.type === "thread.turn.start" &&
-              command.commandId.startsWith("server:after-compaction:");
+              command.type === "thread.queue.drain" &&
+              command.commandId.startsWith("server:compaction-drain:");
             const before =
               command.type === "thread.session.set" && command.session.status === "ready"
                 ? input?.beforeReadySessionDispatch
@@ -456,7 +457,7 @@ describe("ProviderCommandReactor", () => {
                   : undefined;
             return (before?.() ?? Effect.void).pipe(
               Effect.andThen(engine.dispatch(command)),
-              Effect.tap(() =>
+              Effect.ensuring(
                 isReplay ? (input?.afterTurnStartDispatch?.() ?? Effect.void) : Effect.void,
               ),
             );
@@ -620,6 +621,17 @@ describe("ProviderCommandReactor", () => {
               SELECT thread_id AS "threadId"
               FROM projection_turns
               WHERE turn_id IS NULL AND state = 'pending'
+            `;
+          }),
+        ),
+      readReceipt: (commandId: CommandId) =>
+        runtime!.runPromise(
+          Effect.gen(function* () {
+            const sql = yield* SqlClient.SqlClient;
+            return yield* sql<{ readonly status: string }>`
+              SELECT status
+              FROM orchestration_command_receipts
+              WHERE command_id = ${commandId}
             `;
           }),
         ),
@@ -983,6 +995,71 @@ describe("ProviderCommandReactor", () => {
     }),
   );
 
+  effectIt.effect("requeues a message idempotently without rejecting either command", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() => createHarness());
+      const threadId = ThreadId.make("thread-1");
+      const now = "2026-01-01T00:00:00.000Z";
+      yield* harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-requeue-session-running"),
+        threadId,
+        session: {
+          threadId,
+          status: "running",
+          providerName: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      });
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-requeue-message"),
+        threadId,
+        message: {
+          messageId: asMessageId("user-message-requeue"),
+          role: "user",
+          text: "queued",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        delivery: "queued",
+        createdAt: now,
+      });
+      const firstRequeue = CommandId.make("cmd-requeue-first");
+      const secondRequeue = CommandId.make("cmd-requeue-second");
+      const requeue = (commandId: CommandId, titleSeed: string) =>
+        harness.engine.dispatch({
+          type: "thread.message.requeue",
+          commandId,
+          threadId,
+          messageId: asMessageId("user-message-requeue"),
+          queuedTurnStart: { titleSeed },
+          createdAt: now,
+        });
+      yield* requeue(firstRequeue, "first");
+      yield* requeue(secondRequeue, "second");
+
+      const thread = (yield* Effect.promise(() => harness.readModel())).threads.find(
+        (entry) => entry.id === threadId,
+      );
+      expect(thread?.queuedMessages?.map((message) => message.messageId)).toEqual([
+        "user-message-requeue",
+      ]);
+      expect(yield* Effect.promise(() => harness.readReceipt(firstRequeue))).toEqual([
+        { status: "accepted" },
+      ]);
+      expect(yield* Effect.promise(() => harness.readReceipt(secondRequeue))).toEqual([
+        { status: "accepted" },
+      ]);
+    }),
+  );
+
   effectIt.effect("rejects /compact without conversation context", () =>
     Effect.gen(function* () {
       const harness = yield* Effect.promise(() => createHarness());
@@ -1147,15 +1224,9 @@ describe("ProviderCommandReactor", () => {
             stoppedThread?.activities.filter(
               (activity) => activity.summary === "Queued message was not sent",
             ),
-          ).toEqual([
-            expect.objectContaining({
-              payload: {
-                requestId: "user-message-during-compact-recovery-2",
-                detail: expect.any(String),
-              },
-            }),
-          ]);
-          expect(harness.sendTurn).toHaveBeenCalledTimes(2);
+          ).toEqual([]);
+          expect(stoppedThread?.queuedMessages).toEqual([]);
+          expect(harness.sendTurn).toHaveBeenCalledTimes(3);
           yield* Deferred.succeed(releaseQueuedSend, undefined);
           return;
         }
@@ -1174,22 +1245,25 @@ describe("ProviderCommandReactor", () => {
           yield* Deferred.succeed(releaseResume, undefined);
           yield* Deferred.await(resumeDispatched);
           yield* Effect.promise(() => harness.drain());
-          expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+          expect(harness.sendTurn).toHaveBeenCalledTimes(2);
           const stoppedThread = (yield* Effect.promise(() => harness.readModel())).threads.find(
             (entry) => entry.id === threadId,
           );
           expect(stoppedThread?.session?.status).toBe("stopped");
           expect(yield* Effect.promise(() => harness.readPendingTurnStarts())).toEqual([]);
+          expect(stoppedThread?.queuedMessages?.map((message) => message.messageId)).toEqual([
+            "user-message-during-compact-recovery-2",
+          ]);
           expect(
             stoppedThread?.activities.filter(
               (activity) => activity.summary === "Queued message was not sent",
             ),
-          ).toHaveLength(2);
+          ).toEqual([]);
           return;
         }
         yield* Deferred.await(queuedSent);
         expect(harness.sendTurn.mock.calls.slice(1).map(([request]) => request)).toEqual([
-          expect.objectContaining({ input: "first queued", interactionMode: "plan" }),
+          expect.objectContaining({ input: "first queued", interactionMode: "default" }),
           expect.objectContaining({ input: "second queued", interactionMode: "default" }),
         ]);
         const afterRestore = (yield* Effect.promise(() => harness.readModel())).threads.find(
@@ -1337,7 +1411,11 @@ describe("ProviderCommandReactor", () => {
           (activity) => activity.summary === "Queued message was not sent",
         ),
       ).toMatchObject({
-        payload: { requestId: "user-message-queued-before-stop" },
+        payload: {
+          requestId: "user-message-queued-before-stop",
+          detail:
+            "The session was stopped during context compaction. Send this message again to continue.",
+        },
       });
       expect(
         recoveredThread?.activities.find(

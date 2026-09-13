@@ -40,7 +40,10 @@ import type { AcpSessionRuntime, AcpSessionRuntimeStartResult } from "../acp/Acp
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { removeAntigravitySessionFiles } from "../acp/AntigravitySessionFiles.ts";
 import { ProviderDriverError } from "../Errors.ts";
-import { makeAntigravityAdapter } from "../Layers/AntigravityAdapter.ts";
+import {
+  ANTIGRAVITY_CONCURRENT_SEND,
+  makeAntigravityAdapter,
+} from "../Layers/AntigravityAdapter.ts";
 import { makeAntigravityProvider } from "../Layers/AntigravityProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import * as ModelManifest from "../ModelManifest.ts";
@@ -108,6 +111,7 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
         displayName,
         accentColor,
         continuationGroupKey: continuationIdentity.continuationKey,
+        concurrentSend: ANTIGRAVITY_CONCURRENT_SEND,
       });
       // Google returns every model the account can use, including older
       // Gemini generations. The manifest names the current ones so the picker

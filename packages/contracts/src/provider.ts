@@ -32,6 +32,30 @@ const ProviderSessionStatus = Schema.Literals([
   "closed",
 ]);
 
+/**
+ * What a provider does with a message the user sends while one of its turns is
+ * already running.
+ *
+ *   - `steer`: the running turn picks the text up and keeps working.
+ *     `ClaudeAdapter.ts` keeps the live turn state and offers the message into
+ *     the running SDK prompt queue.
+ *   - `provider-queue`: the provider accepts the text without cancelling the
+ *     running turn. The provider decides whether it reads the text during the
+ *     current turn or a later turn.
+ *   - `interrupt`: delivery cancels the in-flight work first, so whatever the
+ *     turn had not finished is lost. `GrokAdapter.ts` cancels the live ACP
+ *     prompt; `AntigravityAdapter.ts` cancels its requests and awaits the
+ *     prompt fiber before sending.
+ *   - `unsupported`: the provider cannot take a message while it is working.
+ */
+export const ProviderConcurrentSend = Schema.Literals([
+  "steer",
+  "provider-queue",
+  "interrupt",
+  "unsupported",
+]);
+export type ProviderConcurrentSend = typeof ProviderConcurrentSend.Type;
+
 export const ProviderSession = Schema.Struct({
   provider: ProviderDriverKind,
   // Optional during the driver/instance migration. Once every producer

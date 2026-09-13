@@ -14,6 +14,7 @@ import {
   OrchestrationSession,
   OrchestrationThread,
 } from "@t3tools/contracts";
+import type { QueuedMessageRef } from "@t3tools/contracts";
 import {
   legacyLinkedPullRequestOf,
   legacyThreadPullRequestKey,
@@ -52,11 +53,45 @@ import {
   ThreadRevertedPayload,
   ThreadSessionSetPayload,
   ThreadTurnDiffCompletedPayload,
+  ThreadTurnStartRequestedPayload,
+  ThreadMessageRequeuedPayload,
+  ThreadQueuedMessageCancelledPayload,
+  ThreadQueuedMessageDroppedPayload,
+  ThreadQueuedMessageEditedPayload,
 } from "./Schemas.ts";
 
 type ThreadPatch = Partial<Omit<OrchestrationThread, "id" | "projectId">>;
 const MAX_THREAD_MESSAGES = 2_000;
 const MAX_THREAD_CHECKPOINTS = 500;
+
+function retainCappedThreadMessages(
+  messages: ReadonlyArray<OrchestrationMessage>,
+): ReadonlyArray<OrchestrationMessage> {
+  if (messages.length <= MAX_THREAD_MESSAGES) return messages;
+
+  const retainedIndexes = new Set<number>();
+  let latestAdoptedUserIndex: number | null = null;
+  let latestAdoptedUserAt: string | null = null;
+  for (const [index, message] of messages.entries()) {
+    if (message.queued === true) {
+      retainedIndexes.add(index);
+    } else if (
+      message.role === "user" &&
+      !isImportedAgentSessionMessageId(message.id) &&
+      (latestAdoptedUserAt === null ||
+        compareDateTimeStrings(message.createdAt, latestAdoptedUserAt) > 0)
+    ) {
+      latestAdoptedUserIndex = index;
+      latestAdoptedUserAt = message.createdAt;
+    }
+  }
+  if (latestAdoptedUserIndex !== null) retainedIndexes.add(latestAdoptedUserIndex);
+
+  for (let index = messages.length - 1; retainedIndexes.size < MAX_THREAD_MESSAGES; index -= 1) {
+    retainedIndexes.add(index);
+  }
+  return messages.filter((_, index) => retainedIndexes.has(index));
+}
 
 // Async questions can stay open while the agent produces more activity.
 // Match the database snapshot's pending-question retention.
@@ -206,7 +241,11 @@ function retainThreadMessagesAfterRevert(
 ): ReadonlyArray<OrchestrationMessage> {
   const retainedMessageIds = new Set<string>();
   for (const message of messages) {
-    if (message.role === "system" || isImportedAgentSessionMessageId(message.id)) {
+    if (
+      message.queued === true ||
+      message.role === "system" ||
+      isImportedAgentSessionMessageId(message.id)
+    ) {
       retainedMessageIds.add(message.id);
       continue;
     }
@@ -218,6 +257,7 @@ function retainThreadMessagesAfterRevert(
   const retainedUserCount = messages.filter(
     (message) =>
       message.role === "user" &&
+      message.queued !== true &&
       !isImportedAgentSessionMessageId(message.id) &&
       retainedMessageIds.has(message.id),
   ).length;
@@ -435,6 +475,7 @@ export function projectEvent(
             pullRequests: [],
             branchPullRequest: null,
             latestTurn: null,
+            latestUserMessageAt: null,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
             archivedAt: null,
@@ -446,6 +487,7 @@ export function projectEvent(
             snoozedAt: null,
             deletedAt: null,
             messages: [],
+            queuedMessages: [],
             activities: [],
             checkpoints: [],
             session: null,
@@ -774,6 +816,7 @@ export function projectEvent(
             ...(payload.attachments !== undefined ? { attachments: payload.attachments } : {}),
             turnId: payload.turnId,
             streaming: payload.streaming,
+            queued: payload.queuedTurnStart !== undefined,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
           },
@@ -795,6 +838,7 @@ export function projectEvent(
                     streaming: message.streaming,
                     updatedAt: message.updatedAt,
                     turnId: message.turnId,
+                    queued: message.queued,
                     ...(message.attachments !== undefined
                       ? { attachments: message.attachments }
                       : {}),
@@ -802,16 +846,206 @@ export function projectEvent(
                 : entry,
             )
           : [...thread.messages, message];
-        const cappedMessages = messages.slice(-MAX_THREAD_MESSAGES);
+        const cappedMessages = retainCappedThreadMessages(messages);
+        const existingQueuedMessages = thread.queuedMessages ?? [];
+        const existingQueuedMessage = existingQueuedMessages.find(
+          (entry) => entry.messageId === payload.messageId,
+        );
+        const queuedMessages: ReadonlyArray<QueuedMessageRef> =
+          payload.queuedTurnStart === undefined
+            ? existingQueuedMessages.filter((entry) => entry.messageId !== payload.messageId)
+            : existingQueuedMessage === undefined
+              ? [
+                  ...existingQueuedMessages,
+                  {
+                    messageId: payload.messageId,
+                    queuedTurnStart: payload.queuedTurnStart,
+                    createdAt: payload.createdAt,
+                    revision: 0,
+                  },
+                ]
+              : existingQueuedMessages;
+        const previousLatestUserMessageAt = thread.latestUserMessageAt ?? null;
+        const latestUserMessageAt =
+          payload.role === "user" &&
+          !isImportedAgentSessionMessageId(payload.messageId) &&
+          (previousLatestUserMessageAt === null || payload.createdAt > previousLatestUserMessageAt)
+            ? payload.createdAt
+            : previousLatestUserMessageAt;
 
         return {
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
             messages: cappedMessages,
+            queuedMessages,
+            latestUserMessageAt,
             updatedAt: event.occurredAt,
           }),
         };
       });
+
+    case "thread.turn-start-requested":
+      return decodeForEvent(
+        ThreadTurnStartRequestedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) {
+            return nextBase;
+          }
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              messages: thread.messages.map((entry) =>
+                entry.id === payload.messageId ? { ...entry, queued: false } : entry,
+              ),
+              queuedMessages: (thread.queuedMessages ?? []).filter(
+                (entry) => entry.messageId !== payload.messageId,
+              ),
+              updatedAt: event.occurredAt,
+            }),
+          };
+        }),
+      );
+
+    case "thread.message-requeued":
+      return decodeForEvent(
+        ThreadMessageRequeuedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) {
+            return nextBase;
+          }
+          const existingQueuedMessages = thread.queuedMessages ?? [];
+          const queuedMessages = existingQueuedMessages.some(
+            (entry) => entry.messageId === payload.messageId,
+          )
+            ? existingQueuedMessages
+            : [
+                ...existingQueuedMessages,
+                {
+                  messageId: payload.messageId,
+                  queuedTurnStart: payload.queuedTurnStart,
+                  createdAt:
+                    thread.messages.find((entry) => entry.id === payload.messageId)?.createdAt ??
+                    payload.updatedAt,
+                  revision: 0,
+                },
+              ];
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              messages: thread.messages.map((entry) =>
+                entry.id === payload.messageId ? { ...entry, queued: true } : entry,
+              ),
+              queuedMessages,
+              updatedAt: event.occurredAt,
+            }),
+          };
+        }),
+      );
+
+    case "thread.queued-message-cancelled":
+      return decodeForEvent(
+        ThreadQueuedMessageCancelledPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) {
+            return nextBase;
+          }
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              messages: thread.messages.map((entry) =>
+                entry.id === payload.messageId ? { ...entry, queued: false } : entry,
+              ),
+              queuedMessages: (thread.queuedMessages ?? []).filter(
+                (entry) => entry.messageId !== payload.messageId,
+              ),
+              updatedAt: event.occurredAt,
+            }),
+          };
+        }),
+      );
+
+    case "thread.queued-message-edited":
+      return decodeForEvent(
+        ThreadQueuedMessageEditedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) {
+            return nextBase;
+          }
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              messages: thread.messages.map((entry) =>
+                entry.id === payload.messageId
+                  ? { ...entry, text: payload.text, updatedAt: payload.updatedAt }
+                  : entry,
+              ),
+              queuedMessages: (thread.queuedMessages ?? []).map((entry) =>
+                entry.messageId === payload.messageId
+                  ? { ...entry, revision: payload.revision }
+                  : entry,
+              ),
+              updatedAt: event.occurredAt,
+            }),
+          };
+        }),
+      );
+
+    case "thread.queued-message-dropped":
+      return decodeForEvent(
+        ThreadQueuedMessageDroppedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) {
+            return nextBase;
+          }
+          const messages = thread.messages.filter((entry) => entry.id !== payload.messageId);
+          const latestUserMessageAt = messages.reduce<string | null>((latest, message) => {
+            if (
+              message.role !== "user" ||
+              isImportedAgentSessionMessageId(message.id) ||
+              (latest !== null && compareDateTimeStrings(message.createdAt, latest) <= 0)
+            ) {
+              return latest;
+            }
+            return message.createdAt;
+          }, null);
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              messages,
+              queuedMessages: (thread.queuedMessages ?? []).filter(
+                (entry) => entry.messageId !== payload.messageId,
+              ),
+              latestUserMessageAt,
+              updatedAt: event.occurredAt,
+            }),
+          };
+        }),
+      );
 
     case "thread.session-set":
       return Effect.gen(function* () {
@@ -1004,7 +1238,7 @@ export function projectEvent(
             thread.messages,
             retainedTurnIds,
             payload.turnCount,
-          ).slice(-MAX_THREAD_MESSAGES);
+          );
           const proposedPlans = retainThreadProposedPlansAfterRevert(
             thread.proposedPlans,
             retainedTurnIds,
@@ -1028,7 +1262,7 @@ export function projectEvent(
             ...nextBase,
             threads: updateThread(nextBase.threads, payload.threadId, {
               checkpoints,
-              messages,
+              messages: retainCappedThreadMessages(messages),
               proposedPlans,
               activities,
               latestTurn,

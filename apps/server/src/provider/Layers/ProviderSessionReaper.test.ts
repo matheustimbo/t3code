@@ -198,7 +198,8 @@ describe("ProviderSessionReaper", () => {
       respondToUserInput: () => unsupported(),
       stopSession,
       listSessions: () => Effect.succeed([]),
-      getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" }),
+      getCapabilities: () =>
+        Effect.succeed({ sessionModelSwitch: "in-session", concurrentSend: "steer" } as const),
       assertConversationRollbackSupported: () => unsupported(),
       getInstanceInfo: (instanceId) => {
         const driverKind = ProviderDriverKind.make(String(instanceId));
