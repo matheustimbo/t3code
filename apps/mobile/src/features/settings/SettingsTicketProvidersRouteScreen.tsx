@@ -60,7 +60,7 @@ interface DriverOption {
   readonly secret?: string;
 }
 
-const DRIVER_OPTIONS: ReadonlyArray<DriverOption> = [
+const DRIVER_OPTIONS = [
   { driver: "github", label: "GitHub", baseUrl: "https://github.com", identity: "Account login" },
   { driver: "gitlab", label: "GitLab", baseUrl: "https://gitlab.com", secret: "GITLAB_TOKEN" },
   {
@@ -89,7 +89,7 @@ const DRIVER_OPTIONS: ReadonlyArray<DriverOption> = [
     identity: "Workspace ID",
     secret: "CLICKUP_API_TOKEN",
   },
-];
+] as const satisfies ReadonlyArray<DriverOption>;
 
 function inputClassName() {
   return "rounded-[14px] border border-input-border bg-input px-4 py-3 text-base text-foreground";
@@ -115,7 +115,7 @@ function EnvironmentTicketProviders({
   const registry = useContext(RegistryContext);
   const theme = useUniwindTheme();
   const checkmarkColor = theme["--color-icon"];
-  const destructiveColor = theme["--color-destructive"];
+  const destructiveColor = theme["--color-danger-foreground"];
   const [showAdd, setShowAdd] = useState(false);
   const [driver, setDriver] = useState<DriverOption>(DRIVER_OPTIONS[0]);
   const [displayName, setDisplayName] = useState("");
