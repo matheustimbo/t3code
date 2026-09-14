@@ -104,7 +104,7 @@ jobs:
           node scripts/update-release-package-versions.ts "$version"
           vp run --filter t3 build
           node scripts/apply-web-brand-assets.ts production apps/server/dist/client
-          node apps/server/scripts/cli.ts build-exe --verbose
+          VP_NODE_VERSION="26.8.2" node apps/server/scripts/cli.ts build-exe --verbose
           cargo build \
             --locked \
             --release \
@@ -258,7 +258,7 @@ jobs:
           test -n "$(find release-mac -maxdepth 1 -name '*.zip' -print -quit)"
           test -f release-mac/latest-mac.yml
 
-          node apps/server/scripts/cli.ts build-exe --verbose
+          VP_NODE_VERSION="26.8.2" node apps/server/scripts/cli.ts build-exe --verbose
           resource_monitor="$RUNNER_TEMP/cli-resource-monitor/darwin-arm64"
           mkdir -p "$resource_monitor"
           cp native/resource-monitor/target/aarch64-apple-darwin/release/t3-resource-monitor \
@@ -437,7 +437,7 @@ jobs:
           test -n "$(find release-windows -maxdepth 1 -name '*.exe' -print -quit)"
           test -f release-windows/latest.yml
 
-          node apps/server/scripts/cli.ts build-exe --verbose
+          VP_NODE_VERSION="26.8.2" node apps/server/scripts/cli.ts build-exe --verbose
           resource_monitor="$RUNNER_TEMP/cli-resource-monitor/win32-x64"
           mkdir -p "$resource_monitor"
           cp native/resource-monitor/target/x86_64-pc-windows-msvc/release/t3-resource-monitor.exe \
