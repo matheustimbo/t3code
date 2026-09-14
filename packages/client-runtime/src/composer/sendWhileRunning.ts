@@ -19,6 +19,13 @@ export interface SendWhileRunningAffordance {
   readonly alternate: SendWhileRunningOption | null;
   readonly options: readonly SendWhileRunningOption[];
   readonly blockedReason: string | null;
+  /**
+   * What the composer says while the turn runs and the draft is still empty.
+   * A labeled control needs something to send before it can name the delivery,
+   * and the empty composer is exactly where the user decides whether to type,
+   * so the name has to reach them here or it never does.
+   */
+  readonly placeholder: string;
 }
 
 export interface SendWhileRunningInput {
@@ -43,9 +50,12 @@ const queuedOption: SendWhileRunningOption = {
   destructive: false,
 };
 
+const queuedPlaceholder = "Queue a message for when this turn finishes";
+
 function withQueueChoice(
   behavior: SendWhileRunningDelivery,
   now: SendWhileRunningOption,
+  nowPlaceholder: string,
   fallback: TurnDelivery,
   preferences: SendWhileRunningPreferences | undefined,
 ): SendWhileRunningAffordance {
@@ -57,6 +67,7 @@ function withQueueChoice(
     alternate: selected === now ? queuedOption : now,
     options: [now, queuedOption],
     blockedReason: null,
+    placeholder: selected === now ? nowPlaceholder : queuedPlaceholder,
   };
 }
 
@@ -64,8 +75,16 @@ function withoutChoice(
   behavior: SendWhileRunningDelivery,
   only: SendWhileRunningOption,
   blockedReason: string | null,
+  placeholder: string,
 ): SendWhileRunningAffordance {
-  return { behavior, selected: only, alternate: null, options: [only], blockedReason };
+  return {
+    behavior,
+    selected: only,
+    alternate: null,
+    options: [only],
+    blockedReason,
+    placeholder,
+  };
 }
 
 export function resolveSendWhileRunning(
@@ -78,12 +97,13 @@ export function resolveSendWhileRunning(
       "unknown",
       {
         turnDelivery: "now",
-        label: "Send",
+        label: "Send anyway",
         description:
           "T3 Code cannot tell what happens when you send this while the agent is working.",
         destructive: false,
       },
       null,
+      "T3 Code cannot tell what sending does while the agent is working",
     );
   }
 
@@ -99,6 +119,7 @@ export function resolveSendWhileRunning(
           description: `${name} reads it while it keeps working.`,
           destructive: false,
         },
+        `Steer ${name} while it keeps working`,
         "now",
         input.preferences,
       );
@@ -111,6 +132,7 @@ export function resolveSendWhileRunning(
           description: `Goes to ${name} now. ${name} decides when it reads it, and you cannot edit or remove it after that.`,
           destructive: false,
         },
+        `Send to ${name} now, while it keeps working`,
         "queued",
         input.preferences,
       );
@@ -123,6 +145,7 @@ export function resolveSendWhileRunning(
           description: `Stops what ${name} is doing right now. Work in progress is lost.`,
           destructive: true,
         },
+        `Interrupt ${name} and lose its work in progress`,
         "queued",
         input.preferences,
       );
@@ -136,17 +159,21 @@ export function resolveSendWhileRunning(
           destructive: false,
         },
         `${name} cannot take a message while it is working.`,
+        `${name} cannot take a message until this turn finishes`,
       );
+    // A server that predates the capability. The send still works, so this
+    // stays enabled and says the one thing that would fix it instead.
     default:
       return withoutChoice(
         "unknown",
         {
           turnDelivery: "now",
-          label: "Send",
-          description: `This server is too old to say what happens when you send while ${name} is working.`,
+          label: "Send anyway",
+          description: `Restart or update this server to see what sending does while ${name} is working. Until then T3 Code cannot say.`,
           destructive: false,
         },
         null,
+        `Restart or update this server to see what sending does while ${name} is working`,
       );
   }
 }
