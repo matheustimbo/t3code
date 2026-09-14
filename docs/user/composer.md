@@ -46,6 +46,13 @@ message. The available choices depend on the provider:
 - **Send now** gives the message to the provider, which decides when to read it.
 - **Interrupt** stops the current turn and starts the message.
 
+With an empty composer, the placeholder names the delivery a send would use, so
+you can read it before you start typing.
+
+If the send reads **Send anyway**, the server is older than this feature and
+cannot say what sending does. Restart or update the server to get the named
+choices back.
+
 T3 Code remembers your choice for providers with the same delivery behavior. On
 web and desktop, press Command+Enter or Ctrl+Enter to use the other choice once.
 A queued message has **Edit** and **Remove from queue** actions until delivery
