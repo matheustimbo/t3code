@@ -1,5 +1,10 @@
 import { memo, type PointerEventHandler } from "react";
-import { ChevronDownIcon, ChevronLeftIcon, CornerDownLeftIcon } from "lucide-react";
+import {
+  ChevronDownIcon,
+  ChevronLeftIcon,
+  CircleAlertIcon,
+  CornerDownLeftIcon,
+} from "lucide-react";
 import type {
   SendWhileRunningAffordance,
   SendWhileRunningOption,
@@ -371,6 +376,11 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       disabled={sendWhileRunningDisabled}
       aria-label={blocked ?? undefined}
     >
+      {/* An unnamed delivery must not read as the ordinary send it used to
+          render as, so it wears the glyph as well as the wording. */}
+      {sendWhileRunning.behavior === "unknown" ? (
+        <CircleAlertIcon className="size-3.5 opacity-80" aria-hidden="true" />
+      ) : null}
       {sendWhileRunning.selected.label}
       {showEnterHint ? (
         <Kbd className="bg-transparent text-current opacity-70">

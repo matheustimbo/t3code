@@ -27,6 +27,8 @@ const queueOption: SendWhileRunningOption = {
   destructive: false,
 };
 
+const queuedPlaceholder = "Queue a message for when this turn finishes";
+
 const steerNow: SendWhileRunningOption = {
   turnDelivery: "now",
   label: "Steer",
@@ -59,6 +61,7 @@ describe("resolveSendWhileRunning with no stored preference", () => {
       alternate: queueOption,
       options: [steerNow, queueOption],
       blockedReason: null,
+      placeholder: "Steer Claude while it keeps working",
     });
   });
 
@@ -71,6 +74,7 @@ describe("resolveSendWhileRunning with no stored preference", () => {
       alternate: codexNow,
       options: [codexNow, queueOption],
       blockedReason: null,
+      placeholder: queuedPlaceholder,
     });
   });
 
@@ -83,6 +87,7 @@ describe("resolveSendWhileRunning with no stored preference", () => {
       alternate: grokNow,
       options: [grokNow, queueOption],
       blockedReason: null,
+      placeholder: queuedPlaceholder,
     });
   });
 });
@@ -101,6 +106,7 @@ describe("resolveSendWhileRunning with a stored preference", () => {
       alternate: steerNow,
       options: [steerNow, queueOption],
       blockedReason: null,
+      placeholder: queuedPlaceholder,
     });
   });
 
@@ -117,6 +123,7 @@ describe("resolveSendWhileRunning with a stored preference", () => {
       alternate: queueOption,
       options: [codexNow, queueOption],
       blockedReason: null,
+      placeholder: "Send to Codex now, while it keeps working",
     });
   });
 
@@ -133,6 +140,7 @@ describe("resolveSendWhileRunning with a stored preference", () => {
       alternate: queueOption,
       options: [grokNow, queueOption],
       blockedReason: null,
+      placeholder: "Interrupt Grok and lose its work in progress",
     });
   });
 
@@ -174,6 +182,7 @@ describe("resolveSendWhileRunning with a stored preference", () => {
         },
       ],
       blockedReason: "Cursor cannot take a message while it is working.",
+      placeholder: "Cursor cannot take a message until this turn finishes",
     });
   });
 });
@@ -221,23 +230,50 @@ describe("resolveSendWhileRunning when the capability is missing", () => {
       behavior: "unknown",
       selected: {
         turnDelivery: "now",
-        label: "Send",
+        label: "Send anyway",
         description:
-          "This server is too old to say what happens when you send while OpenCode is working.",
+          "Restart or update this server to see what sending does while OpenCode is working. Until then T3 Code cannot say.",
         destructive: false,
       },
       alternate: null,
       options: [
         {
           turnDelivery: "now",
-          label: "Send",
+          label: "Send anyway",
           description:
-            "This server is too old to say what happens when you send while OpenCode is working.",
+            "Restart or update this server to see what sending does while OpenCode is working. Until then T3 Code cannot say.",
           destructive: false,
         },
       ],
       blockedReason: null,
+      placeholder:
+        "Restart or update this server to see what sending does while OpenCode is working",
     });
+  });
+
+  it("does not wear the label of a server that named the delivery", () => {
+    const stale = resolveSendWhileRunning({
+      isRunning: true,
+      provider: provider("claudeAgent", undefined),
+    })!;
+    const named = resolveSendWhileRunning({
+      isRunning: true,
+      provider: provider("claudeAgent", "steer"),
+    })!;
+
+    expect(stale.selected.label).toBe("Send anyway");
+    expect(named.selected.label).toBe("Steer");
+    expect(stale.placeholder).not.toBe(named.placeholder);
+  });
+
+  it("keeps sending available on a server that cannot name the delivery", () => {
+    const affordance = resolveSendWhileRunning({
+      isRunning: true,
+      provider: provider("opencode", undefined),
+    })!;
+
+    expect(affordance.blockedReason).toBeNull();
+    expect(affordance.selected.turnDelivery).toBe("now");
   });
 
   it("admits it cannot tell when the session provider is unknown", () => {
@@ -245,7 +281,7 @@ describe("resolveSendWhileRunning when the capability is missing", () => {
       behavior: "unknown",
       selected: {
         turnDelivery: "now",
-        label: "Send",
+        label: "Send anyway",
         description:
           "T3 Code cannot tell what happens when you send this while the agent is working.",
         destructive: false,
@@ -254,13 +290,14 @@ describe("resolveSendWhileRunning when the capability is missing", () => {
       options: [
         {
           turnDelivery: "now",
-          label: "Send",
+          label: "Send anyway",
           description:
             "T3 Code cannot tell what happens when you send this while the agent is working.",
           destructive: false,
         },
       ],
       blockedReason: null,
+      placeholder: "T3 Code cannot tell what sending does while the agent is working",
     });
   });
 });
@@ -275,6 +312,15 @@ describe("resolveSendWhileRunning naming", () => {
     expect(affordance?.alternate?.description).toBe(
       "Goes to Codex Work now. Codex Work decides when it reads it, and you cannot edit or remove it after that.",
     );
+  });
+
+  it("names the instance in the line the empty composer shows", () => {
+    const affordance = resolveSendWhileRunning({
+      isRunning: true,
+      provider: provider("claudeAgent", "steer", "Claude Review"),
+    });
+
+    expect(affordance?.placeholder).toBe("Steer Claude Review while it keeps working");
   });
 });
 

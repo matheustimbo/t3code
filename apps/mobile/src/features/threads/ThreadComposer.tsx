@@ -92,6 +92,7 @@ import {
   endEditQueuedTurnMessage,
 } from "../../state/edit-queued-thread-message";
 import { useSendWhileRunningPreferences } from "../../state/send-while-running-preferences";
+import { threadComposerRunningCopy } from "./threadComposerRunningCopy";
 import {
   composerStripAttachments,
   type DraftComposerAttachment,
@@ -419,12 +420,12 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       }),
     [props.selectedThread.session?.status, sessionProviderStatus, deliveryPreferences],
   );
-  // The outbox label describes real delivery, so it outranks the provider
-  // wording whenever the send is not leaving right now.
-  const runningSendLabel =
-    outboxSendLabel === "Send" && sendWhileRunning !== null
-      ? sendWhileRunning.selected.label
-      : null;
+  const runningCopy = threadComposerRunningCopy({
+    outboxSendLabel,
+    sendWhileRunning,
+    idlePlaceholder: props.placeholder,
+  });
+  const runningSendLabel = runningCopy.sendLabel;
   const sendLabel = runningSendLabel ?? outboxSendLabel;
   const currentModelSelection = props.selectedThread.modelSelection;
   const currentRuntimeMode = props.selectedThread.runtimeMode;
@@ -450,6 +451,8 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     ? EDIT_QUEUED_MESSAGE_ACCESSIBLE_LABEL
     : sendLabel;
   const sendButtonLabel = isEditingQueuedMessage ? EDIT_QUEUED_MESSAGE_LABEL : runningSendLabel;
+  // An open edit saves rather than sends, so the delivery wording would be a lie.
+  const composerPlaceholder = isEditingQueuedMessage ? props.placeholder : runningCopy.placeholder;
   const cancelQueuedMessageEdit = useCallback(() => {
     endEditQueuedTurnMessage(composerOwnerKey);
   }, [composerOwnerKey]);
@@ -961,7 +964,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                   }
                   insertPaste();
                 }}
-                placeholder={props.placeholder}
+                placeholder={composerPlaceholder}
                 onFocus={handleFocus}
                 onBlur={handleBlur}
                 onSubmit={handleSend}

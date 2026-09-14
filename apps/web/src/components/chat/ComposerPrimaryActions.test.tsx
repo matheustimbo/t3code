@@ -106,6 +106,14 @@ const steerAffordance = resolveSendWhileRunning({
   },
 })!;
 
+const staleServerAffordance = resolveSendWhileRunning({
+  isRunning: true,
+  provider: {
+    instanceId: ProviderInstanceId.make("claudeAgent"),
+    driver: ProviderDriverKind.make("claudeAgent"),
+  },
+})!;
+
 const unsupportedAffordance = resolveSendWhileRunning({
   isRunning: true,
   provider: {
@@ -186,7 +194,7 @@ describe("ComposerPrimaryActions", () => {
     expect(markup).toContain('aria-label="Cursor cannot take a message while it is working."');
   });
 
-  it("keeps stop as the only action while running with an empty composer", () => {
+  it("leaves stop alone with an empty composer, where the placeholder names the delivery", () => {
     const markup = renderRunningActions({
       sendWhileRunning: steerAffordance,
       hasSendableContent: false,
@@ -194,6 +202,41 @@ describe("ComposerPrimaryActions", () => {
 
     expect(markup).toContain('aria-label="Stop generation"');
     expect(markup).not.toContain("Steer");
+  });
+
+  it("does not pass a server that never named the delivery off as an ordinary send", () => {
+    const markup = renderRunningActions({
+      sendWhileRunning: staleServerAffordance,
+      hasSendableContent: true,
+      compact: false,
+    });
+
+    expect(markup).toContain("Send anyway");
+    expect(markup).toContain("lucide-circle-alert");
+    expect(markup).not.toContain("Steer");
+    // Sending still works on an old server, so the warning must not block it.
+    expect(markup).not.toContain('disabled=""');
+  });
+
+  it("keeps a named delivery free of the unnamed-send wording", () => {
+    const markup = renderRunningActions({
+      sendWhileRunning: steerAffordance,
+      hasSendableContent: true,
+      compact: false,
+    });
+
+    expect(markup).toContain("Steer");
+    expect(markup).not.toContain("Send anyway");
+    expect(markup).not.toContain("lucide-circle-alert");
+  });
+
+  it("carries the unnamed send in the accessible name when the composer is narrow", () => {
+    const markup = renderRunningActions({
+      sendWhileRunning: staleServerAffordance,
+      hasSendableContent: true,
+    });
+
+    expect(markup).toContain('aria-label="Send anyway"');
   });
 
   it("keeps stop as the only action when no affordance is resolved", () => {
