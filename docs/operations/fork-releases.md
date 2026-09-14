@@ -1,21 +1,21 @@
 # Fork releases
 
-The public fork publishes its own server, macOS desktop, and Windows desktop artifacts from
+The public fork publishes its own CLI, macOS desktop, and Windows desktop artifacts from
 `fork-main`. The workflow uses standard GitHub-hosted Ubuntu, macOS, and Windows runners. It does
 not depend on upstream release credentials or third-party runners.
 
 Each push to `fork-main`, or a manual **Fork release** workflow dispatch, increments the latest
 `v0.1.<number>` tag and publishes:
 
-- `t3-<version>.tgz`, used whenever a client needs that exact server version
-- `t3-latest.tgz`, used for initial installs and background-service management
+- self-contained CLI archives for macOS arm64, Linux x64, and Windows x64
+- `SHA256SUMS`, used by the CLI installers and self-update flow
 - an arm64 macOS desktop DMG and ZIP, their blockmaps, and `latest-mac.yml`
 - an x64 Windows NSIS installer, its blockmap, and `latest.yml`
 
 The desktop build embeds `matheustimbo/t3code` as its update repository. The in-app update button,
-desktop update checks, copied server commands, background-service updates, SSH bootstrapping, WSL
-runtimes, and model manifest all resolve from the fork rather than the upstream package or release
-feed.
+desktop update checks, background-service updates, SSH bootstrapping, WSL runtimes, CLI installers,
+and model manifest all resolve from the fork rather than the upstream package or release feed. The
+Windows desktop embeds the Linux x64 CLI archive as its WSL runtime.
 
 The macOS job uses Developer ID signing when all Apple credentials are configured. If any credential
 is absent, the job falls back to ad-hoc signing, and macOS may require the user to approve the first

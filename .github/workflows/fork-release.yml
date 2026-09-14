@@ -86,75 +86,50 @@ jobs:
               - --filter=@t3tools/web...
               - --filter=@t3tools/scripts...
 
-      - name: Build versioned server package
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Setup Node for single-executable build
+        uses: actions/setup-node@v6
+        with:
+          node-version: 26.8.2
+
+      - name: Build Linux CLI archive
         shell: bash
         run: |
           set -euo pipefail
           version="${{ needs.prepare.outputs.version }}"
           node scripts/update-release-package-versions.ts "$version"
           vp run --filter t3 build
-          node apps/server/scripts/cli.ts pack \
-            --app-version "$version" \
-            --pack-destination release-server \
-            --verbose
-          test -f "release-server/t3-${version}.tgz"
-          tar -tzf "release-server/t3-${version}.tgz" package/dist/bin.mjs >/dev/null
-          test "$(npx --yes --package="$GITHUB_WORKSPACE/release-server/t3-${version}.tgz" t3 --version)" = "t3 v${version}"
-          cp "release-server/t3-${version}.tgz" release-server/t3-latest.tgz
+          node scripts/apply-web-brand-assets.ts production apps/server/dist/client
+          node apps/server/scripts/cli.ts build-exe --verbose
+          cargo build \
+            --locked \
+            --release \
+            --manifest-path native/resource-monitor/Cargo.toml \
+            --target x86_64-unknown-linux-gnu
 
-      - name: Upload server packages
+          resource_monitor="$RUNNER_TEMP/cli-resource-monitor/linux-x64"
+          mkdir -p "$resource_monitor"
+          cp native/resource-monitor/target/x86_64-unknown-linux-gnu/release/t3-resource-monitor \
+            "$resource_monitor/t3-resource-monitor"
+          node scripts/build-cli-archive.ts \
+            --platform linux \
+            --arch x64 \
+            --version "$version" \
+            --resource-monitor-dir "$RUNNER_TEMP/cli-resource-monitor" \
+            --output-dir release-server
+          node scripts/smoke-cli-archive.ts \
+            --archive "release-server/t3-${version}-linux-x64.tar.gz" \
+            --expect-version "$version"
+
+      - name: Upload Linux CLI archive
         uses: actions/upload-artifact@v7
         with:
-          name: fork-server
-          path: release-server/*.tgz
-          if-no-files-found: error
-          retention-days: 1
-
-  build_wsl_node_pty:
-    name: Build WSL node-pty (linux-x64)
-    needs: prepare
-    if: needs.prepare.outputs.release == 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - name: Checkout fork release
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ github.sha }}
-          sparse-checkout: |
-            /*
-            !/.repos/
-          sparse-checkout-cone-mode: false
-
-      - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
-        with:
-          node-version-file: package.json
-          cache: true
-          run-install: |
-            args:
-              - --filter=t3...
-
-      # The Windows app runs its server backend inside WSL. Build node-pty on
-      # Linux so users do not need a compiler or network access on first launch.
-      - name: Build node-pty linux-x64 prebuild
-        shell: bash
-        run: |
-          set -euo pipefail
-          pty_pkg="$(node -e "console.log(require.resolve('node-pty/package.json', { paths: ['$GITHUB_WORKSPACE/apps/server'] }))")"
-          pty_dir="$(dirname "$pty_pkg")"
-          ( cd "$pty_dir" && npx --yes node-gyp rebuild )
-          mkdir -p wsl-prebuild
-          cp "$pty_dir/build/Release/pty.node" wsl-prebuild/pty.node
-          file wsl-prebuild/pty.node
-
-      - name: Upload node-pty linux-x64 prebuild
-        uses: actions/upload-artifact@v7
-        with:
-          # Keep this outside the fork-* publish pattern. It is an input to the
-          # Windows build, not a standalone release asset.
-          name: wsl-node-pty-x64
-          path: wsl-prebuild/pty.node
+          name: fork-cli-linux-x64
+          path: release-server/*
           if-no-files-found: error
           retention-days: 1
 
@@ -199,6 +174,11 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.rust_target }}
+
+      - name: Setup Node for single-executable build
+        uses: actions/setup-node@v6
+        with:
+          node-version: 26.8.2
 
       - name: Build fork desktop
         env:
@@ -278,6 +258,22 @@ jobs:
           test -n "$(find release-mac -maxdepth 1 -name '*.zip' -print -quit)"
           test -f release-mac/latest-mac.yml
 
+          node apps/server/scripts/cli.ts build-exe --verbose
+          resource_monitor="$RUNNER_TEMP/cli-resource-monitor/darwin-arm64"
+          mkdir -p "$resource_monitor"
+          cp native/resource-monitor/target/aarch64-apple-darwin/release/t3-resource-monitor \
+            "$resource_monitor/t3-resource-monitor"
+          node scripts/build-cli-archive.ts \
+            --platform mac \
+            --arch arm64 \
+            --version "$version" \
+            --resource-monitor-dir "$RUNNER_TEMP/cli-resource-monitor" \
+            --output-dir release-cli
+          node scripts/smoke-cli-archive.ts \
+            --archive "release-cli/t3-${version}-darwin-arm64.tar.gz" \
+            --expect-version "$version"
+          cp release-cli/* release-mac/
+
       # Signing failures are easy to miss: an unsigned or unstapled DMG still
       # builds and uploads, and only fails on a user's machine at first launch.
       - name: Verify signed macOS artifacts
@@ -333,7 +329,7 @@ jobs:
 
   desktop_windows:
     name: Build Windows x64 desktop
-    needs: [prepare, build_wsl_node_pty]
+    needs: [prepare, server]
     if: needs.prepare.outputs.release == 'true'
     runs-on: windows-2025
     timeout-minutes: 45
@@ -400,11 +396,16 @@ jobs:
             exit $code
           }
 
-      - name: Download WSL node-pty prebuild
+      - name: Download Linux CLI archive for WSL
         uses: actions/download-artifact@v7
         with:
-          name: wsl-node-pty-x64
-          path: wsl-prebuild
+          name: fork-cli-linux-x64
+          path: server-release
+
+      - name: Setup Node for single-executable build
+        uses: actions/setup-node@v6
+        with:
+          node-version: 26.8.2
 
       - name: Build fork desktop
         shell: bash
@@ -423,7 +424,7 @@ jobs:
             --target nsis \
             --arch x64 \
             --build-version "$version" \
-            --wsl-prebuild "$GITHUB_WORKSPACE/wsl-prebuild/pty.node" \
+            --wsl-runtime "$GITHUB_WORKSPACE/server-release/t3-${version}-linux-x64.tar.gz" \
             --verbose
 
           mkdir -p release-windows
@@ -435,6 +436,22 @@ jobs:
           done
           test -n "$(find release-windows -maxdepth 1 -name '*.exe' -print -quit)"
           test -f release-windows/latest.yml
+
+          node apps/server/scripts/cli.ts build-exe --verbose
+          resource_monitor="$RUNNER_TEMP/cli-resource-monitor/win32-x64"
+          mkdir -p "$resource_monitor"
+          cp native/resource-monitor/target/x86_64-pc-windows-msvc/release/t3-resource-monitor.exe \
+            "$resource_monitor/t3-resource-monitor.exe"
+          node scripts/build-cli-archive.ts \
+            --platform win \
+            --arch x64 \
+            --version "$version" \
+            --resource-monitor-dir "$RUNNER_TEMP/cli-resource-monitor" \
+            --output-dir release-cli
+          node scripts/smoke-cli-archive.ts \
+            --archive "release-cli/t3-${version}-win32-x64.zip" \
+            --expect-version "$version"
+          cp release-cli/* release-windows/
 
       - name: Upload desktop packages
         uses: actions/upload-artifact@v7
@@ -475,6 +492,19 @@ jobs:
           pattern: fork-*
           merge-multiple: true
           path: release-assets
+
+      - name: Generate CLI archive checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release-assets
+          archives=(
+            t3-*-darwin-*.tar.gz
+            t3-*-linux-*.tar.gz
+            t3-*-win32-*.zip
+          )
+          test -e "${archives[0]}"
+          sha256sum "${archives[@]}" > SHA256SUMS
 
       - name: Generate fork release notes
         env:
