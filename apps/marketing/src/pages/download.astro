@@ -131,7 +131,9 @@ const imageProps = {
           <svg class="platform-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 7l5 5-5 5M12 17h7"/></svg>
           <h2 class="platform-name">Terminal</h2>
         </div>
-        <code class="cli-line">npx t3@nightly</code>
+        <code class="cli-line">curl -fsSL https://raw.githubusercontent.com/matheustimbo/t3code/fork-main/scripts/install.sh | sh</code>
+        <p class="cli-note">On Windows, run this command in PowerShell:</p>
+        <code class="cli-line">irm https://raw.githubusercontent.com/matheustimbo/t3code/fork-main/scripts/install.ps1 | iex</code>
       </section>
     </div>
 
@@ -430,6 +432,12 @@ const imageProps = {
     font-weight: 500;
     font-size: 1.1rem;
     letter-spacing: -0.01em;
+  }
+
+  .cli-note {
+    color: var(--fg-muted);
+    font-size: 0.85rem;
+    margin-top: 0.5rem;
   }
 
   .cli-line {

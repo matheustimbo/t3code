@@ -5,20 +5,43 @@ desktop, web, or mobile app. Set up the machine where the agents will work first
 
 ## Requirements
 
-Command-line use, SSH hosts, and WSL backends need Node.js 22.16+ (22.x), 23.11+
-(23.x), or 24.10 and later. The native desktop app includes its server runtime.
+The CLI is a self-contained executable. It does not need Node.js, npm, or a
+compiler. The native desktop app includes the same server runtime.
 
 You need an installed, authenticated provider before starting a thread. You can
 launch T3 Code and configure providers afterwards.
 
-## Run without installing
+## Install the CLI
 
 ```bash
-npx --yes --package=https://github.com/matheustimbo/t3code/releases/latest/download/t3-latest.tgz t3
+curl -fsSL https://raw.githubusercontent.com/matheustimbo/t3code/fork-main/scripts/install.sh | sh
 ```
 
-This starts the server and opens the local web app. Run
-`npx --yes --package=https://github.com/matheustimbo/t3code/releases/latest/download/t3-latest.tgz t3 --help` for command-line options.
+On Windows, run this command in PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/matheustimbo/t3code/fork-main/scripts/install.ps1 | iex
+```
+
+Run `t3` to start the server and open the local web app. Run `t3 --help` for
+command-line options. The installer follows stable releases by default. Set
+`T3CODE_CHANNEL=nightly` to install the latest nightly.
+
+The executable is built for Apple Silicon Macs, Linux, and Windows. There is
+no Intel Mac build of it, because Node cannot produce a single executable for
+that platform; the Intel desktop app is unaffected. To run a standalone server
+on an Intel Mac, build it from source. You need Node.js 24 and `vp` (see
+[Install vp](https://github.com/pingdotgg/t3code#install-vp)):
+
+```bash
+git clone https://github.com/pingdotgg/t3code
+cd t3code && vp i && vp run build:desktop
+node apps/server/dist/bin.mjs
+```
+
+A server run this way is a plain Node program: `t3 update` and the background
+service do not apply, so update it with `git pull` and a rebuild, and start it
+however you run other Node processes.
 
 ## Desktop app
 
@@ -44,14 +67,15 @@ update can take longer.
 
 ### Open a project from a terminal
 
-With the desktop app already running on the same machine:
+Install the CLI, then run this command with the desktop app open on the same
+machine:
 
 ```bash
-npx --yes --package=https://github.com/matheustimbo/t3code/releases/latest/download/t3-latest.tgz t3 app
+t3 app
 ```
 
 This opens a new thread for the current directory, adding the project if needed.
-Pass a path, such as `npx --yes --package=https://github.com/matheustimbo/t3code/releases/latest/download/t3-latest.tgz t3 app ../my-project`, to open another directory. It requires
+Pass a path, such as `t3 app ../my-project`, to open another directory. It requires
 the desktop app, so a standalone server or an SSH session is not enough. If the
 command cannot reach the app, start or update the desktop app and try again.
 

@@ -1,4 +1,3 @@
-import { forkServerPackageSpec } from "@t3tools/shared/distribution";
 import { HostProcessArguments } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 
@@ -37,11 +36,14 @@ function detectCliRunner(entryPath: string): CliRunner | null {
 }
 
 /**
- * The exact fork release package to suggest. Package runners resolve the
- * literal URL away before our process starts, so re-derive it from the build.
+ * The `t3` package spec to suggest. The literal spec the user typed (e.g.
+ * `t3@nightly`) is resolved away before our process starts, so re-derive it
+ * from the running version: nightly builds re-suggest the nightly channel,
+ * anything else suggests the bare package.
  */
-export function suggestedPackageSpec(version: string): string {
-  return forkServerPackageSpec(version);
+function suggestedPackageSpec(version: string): string {
+  const channel = /^[^-+]+-(nightly|preview)\./.exec(version)?.[1];
+  return channel === undefined ? "t3" : `t3@${channel}`;
 }
 
 /**
@@ -59,10 +61,7 @@ export function formatCliCommand(input: {
   if (runner === null) {
     return `t3 ${input.subcommand}`;
   }
-  const packageSpec = suggestedPackageSpec(input.version);
-  return runner === "npx"
-    ? `npx --yes --package=${packageSpec} t3 ${input.subcommand}`
-    : `${runner} ${packageSpec} ${input.subcommand}`;
+  return `${runner} ${suggestedPackageSpec(input.version)} ${input.subcommand}`;
 }
 
 /** `formatCliCommand` against this process's real entry path and version. */

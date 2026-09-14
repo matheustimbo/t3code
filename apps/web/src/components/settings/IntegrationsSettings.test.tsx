@@ -27,10 +27,11 @@ vi.mock("../../state/environments", () => ({
   // TicketProviderSettings renders inside this panel and reads the primary id.
   usePrimaryEnvironmentId: () => null,
 }));
-vi.mock("../../hooks/useSettings", () => ({
+vi.mock("../../hooks/useSettings", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../hooks/useSettings")>()),
   PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE: "Connect to an environment",
-  useClientSettings: (selector: (settings: typeof DEFAULT_CLIENT_SETTINGS) => unknown) =>
-    selector(DEFAULT_CLIENT_SETTINGS),
+  useClientSettings: (selector?: (settings: typeof DEFAULT_CLIENT_SETTINGS) => unknown) =>
+    selector ? selector(DEFAULT_CLIENT_SETTINGS) : DEFAULT_CLIENT_SETTINGS,
   useClientSettingsHydrated: () => true,
   usePrimarySettingsAvailable: () => true,
   usePrimarySettings: () => DEFAULT_UNIFIED_SETTINGS,
@@ -46,7 +47,10 @@ vi.mock("./ProjectDefaultsSettings", () => ({ ProjectDefaultsSettings: () => nul
 vi.mock("./SettingsScopeContext", () => ({
   useSettingsScope: () => ({
     scope: { kind: "all", environmentIds: [] },
+    search: {},
     environment: null,
+    environments: [],
+    target: null,
     connectedEnvironments: [],
     targets: [],
   }),

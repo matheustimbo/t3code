@@ -1,6 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, expect, it } from "@effect/vitest";
-import { forkServerCommand } from "@t3tools/shared/distribution";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import * as NetService from "@t3tools/shared/Net";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -46,7 +45,7 @@ it("reports the installed service version and host paths", () => {
 it("gives a direct repair command for a stale service", () => {
   assert.include(
     formatServiceStatus({ ...status, current: false }, "0.0.29"),
-    `Next: Run \`${forkServerCommand("0.0.29", "service update")}\`.`,
+    "Next: Run `npx t3@0.0.29 service update`.",
   );
 });
 
@@ -65,8 +64,8 @@ it("explains an incomplete nightly installation and keeps repair on its installe
   expect(output).toContain("last login session ends");
   expect(output).toContain('sudo loginctl enable-linger "$(id -un)"');
   expect(output).toContain("[service-stopped]");
-  expect(output).toContain(forkServerCommand("0.0.32-nightly.1", "service update"));
-  expect(output).not.toContain("t3-latest.tgz");
+  expect(output).toContain("npx t3@0.0.32-nightly.1 service update");
+  expect(output).not.toContain("t3@latest");
 });
 
 it("suggests the newer CLI version when the installed service needs an update", () => {
@@ -74,8 +73,8 @@ it("suggests the newer CLI version when the installed service needs an update", 
     { ...status, current: false, installedVersion: "0.0.28" },
     "0.0.29",
   );
-  expect(output).toContain(forkServerCommand("0.0.29", "service update"));
-  expect(output).not.toContain(forkServerCommand("0.0.28", "service update"));
+  expect(output).toContain("npx t3@0.0.29 service update");
+  expect(output).not.toContain("npx t3@0.0.28 service update");
 });
 
 it("explains where the service is supported", () => {
@@ -92,8 +91,8 @@ it("reports a newer installed service and gives an exact-version repair command"
   );
 
   assert.include(output, "t3@0.0.32-nightly.1 (newer than this t3@0.0.31 CLI)");
-  assert.include(output, forkServerCommand("0.0.32-nightly.1", "service update"));
-  assert.notInclude(output, "t3-latest.tgz");
+  assert.include(output, "npx t3@0.0.32-nightly.1 service update");
+  assert.notInclude(output, "npx t3@latest service update");
 });
 
 const newerServiceStatus = { ...status, current: false, installedVersion: "999.0.0" };
@@ -106,8 +105,7 @@ function makeTestService(serviceStatus: BootService.BootServiceStatus) {
       Effect.sync(() => {
         installOptions.push(options);
         return {
-          nodePath: "/test/node",
-          launcherPath: "/test/service-launcher.mjs",
+          program: ["/test/t3/runtime/versions/1.0.0/t3", "__service-launcher"],
           baseDir: "/test/t3",
           unitPath: serviceStatus.unitPath,
           logPath: serviceStatus.logPath,

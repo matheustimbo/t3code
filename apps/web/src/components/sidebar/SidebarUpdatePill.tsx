@@ -411,7 +411,7 @@ function SidebarUpdateControl() {
   );
 
   return (
-    <SidebarMenuItem className="ml-auto shrink-0 group-data-[collapsible=icon]:hidden">
+    <SidebarMenuItem className="ml-auto shrink-0">
       <Popover
         handle={releaseNotesPopoverHandle}
         onOpenChange={(open, details) => {

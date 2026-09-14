@@ -1,10 +1,10 @@
-import { forkServerCommand, latestForkServerCommand } from "@t3tools/shared/distribution";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Terminal from "effect/Terminal";
 import { Command, Flag, GlobalFlag, Prompt } from "effect/unstable/cli";
+import { FetchHttpClient } from "effect/unstable/http";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
@@ -18,7 +18,11 @@ export const bootServiceLayer = (config: ServerConfig.ServerConfig["Service"]) =
     baseDir: config.baseDir,
     logsDir: config.logsDir,
     cliVersion: packageJson.version,
-  }).pipe(Layer.provide(ProcessRunner.layer));
+  }).pipe(
+    Layer.provide(ProcessRunner.layer),
+    // Archive-distributed versions download the release archive here.
+    Layer.provide(FetchHttpClient.layer),
+  );
 
 export type ServiceReconcileResult =
   | {
@@ -83,7 +87,7 @@ export function formatServiceStatus(
       `  Unit: ${status.unitPath}`,
       `  Logs: ${status.logPath}`,
       ...problems,
-      `  Next: Use \`${forkServerCommand(installedVersion, "service update")}\` to repair it, or pass \`--allow-downgrade\` explicitly.`,
+      `  Next: Use \`npx t3@${installedVersion} service update\` to repair it, or pass \`--allow-downgrade\` explicitly.`,
     ].join("\n");
   }
   return [
@@ -92,9 +96,7 @@ export function formatServiceStatus(
     `  Unit: ${status.unitPath}`,
     `  Logs: ${status.logPath}`,
     ...problems,
-    ...(status.current
-      ? []
-      : [`  Next: Run \`${forkServerCommand(cliVersion, "service update")}\`.`]),
+    ...(status.current ? [] : [`  Next: Run \`npx t3@${cliVersion} service update\`.`]),
   ].join("\n");
 }
 
@@ -138,7 +140,7 @@ const serviceInstallCommand = Command.make("install", serviceReconcileFlags).pip
 
 const serviceUpdateCommand = Command.make("update", serviceReconcileFlags).pipe(
   Command.withDescription(
-    `Update or repair the background service using this CLI version. Use \`${latestForkServerCommand("service update")}\` for the latest fork release.`,
+    "Update or repair the background service using this CLI version. Use `t3 update` to move to a newer release first.",
   ),
   Command.withHandler((flags) =>
     runServiceCommand(

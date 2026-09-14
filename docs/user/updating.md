@@ -34,17 +34,17 @@ The offered action depends on how the server runs:
 For a background service, run the matching version's CLI on the host:
 
 ```sh
-npx --yes --package=https://github.com/matheustimbo/t3code/releases/download/v<client-version>/t3-<client-version>.tgz t3 service update
+t3 update <client-version>
+t3 service update
 ```
 
-Replace `<client-version>` with the version shown in the notice. Using
-`@latest` only resolves the mismatch if your client is on that release. An older
+Replace `<client-version>` with the version shown in the notice. An older
 service launcher may require this local update before it supports remote updates
 and rollback.
 
-For a foreground server, the copied command is `npx --yes --package=https://github.com/matheustimbo/t3code/releases/download/v<client-version>/t3-<client-version>.tgz t3`. Add
-`serve` if you normally run without a browser, and preserve options such as
-`--host` or `--tailscale-serve`. See
+For a foreground server, run `t3 update <client-version>`, stop the old server,
+and start it again. Add `serve` if you normally run without a browser, and
+preserve options such as `--host` or `--tailscale-serve`. See
 [background services](./background-service.md) for service management.
 
 ## If an update fails
