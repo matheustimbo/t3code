@@ -15,9 +15,7 @@ import {
   type RuntimeMode,
   type ThreadId,
 } from "@t3tools/contracts";
-import {
-  safeErrorLogAttributes,
-} from "@t3tools/client-runtime/errors";
+import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
 import { nextPastedTextFileName, pastedTextDisposition } from "@t3tools/client-runtime/text-paste";
 import {

@@ -21,7 +21,10 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+
+import { createEmptyReadModel, projectEvent } from "../projector.ts";
 
 import { makeSqlStatementCounter } from "../../../integration/SqlStatementCounter.integration.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
@@ -4641,3 +4644,105 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
     }),
   );
 });
+
+it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-retired-queue-")))(
+  "retired fork queue history",
+  (it) => {
+    it.effect("replays old queue edits and removals without reviving queued delivery", () =>
+      Effect.gen(function* () {
+        const pipeline = yield* OrchestrationProjectionPipeline;
+        const store = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const threadId = ThreadId.make("retired-queue-thread");
+        const messageId = MessageId.make("retired-queue-message");
+        const createdAt = "2026-09-14T00:00:00.000Z";
+        const common = {
+          aggregateKind: "thread" as const,
+          aggregateId: threadId,
+          occurredAt: createdAt,
+          commandId: null,
+          causationEventId: null,
+          correlationId: null,
+          metadata: {},
+        };
+        yield* store.append({
+          ...common,
+          eventId: EventId.make("legacy-create"),
+          type: "thread.created",
+          payload: {
+            threadId,
+            projectId: ProjectId.make("retired-queue-project"),
+            title: "Legacy queue",
+            modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdAt,
+            updatedAt: createdAt,
+          },
+        });
+        yield* store.append({
+          ...common,
+          eventId: EventId.make("legacy-message"),
+          type: "thread.message-sent",
+          payload: {
+            threadId,
+            messageId,
+            role: "user",
+            text: "Original",
+            turnId: null,
+            streaming: false,
+            createdAt,
+            updatedAt: createdAt,
+          },
+        });
+        yield* store.append({
+          ...common,
+          eventId: EventId.make("legacy-requeue"),
+          type: "thread.message-requeued",
+          payload: {
+            threadId,
+            messageId,
+            queuedTurnStart: { runtimeMode: "full-access", interactionMode: "default" },
+            updatedAt: createdAt,
+          },
+        });
+        yield* store.append({
+          ...common,
+          eventId: EventId.make("legacy-edit"),
+          type: "thread.queued-message-edited",
+          payload: { threadId, messageId, text: "Edited", revision: 1, updatedAt: createdAt },
+        });
+        yield* store.append({
+          ...common,
+          eventId: EventId.make("legacy-cancel"),
+          type: "thread.queued-message-cancelled",
+          payload: { threadId, messageId, updatedAt: createdAt },
+        });
+        yield* pipeline.bootstrap;
+        assert.deepEqual(
+          yield* sql`SELECT text FROM projection_thread_messages WHERE message_id = ${messageId}`,
+          [{ text: "Edited" }],
+        );
+        let model = createEmptyReadModel(createdAt);
+        const events = yield* store.readFromSequence(0).pipe(Stream.runCollect);
+        for (const event of events) model = yield* projectEvent(model, event);
+        assert.strictEqual(model.threads[0]?.messages[0]?.text, "Edited");
+        const dropped = yield* store.append({
+          ...common,
+          eventId: EventId.make("legacy-drop"),
+          type: "thread.queued-message-dropped",
+          payload: { threadId, messageId, updatedAt: createdAt },
+        });
+        yield* pipeline.projectEvent(dropped);
+        model = yield* projectEvent(model, dropped);
+        assert.deepEqual(model.threads[0]?.messages, []);
+        assert.deepEqual(
+          yield* sql`SELECT text FROM projection_thread_messages WHERE message_id = ${messageId}`,
+          [],
+        );
+      }),
+    );
+  },
+);

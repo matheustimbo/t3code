@@ -508,6 +508,8 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             defaultModelSelection: event.payload.defaultModelSelection,
             defaultThreadEnvMode: null,
             autoPull: false,
+            ticketTitlePolicy: null,
+            ticketProviderBindings: [],
             faviconPath: event.payload.faviconPath ?? null,
             projectIcon: event.payload.projectIcon ?? null,
             scripts: event.payload.scripts,
@@ -537,6 +539,12 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               ? { defaultThreadEnvMode: event.payload.defaultThreadEnvMode }
               : {}),
             ...(event.payload.autoPull !== undefined ? { autoPull: event.payload.autoPull } : {}),
+            ...(event.payload.ticketTitlePolicy !== undefined
+              ? { ticketTitlePolicy: event.payload.ticketTitlePolicy }
+              : {}),
+            ...(event.payload.ticketProviderBindings !== undefined
+              ? { ticketProviderBindings: event.payload.ticketProviderBindings }
+              : {}),
             ...(event.payload.faviconPath !== undefined
               ? { faviconPath: event.payload.faviconPath }
               : {}),
@@ -614,6 +622,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             threadId: event.payload.threadId,
             projectId: event.payload.projectId,
             title: event.payload.title,
+            titleRevision: 0,
             modelSelection: event.payload.modelSelection,
             runtimeMode: event.payload.runtimeMode,
             interactionMode: event.payload.interactionMode,
@@ -806,9 +815,17 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           }
           yield* projectionThreadRepository.upsert({
             ...existingRow.value,
-            ...(event.payload.title !== undefined ? { title: event.payload.title } : {}),
+            ...(event.payload.title !== undefined
+              ? {
+                  title: event.payload.title,
+                  titleRevision: (existingRow.value.titleRevision ?? 0) + 1,
+                }
+              : {}),
             ...(event.payload.activeOrderKey !== undefined
               ? { activeOrderKey: event.payload.activeOrderKey }
+              : {}),
+            ...(event.payload.titleState !== undefined
+              ? { titleState: event.payload.titleState }
               : {}),
             ...(event.payload.titleRegeneration !== undefined
               ? {
@@ -1124,6 +1141,24 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           });
           return;
 
+        case "thread.queued-message-edited": {
+          const existingMessage = yield* projectionThreadMessageRepository.getByMessageId({
+            messageId: event.payload.messageId,
+          });
+          if (Option.isNone(existingMessage)) return;
+          yield* projectionThreadMessageRepository.upsert({
+            ...existingMessage.value,
+            text: event.payload.text,
+            updatedAt: event.payload.updatedAt,
+          });
+          return;
+        }
+        case "thread.queued-message-dropped":
+          yield* projectionThreadMessageRepository.deleteByMessageId({
+            messageId: event.payload.messageId,
+          });
+          attachmentSideEffects.prunedThreadRelativePaths.set(event.payload.threadId, new Set());
+          return;
         case "thread.message-sent": {
           if (event.payload.streaming) {
             const attachments =

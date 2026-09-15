@@ -172,6 +172,8 @@ describe("ProviderCommandReactor", () => {
 
   async function createHarness(input?: {
     readonly baseDir?: string;
+    readonly initialTitle?: string;
+    readonly deferReactorStart?: boolean;
     readonly threadModelSelection?: ModelSelection;
     readonly sessionModelSwitch?: "unsupported" | "in-session";
     readonly requiresNewThreadForModelChange?: boolean;
@@ -536,7 +538,7 @@ describe("ProviderCommandReactor", () => {
         commandId: CommandId.make("cmd-thread-create"),
         threadId: ThreadId.make("thread-1"),
         projectId: asProjectId("project-1"),
-        title: "Thread",
+        title: input?.initialTitle ?? "Thread",
         modelSelection: modelSelection,
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
@@ -599,14 +601,17 @@ describe("ProviderCommandReactor", () => {
     }
 
     scope = await Effect.runPromise(Scope.make("sequential"));
-    await Effect.runPromise(
-      reactor
-        .start()
-        .pipe(
-          Scope.provide(scope),
-          Effect.provideService(ServerActivation, input?.serverActivation),
-        ),
-    );
+    const reactorScope = scope;
+    const startReactor = () =>
+      Effect.runPromise(
+        reactor
+          .start()
+          .pipe(
+            Scope.provide(reactorScope),
+            Effect.provideService(ServerActivation, input?.serverActivation),
+          ),
+      );
+    if (!input?.deferReactorStart) await startReactor();
     const drain = () => Effect.runPromise(reactor.drain);
 
     return {
@@ -642,6 +647,7 @@ describe("ProviderCommandReactor", () => {
       runtimeSessions,
       stateDir,
       drain,
+      startReactor,
       runEffect,
       get titleRegenerationCompletionDispatchAttempts() {
         return titleRegenerationCompletionDispatchAttempts;
@@ -1600,10 +1606,139 @@ describe("ProviderCommandReactor", () => {
     }),
   );
 
+  effectIt.effect.each(["before completion", "after completion", "before startup"] as const)(
+    "refines a vague title once when initial generation finishes %s",
+    (timing) =>
+      Effect.gen(function* () {
+        const harness = yield* Effect.promise(() =>
+          createHarness({ deferReactorStart: timing === "before startup" }),
+        );
+        const threadId = ThreadId.make("thread-1");
+        const turnId = TurnId.make("title-first-turn");
+        const createdAt = "2026-01-01T00:00:01.000Z";
+        harness.generateThreadTitle.mockReturnValue(
+          Effect.succeed({ title: "Fix QR pairing expiry" }),
+        );
+        yield* harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("title-turn"),
+          threadId,
+          message: {
+            messageId: MessageId.make("title-user"),
+            role: "user",
+            text: "Fix this",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt,
+        });
+        yield* Effect.promise(() => harness.drain());
+        const generate = harness.engine.dispatch({
+          type: "thread.title.generate.complete",
+          commandId: CommandId.make("initial-title"),
+          threadId,
+          expectedTitle: "Thread",
+          expectedVersion: null,
+          title: "Investigate issue",
+          needsRefinement: true,
+        });
+        if (timing !== "after completion") yield* generate;
+        yield* harness.engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make("title-running"),
+          threadId,
+          createdAt,
+          session: {
+            threadId,
+            status: "running",
+            providerName: "codex",
+            runtimeMode: "approval-required",
+            activeTurnId: turnId,
+            lastError: null,
+            updatedAt: createdAt,
+          },
+        });
+        yield* harness.engine.dispatch({
+          type: "thread.message.assistant.delta",
+          commandId: CommandId.make("title-answer"),
+          threadId,
+          messageId: MessageId.make("title-assistant"),
+          turnId,
+          delta: "The QR pairing token expires before the phone redeems it.",
+          createdAt,
+        });
+        const ready = (commandId: string) =>
+          harness.engine.dispatch({
+            type: "thread.session.set",
+            commandId: CommandId.make(commandId),
+            threadId,
+            createdAt,
+            session: {
+              threadId,
+              status: "ready",
+              providerName: "codex",
+              runtimeMode: "approval-required",
+              activeTurnId: null,
+              lastError: null,
+              updatedAt: createdAt,
+            },
+          });
+        yield* ready("title-ready");
+        if (timing === "after completion") yield* generate;
+        if (timing === "before startup") {
+          yield* Effect.promise(harness.startReactor);
+        }
+        yield* Effect.promise(() => harness.drain());
+        if (timing === "before startup") {
+          expect(harness.generateThreadTitle).toHaveBeenCalledTimes(1);
+        }
+        yield* ready("title-ready-again");
+        yield* Effect.promise(() => harness.drain());
+        expect(harness.generateThreadTitle).toHaveBeenCalledTimes(1);
+        expect(harness.generateThreadTitle.mock.calls[0]?.[0].message).toContain(
+          "QR pairing token",
+        );
+        const thread = (yield* Effect.promise(() => harness.readModel())).threads[0];
+        expect(thread?.title).toBe("Fix QR pairing expiry");
+        expect(thread?.titleState?.needsRefinement).toBe(false);
+      }),
+  );
+
+  effectIt.effect("does not replace a manual title matching the first message seed", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() => createHarness());
+      const threadId = ThreadId.make("thread-1");
+      yield* harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("manual-title"),
+        threadId,
+        title: "Thread",
+      });
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("manual-title-turn"),
+        threadId,
+        titleSeed: "Thread",
+        message: {
+          messageId: MessageId.make("manual-title-user"),
+          role: "user",
+          text: "Fix this",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:01.000Z",
+      });
+      yield* Effect.promise(() => harness.drain());
+      expect(harness.generateThreadTitle).not.toHaveBeenCalled();
+    }),
+  );
+
   it("retries thread title generation after a transient failure", async () => {
-    const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
     const seededTitle = "Please investigate reconnect failures after restar...";
+    const harness = await createHarness({ initialTitle: seededTitle });
     let attempts = 0;
     harness.generateThreadTitle.mockReturnValue(
       Effect.suspend(() => {
@@ -1616,15 +1751,6 @@ describe("ProviderCommandReactor", () => {
               }),
             )
           : Effect.succeed({ title: "Generated title" });
-      }),
-    );
-
-    await Effect.runPromise(
-      harness.engine.dispatch({
-        type: "thread.meta.update",
-        commandId: CommandId.make("cmd-thread-title-seed"),
-        threadId: ThreadId.make("thread-1"),
-        title: seededTitle,
       }),
     );
 
@@ -1666,7 +1792,9 @@ describe("ProviderCommandReactor", () => {
 
   effectIt.effect("replaces the generated first-turn title with the linked ticket title", () =>
     Effect.gen(function* () {
-      const harness = yield* Effect.promise(() => createHarness());
+      const harness = yield* Effect.promise(() =>
+        createHarness({ initialTitle: "Please investigate https://github.com/acme/widgets/..." }),
+      );
       const generatedTitle = yield* Deferred.make<{ readonly title: string }>();
       const ticket = yield* Deferred.make<{
         readonly title: string;
@@ -1678,12 +1806,6 @@ describe("ProviderCommandReactor", () => {
       harness.generateThreadTitle.mockReturnValue(Deferred.await(generatedTitle));
       harness.resolveTicket.mockReturnValue(Deferred.await(ticket));
 
-      yield* harness.engine.dispatch({
-        type: "thread.meta.update",
-        commandId: CommandId.make("cmd-thread-ticket-title-seed"),
-        threadId: ThreadId.make("thread-1"),
-        title: seededTitle,
-      });
       yield* harness.engine.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.make("cmd-turn-start-ticket-title"),
@@ -1736,7 +1858,9 @@ describe("ProviderCommandReactor", () => {
 
   effectIt.effect("preserves a manual rename even when it repeats the generated title", () =>
     Effect.gen(function* () {
-      const harness = yield* Effect.promise(() => createHarness());
+      const harness = yield* Effect.promise(() =>
+        createHarness({ initialTitle: "Please investigate https://github.com/acme/widgets/..." }),
+      );
       const ticket = yield* Deferred.make<{
         readonly title: string;
         readonly identifier: string;
@@ -1747,12 +1871,6 @@ describe("ProviderCommandReactor", () => {
       harness.generateThreadTitle.mockReturnValue(Effect.succeed({ title: "Generated title" }));
       harness.resolveTicket.mockReturnValue(Deferred.await(ticket));
 
-      yield* harness.engine.dispatch({
-        type: "thread.meta.update",
-        commandId: CommandId.make("cmd-thread-ticket-same-title-seed"),
-        threadId: ThreadId.make("thread-1"),
-        title: seededTitle,
-      });
       yield* harness.engine.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.make("cmd-turn-start-ticket-same-title"),
@@ -1801,7 +1919,9 @@ describe("ProviderCommandReactor", () => {
 
   effectIt.effect("preserves a manual rename while generated and ticket titles are pending", () =>
     Effect.gen(function* () {
-      const harness = yield* Effect.promise(() => createHarness());
+      const harness = yield* Effect.promise(() =>
+        createHarness({ initialTitle: "Please investigate https://github.com/acme/widgets/..." }),
+      );
       const generatedTitle = yield* Deferred.make<{ readonly title: string }>();
       const ticket = yield* Deferred.make<{
         readonly title: string;
@@ -1813,12 +1933,6 @@ describe("ProviderCommandReactor", () => {
       harness.generateThreadTitle.mockReturnValue(Deferred.await(generatedTitle));
       harness.resolveTicket.mockReturnValue(Deferred.await(ticket));
 
-      yield* harness.engine.dispatch({
-        type: "thread.meta.update",
-        commandId: CommandId.make("cmd-thread-ticket-pending-seed"),
-        threadId: ThreadId.make("thread-1"),
-        title: seededTitle,
-      });
       yield* harness.engine.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.make("cmd-turn-start-ticket-pending"),
@@ -1860,7 +1974,9 @@ describe("ProviderCommandReactor", () => {
 
   effectIt.effect("does not replace a manual rename while the ticket lookup is running", () =>
     Effect.gen(function* () {
-      const harness = yield* Effect.promise(() => createHarness());
+      const harness = yield* Effect.promise(() =>
+        createHarness({ initialTitle: "Please investigate https://github.com/acme/widgets/..." }),
+      );
       const ticket = yield* Deferred.make<{
         readonly title: string;
         readonly identifier: string;
@@ -1871,12 +1987,6 @@ describe("ProviderCommandReactor", () => {
       harness.generateThreadTitle.mockReturnValue(Effect.succeed({ title: "Generated title" }));
       harness.resolveTicket.mockReturnValue(Deferred.await(ticket));
 
-      yield* harness.engine.dispatch({
-        type: "thread.meta.update",
-        commandId: CommandId.make("cmd-thread-ticket-race-seed"),
-        threadId: ThreadId.make("thread-1"),
-        title: seededTitle,
-      });
       yield* harness.engine.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.make("cmd-turn-start-ticket-race"),
@@ -2106,14 +2216,17 @@ describe("ProviderCommandReactor", () => {
       throw new Error("Expected a title generation input");
     }
     const message = input.message;
-    expect(message.startsWith(`USER:\nReview subagent monitoring risks. ${quoteText} `)).toBe(true);
+    expect(message).toContain(
+      `USER:\nReview subagent monitoring risks. ${quoteText.slice(0, 100)}`,
+    );
     expect(message).not.toContain("t3-citation://");
-    expect(message).toContain("[First user message truncated]");
+    expect(message).toContain("[Content truncated]");
     expect(message).toContain("[Earlier content truncated]");
     expect(message).toContain("image.png");
-    expect(message).toHaveLength(8_000);
+    expect(message.length).toBeLessThanOrEqual(8_000);
     expect(input.attachments?.map((attachment) => attachment.id)).toEqual([
       "opening-context-image",
+      "middle-context-image",
       "recent-context-image",
     ]);
     const readModel = await harness.readModel();
@@ -2317,10 +2430,6 @@ describe("ProviderCommandReactor", () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
     const firstUserContext = "USER:\nOld visual issue\n[Attachments: old-issue.png]";
-    const truncationMarker = "[Earlier content truncated]\n\n";
-    const retainedContext = "x".repeat(
-      8_000 - firstUserContext.length - "\n\n".length - truncationMarker.length,
-    );
 
     await harness.runEffect(
       harness.engine.dispatch({
@@ -2384,9 +2493,10 @@ describe("ProviderCommandReactor", () => {
 
     await harness.drain();
 
-    expect(harness.generateThreadTitle.mock.calls[0]?.[0].message).toBe(
-      `${firstUserContext}\n\n${truncationMarker}${retainedContext}`,
-    );
+    const context = harness.generateThreadTitle.mock.calls[0]?.[0].message;
+    expect(context).toContain(firstUserContext);
+    expect(context).toContain("ASSISTANT:\ncontent before retained tail");
+    expect(context?.length).toBeLessThanOrEqual(8_000);
     expect(harness.generateThreadTitle.mock.calls[0]?.[0].attachments).toEqual([
       expect.objectContaining({
         id: "old-title-context-image",
@@ -2624,22 +2734,13 @@ describe("ProviderCommandReactor", () => {
   });
 
   it("matches the client-seeded title even when the outgoing prompt is reformatted", async () => {
-    const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
     const seededTitle = "Fix reconnect spinner on resume";
+    const harness = await createHarness({ initialTitle: seededTitle });
     const prompt = `[effort:high]\\n\\nFix reconnect spinner on resume ${serializeAssistantCitation(assistantCitation)}`;
     harness.generateThreadTitle.mockReturnValue(
       Effect.succeed({
         title: "Reconnect spinner resume bug",
-      }),
-    );
-
-    await harness.runEffect(
-      harness.engine.dispatch({
-        type: "thread.meta.update",
-        commandId: CommandId.make("cmd-thread-title-formatted-seed"),
-        threadId: ThreadId.make("thread-1"),
-        title: seededTitle,
       }),
     );
 

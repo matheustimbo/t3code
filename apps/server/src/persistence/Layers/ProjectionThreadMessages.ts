@@ -304,7 +304,16 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
       ),
     );
 
+  const deleteByMessageId: ProjectionThreadMessageRepositoryShape["deleteByMessageId"] = (input) =>
+    sql`DELETE FROM projection_thread_messages WHERE message_id = ${input.messageId}`.pipe(
+      Effect.asVoid,
+      Effect.mapError(
+        toPersistenceSqlError("ProjectionThreadMessageRepository.deleteByMessageId:query"),
+      ),
+    );
+
   return {
+    deleteByMessageId,
     upsert,
     appendStreaming,
     getByMessageId,

@@ -115,6 +115,11 @@ export interface ProjectionThreadMessageRepositoryShape {
   /**
    * Delete projected thread messages by thread.
    */
+  /** Replay a message removal recorded by the retired fork queue. */
+  readonly deleteByMessageId: (input: {
+    readonly messageId: MessageId;
+  }) => Effect.Effect<void, ProjectionRepositoryError>;
+
   readonly deleteByThreadId: (
     input: DeleteProjectionThreadMessagesInput,
   ) => Effect.Effect<void, ProjectionRepositoryError>;

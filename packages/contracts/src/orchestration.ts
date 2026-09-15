@@ -406,6 +406,12 @@ export const ProjectScript = Schema.Struct({
   icon: ProjectScriptIcon,
   runOnWorktreeCreate: Schema.Boolean,
   /**
+   * For `runOnWorktreeCreate` scripts: when false, the agent's first turn waits
+   * for the script to exit. Absent or true starts the agent right away and
+   * lets the script finish in the background.
+   */
+  async: Schema.optional(Schema.Boolean),
+  /**
    * URL to open in the in-app browser preview when this script runs (or
    * when the user explicitly requests a preview). Optional; only honored on
    * the desktop build.
@@ -612,6 +618,14 @@ export const OrchestrationLatestTurn = Schema.Struct({
 });
 export type OrchestrationLatestTurn = typeof OrchestrationLatestTurn.Type;
 
+// Version changes even when a manual rename keeps the same text.
+export const ThreadTitleState = Schema.Struct({
+  source: Schema.Literals(["manual", "generated"]),
+  version: CommandId,
+  needsRefinement: Schema.Boolean,
+});
+export type ThreadTitleState = typeof ThreadTitleState.Type;
+
 export const ThreadTitleRegeneration = Schema.Struct({
   requestId: CommandId,
   startedAt: IsoDateTime,
@@ -756,6 +770,7 @@ export const OrchestrationThread = Schema.Struct({
   activeOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   // Pending-only state. Optional so older servers remain compatible.
   titleRegeneration: Schema.optional(Schema.NullOr(ThreadTitleRegeneration)),
+  titleState: Schema.optional(Schema.NullOr(ThreadTitleState)),
   deletedAt: Schema.NullOr(IsoDateTime),
   messages: Schema.Array(OrchestrationMessage),
   proposedPlans: Schema.Array(OrchestrationProposedPlan).pipe(
@@ -830,6 +845,7 @@ export const OrchestrationThreadShell = Schema.Struct({
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   activeOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   titleRegeneration: Schema.optional(Schema.NullOr(ThreadTitleRegeneration)),
+  titleState: Schema.optional(Schema.NullOr(ThreadTitleState)),
   session: Schema.NullOr(OrchestrationSession),
   latestUserMessageAt: Schema.NullOr(IsoDateTime),
   hasPendingApprovals: Schema.Boolean,
@@ -1438,6 +1454,24 @@ const ThreadHistoryImportCommand = Schema.Struct({
   ).check(Schema.isNonEmpty()),
 });
 
+/**
+ * Persists a user message without starting a turn. Used by worktree bootstraps
+ * so the send is durable while the worktree is still being prepared; the
+ * turn that follows references the same message id.
+ */
+const ThreadMessageUserAppendCommand = Schema.Struct({
+  type: Schema.Literal("thread.message.user.append"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  message: Schema.Struct({
+    messageId: MessageId,
+    text: Schema.String,
+    attachments: Schema.Array(ChatAttachment),
+    context: Schema.optional(OrchestrationMessageContext),
+  }),
+  createdAt: IsoDateTime,
+});
+
 const ThreadProposedPlanUpsertCommand = Schema.Struct({
   type: Schema.Literal("thread.proposed-plan.upsert"),
   commandId: CommandId,
@@ -1474,6 +1508,23 @@ const ThreadRevertCompleteCommand = Schema.Struct({
   threadId: ThreadId,
   turnCount: NonNegativeInt,
   createdAt: IsoDateTime,
+});
+
+const ThreadTitleGenerateCompleteCommand = Schema.Struct({
+  type: Schema.Literal("thread.title.generate.complete"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  expectedTitle: TrimmedNonEmptyString,
+  expectedVersion: Schema.NullOr(CommandId),
+  title: TrimmedNonEmptyString,
+  needsRefinement: Schema.Boolean,
+});
+
+const ThreadTitleRefineCommand = Schema.Struct({
+  type: Schema.Literal("thread.title.refine"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  expectedVersion: CommandId,
 });
 
 const ThreadTitleRegenerationCompleteCommand = Schema.Struct({
@@ -1518,11 +1569,14 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadMessageAssistantDeltaCommand,
   ThreadMessageAssistantCompleteCommand,
   ThreadHistoryImportCommand,
+  ThreadMessageUserAppendCommand,
   ThreadProposedPlanUpsertCommand,
   ThreadTurnDiffCompleteCommand,
   ThreadActivityAppendCommand,
   ThreadRevertCompleteCommand,
   ThreadTitleRegenerationCompleteCommand,
+  ThreadTitleGenerateCompleteCommand,
+  ThreadTitleRefineCommand,
   ThreadPullRequestSyncCommand,
   ThreadPullRequestLinkSyncCommand,
 ]);
@@ -1556,6 +1610,10 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.runtime-mode-set",
   "thread.interaction-mode-set",
   "thread.message-sent",
+  "thread.message-requeued",
+  "thread.queued-message-cancelled",
+  "thread.queued-message-edited",
+  "thread.queued-message-dropped",
   "thread.turn-start-requested",
   "thread.turn-interrupt-requested",
   "thread.approval-response-requested",
@@ -1702,6 +1760,7 @@ export const ThreadMetaUpdatedPayload = Schema.Struct({
   previousTitle: Schema.optional(TrimmedNonEmptyString),
   /** Pending state shared with clients. Null clears a matching request. */
   titleRegeneration: Schema.optional(Schema.NullOr(ThreadTitleRegeneration)),
+  titleState: Schema.optional(Schema.NullOr(ThreadTitleState)),
   modelSelection: Schema.optional(ModelSelection),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
@@ -1759,6 +1818,36 @@ export const ThreadMessageSentPayload = Schema.Struct({
   turnId: Schema.NullOr(TurnId),
   streaming: Schema.Boolean,
   createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+
+// Read-only compatibility for events persisted by fork releases before the upstream queue.
+export const ThreadMessageRequeuedPayload = Schema.Struct({
+  threadId: ThreadId,
+  messageId: MessageId,
+  queuedTurnStart: Schema.Unknown,
+  updatedAt: IsoDateTime,
+});
+
+// Cancel is server-internal: it removes the queue entry but keeps the message
+// row for resend. Drop is client-originated and deletes the message row.
+export const ThreadQueuedMessageCancelledPayload = Schema.Struct({
+  threadId: ThreadId,
+  messageId: MessageId,
+  updatedAt: IsoDateTime,
+});
+
+export const ThreadQueuedMessageEditedPayload = Schema.Struct({
+  threadId: ThreadId,
+  messageId: MessageId,
+  text: Schema.String,
+  revision: NonNegativeInt,
+  updatedAt: IsoDateTime,
+});
+
+export const ThreadQueuedMessageDroppedPayload = Schema.Struct({
+  threadId: ThreadId,
+  messageId: MessageId,
   updatedAt: IsoDateTime,
 });
 
@@ -1858,6 +1947,12 @@ export const OrchestrationEventMetadata = Schema.Struct({
   requestId: Schema.optional(ApprovalRequestId),
   ingestedAt: Schema.optional(IsoDateTime),
   historyImport: Schema.optional(Schema.Boolean),
+  /**
+   * The user message was persisted ahead of its turn (worktree bootstrap).
+   * Reactors that key off a user message as "turn is starting" wait for the
+   * turn-start event instead.
+   */
+  deferredTurn: Schema.optional(Schema.Boolean),
   origin: Schema.optional(OrchestrationClientOrigin),
 });
 export type OrchestrationEventMetadata = typeof OrchestrationEventMetadata.Type;
@@ -1979,6 +2074,26 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.message-sent"),
     payload: ThreadMessageSentPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.message-requeued"),
+    payload: ThreadMessageRequeuedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.queued-message-cancelled"),
+    payload: ThreadQueuedMessageCancelledPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.queued-message-edited"),
+    payload: ThreadQueuedMessageEditedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.queued-message-dropped"),
+    payload: ThreadQueuedMessageDroppedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,

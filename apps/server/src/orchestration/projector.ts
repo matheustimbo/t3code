@@ -13,6 +13,7 @@ import {
   OrchestrationMessage,
   OrchestrationSession,
   OrchestrationThread,
+  WORKTREE_SETUP_ACTIVITY_KIND,
 } from "@t3tools/contracts";
 import {
   legacyLinkedPullRequestOf,
@@ -76,7 +77,13 @@ function retainThreadActivities(activities: OrchestrationThread["activities"]) {
   }
   const pendingActivities = new Set(pending.values());
   return activities.filter(
-    (activity, index) => index >= recentStart || pendingActivities.has(activity),
+    (activity, index) =>
+      index >= recentStart ||
+      pendingActivities.has(activity) ||
+      // The worktree setup record is upserted under one id for the thread's
+      // whole life and is the only durable copy of a running setup; an async
+      // setup script can outlast a chatty first turn.
+      activity.kind === WORKTREE_SETUP_ACTIVITY_KIND,
   );
 }
 
@@ -621,6 +628,7 @@ export function projectEvent(
                     titleRevision: (thread?.titleRevision ?? 0) + 1,
                   }
                 : {}),
+              ...(payload.titleState !== undefined ? { titleState: payload.titleState } : {}),
               ...(payload.titleRegeneration !== undefined
                 ? { titleRegeneration: payload.titleRegeneration }
                 : {}),
@@ -751,6 +759,32 @@ export function projectEvent(
           }),
         })),
       );
+
+    // Historical fork queue events remain replayable; no new queue is managed here.
+    case "thread.message-requeued":
+    case "thread.queued-message-cancelled":
+      return Effect.succeed(nextBase);
+    case "thread.queued-message-edited":
+    case "thread.queued-message-dropped": {
+      const payload = event.payload;
+      const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+      if (!thread) return Effect.succeed(nextBase);
+      const messages =
+        event.type === "thread.queued-message-dropped"
+          ? thread.messages.filter((message) => message.id !== payload.messageId)
+          : thread.messages.map((message) =>
+              message.id === payload.messageId
+                ? { ...message, text: event.payload.text, updatedAt: payload.updatedAt }
+                : message,
+            );
+      return Effect.succeed({
+        ...nextBase,
+        threads: updateThread(nextBase.threads, payload.threadId, {
+          messages,
+          updatedAt: payload.updatedAt,
+        }),
+      });
+    }
 
     case "thread.message-sent":
       return Effect.gen(function* () {
