@@ -6,7 +6,6 @@ import {
   type ProviderRuntimeEvent,
   type ProviderSession,
   type ProviderUserInputAnswers,
-  type ProviderConcurrentSend,
   ProviderDriverKind,
   ProviderInstanceId,
   RuntimeRequestId,
@@ -88,13 +87,6 @@ import { type GrokAdapterShape } from "../Services/GrokAdapter.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
-
-/**
- * Grok shares ACP with Cursor but does not wait behind the semaphore: when a
- * prompt is in flight `sendTurn` cancels it first, so whatever that prompt had
- * not finished is discarded.
- */
-export const GROK_CONCURRENT_SEND: ProviderConcurrentSend = "interrupt";
 
 const PROVIDER = ProviderDriverKind.make("grok");
 const GROK_RESUME_VERSION = 1 as const;
@@ -2168,11 +2160,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
 
     return {
       provider: PROVIDER,
-      capabilities: {
-        sessionModelSwitch: "in-session",
-        concurrentSend: GROK_CONCURRENT_SEND,
-        supportsConversationRollback: false,
-      },
+      capabilities: { sessionModelSwitch: "in-session", supportsConversationRollback: false },
       compaction: { type: "slash-command", command: "/compact" },
       startSession,
       sendTurn,

@@ -1,14 +1,6 @@
 import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { useAtomValue } from "@effect/atom-react";
-import {
-  resolveSendWhileRunning,
-  type SendWhileRunningAffordance,
-} from "@t3tools/client-runtime/composer/send-while-running";
-import {
-  EDIT_QUEUED_MESSAGE_ACCESSIBLE_LABEL,
-  EDIT_QUEUED_MESSAGE_LABEL,
-} from "@t3tools/client-runtime/composer/queued-messages";
 import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
 import { pastedTextDisposition, replaceTextSelection } from "@t3tools/client-runtime/text-paste";
 import {
@@ -23,7 +15,6 @@ import type {
   ProviderInteractionMode,
   RuntimeMode,
   ServerConfig as T3ServerConfig,
-  TurnDelivery,
   UsageLimitsReport,
 } from "@t3tools/contracts";
 import {
@@ -85,14 +76,7 @@ import {
   ComposerInlineControl,
   ComposerToolbarRow,
 } from "../../components/ComposerToolbar";
-import { ControlPillMenu } from "../../components/ControlPill";
 import { ProviderIcon } from "../../components/ProviderIcon";
-import {
-  editingQueuedTurnMessagesAtom,
-  endEditQueuedTurnMessage,
-} from "../../state/edit-queued-thread-message";
-import { useSendWhileRunningPreferences } from "../../state/send-while-running-preferences";
-import { threadComposerRunningCopy } from "./threadComposerRunningCopy";
 import {
   composerStripAttachments,
   type DraftComposerAttachment,
@@ -153,7 +137,7 @@ export interface ThreadComposerProps {
   readonly selectedThread: OrchestrationThreadShell;
   readonly hasCompactableConversation: boolean;
   readonly serverConfig: T3ServerConfig | null;
-  readonly outboxCount: number;
+  readonly queueCount: number;
   readonly environmentId: EnvironmentId;
   readonly projectCwd: string | null;
   /** Why sending is blocked right now (shown as the send button's label), or null. */
@@ -299,55 +283,6 @@ export function ComposerSurface(props: {
   );
 }
 
-/**
- * The primary send action. Where the running provider offers a real choice of
- * delivery, a long press opens the menu and picking one remembers it and sends
- * in the same gesture. Mobile gets no one-shot modifier; that is a keyboard
- * idiom with nothing to hold down here.
- */
-function ComposerSendAction(props: {
-  readonly accessibilityLabel: string;
-  readonly label: string | null;
-  readonly disabled: boolean;
-  readonly onPress: () => void;
-  readonly delivery: SendWhileRunningAffordance | null;
-  readonly onPickDelivery: (turnDelivery: TurnDelivery) => void;
-}) {
-  const button = (
-    <ComposerActionButton
-      accessibilityLabel={props.accessibilityLabel}
-      icon="arrow.up"
-      variant="primary"
-      disabled={props.disabled}
-      onPress={props.onPress}
-      {...(props.label ? { label: props.label } : {})}
-    />
-  );
-  const delivery = props.delivery;
-  // iOS hangs the menu off the native host rather than the child, so a
-  // disabled button would still open it there while Android stayed inert.
-  if (delivery === null || props.disabled) return button;
-  const { onPickDelivery } = props;
-  return (
-    <ControlPillMenu
-      actions={delivery.options.map((option) => ({
-        id: option.turnDelivery,
-        title: option.label,
-        subtitle: option.description,
-        state: option === delivery.selected ? ("on" as const) : ("off" as const),
-        attributes: { destructive: option.destructive },
-      }))}
-      onPressAction={({ nativeEvent }) => {
-        const picked = delivery.options.find((option) => option.turnDelivery === nativeEvent.event);
-        if (picked) onPickDelivery(picked.turnDelivery);
-      }}
-      shouldOpenOnLongPress
-    >
-      {button}
-    </ControlPillMenu>
-  );
-}
-
 export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposerProps) {
   const project = useProject(scopeProjectRef(props.environmentId, props.selectedThread.projectId));
   const { materialYouStyleLayoutActive, themeVariables: materialTheme } =
@@ -395,38 +330,10 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     });
   // Every send goes through the outbox; the label says whether it leaves now
   // or waits (for the connection, an earlier queued message, or an upload).
-  const outboxSendLabel =
-    props.connectionState !== "connected" || props.outboxCount > 0 || attachmentsUploading
+  const sendLabel =
+    props.connectionState !== "connected" || props.queueCount > 0 || attachmentsUploading
       ? "Queue"
       : "Send";
-  const sessionProviderStatus = useMemo(() => {
-    const instanceId =
-      props.selectedThread.session?.providerInstanceId ??
-      props.selectedThread.modelSelection.instanceId;
-    return props.serverConfig?.providers.find((p) => p.instanceId === instanceId) ?? null;
-  }, [
-    props.serverConfig,
-    props.selectedThread.session?.providerInstanceId,
-    props.selectedThread.modelSelection.instanceId,
-  ]);
-  const { preferences: deliveryPreferences, remember: rememberDelivery } =
-    useSendWhileRunningPreferences();
-  const sendWhileRunning = useMemo(
-    () =>
-      resolveSendWhileRunning({
-        isRunning: props.selectedThread.session?.status === "running",
-        provider: sessionProviderStatus,
-        ...(deliveryPreferences ? { preferences: deliveryPreferences } : {}),
-      }),
-    [props.selectedThread.session?.status, sessionProviderStatus, deliveryPreferences],
-  );
-  const runningCopy = threadComposerRunningCopy({
-    outboxSendLabel,
-    sendWhileRunning,
-    idlePlaceholder: props.placeholder,
-  });
-  const runningSendLabel = runningCopy.sendLabel;
-  const sendLabel = runningSendLabel ?? outboxSendLabel;
   const currentModelSelection = props.selectedThread.modelSelection;
   const currentRuntimeMode = props.selectedThread.runtimeMode;
   const modelUnavailable =
@@ -441,26 +348,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     );
   }, [props.serverConfig, props.selectedThread.modelSelection.instanceId]);
   const composerOwnerKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
-  const editingQueuedMessages = useAtomValue(editingQueuedTurnMessagesAtom);
-  // Replacing a queued message is text-only on the wire, so attaching a file
-  // takes the draft back out of edit mode. The button label follows, which is
-  // how the user sees the mode change before committing to it.
-  const isEditingQueuedMessage =
-    props.draftAttachments.length === 0 && editingQueuedMessages[composerOwnerKey] !== undefined;
-  const sendAccessibilityLabel = isEditingQueuedMessage
-    ? EDIT_QUEUED_MESSAGE_ACCESSIBLE_LABEL
-    : sendLabel;
-  const sendButtonLabel = isEditingQueuedMessage ? EDIT_QUEUED_MESSAGE_LABEL : runningSendLabel;
-  // An open edit saves rather than sends, so the delivery wording would be a lie.
-  const composerPlaceholder = isEditingQueuedMessage ? props.placeholder : runningCopy.placeholder;
-  const cancelQueuedMessageEdit = useCallback(() => {
-    endEditQueuedTurnMessage(composerOwnerKey);
-  }, [composerOwnerKey]);
-  // One option means the provider offers no choice, so there is no menu.
-  const deliveryChoice =
-    !isEditingQueuedMessage && sendWhileRunning !== null && sendWhileRunning.options.length > 1
-      ? sendWhileRunning
-      : null;
   const openDraftDocument = (attachment: ComposerDocumentAttachment) => {
     Keyboard.dismiss();
     navigation.navigate("ThreadAttachment", {
@@ -648,16 +535,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     props.selectedThread.title,
     voiceInput.blocksSubmission,
   ]);
-
-  const handlePickDelivery = useCallback(
-    (turnDelivery: TurnDelivery) => {
-      if (sendWhileRunning !== null) {
-        rememberDelivery(sendWhileRunning.behavior, turnDelivery);
-      }
-      void handleSend();
-    },
-    [handleSend, rememberDelivery, sendWhileRunning],
-  );
 
   // ── Model menu ───────────────────────────────────────────
   const modelOptions = useMemo(
@@ -964,7 +841,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                   }
                   insertPaste();
                 }}
-                placeholder={composerPlaceholder}
+                placeholder={props.placeholder}
                 onFocus={handleFocus}
                 onBlur={handleBlur}
                 onSubmit={handleSend}
@@ -1029,13 +906,12 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                     onPress={props.onStopThread}
                   />
                 ) : (
-                  <ComposerSendAction
-                    accessibilityLabel={sendBlockedReason ?? sendAccessibilityLabel}
-                    label={isEditingQueuedMessage ? sendButtonLabel : null}
+                  <ComposerActionButton
+                    accessibilityLabel={sendBlockedReason ?? sendLabel}
+                    icon="arrow.up"
+                    variant="primary"
                     disabled={!canSend}
                     onPress={handleSend}
-                    delivery={deliveryChoice}
-                    onPickDelivery={handlePickDelivery}
                   />
                 )}
               </View>
@@ -1083,23 +959,13 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                   />
                 ) : (
                   <View className="min-w-0 flex-1 flex-row items-center justify-between">
-                    {isEditingQueuedMessage ? (
-                      <ComposerInlineControl
-                        accessibilityLabel="Cancel queued message edit"
-                        icon="xmark"
-                        label="Cancel edit"
-                        onPress={cancelQueuedMessageEdit}
-                        showChevron={false}
-                      />
-                    ) : (
-                      <ComposerAttachmentButton
-                        supportsFiles={Boolean(
-                          props.serverConfig?.environment.capabilities.fileAttachments,
-                        )}
-                        onPickMedia={props.onPickDraftMedia}
-                        onPickFiles={props.onPickDraftFiles}
-                      />
-                    )}
+                    <ComposerAttachmentButton
+                      supportsFiles={Boolean(
+                        props.serverConfig?.environment.capabilities.fileAttachments,
+                      )}
+                      onPickMedia={props.onPickDraftMedia}
+                      onPickFiles={props.onPickDraftFiles}
+                    />
                     <View className="min-w-0 shrink">
                       <ComposerInlineControl
                         accessibilityLabel="Model and reasoning settings"
@@ -1131,13 +997,12 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                       onPress={props.onStopThread}
                     />
                   ) : voicePresentation.showsSend ? (
-                    <ComposerSendAction
-                      accessibilityLabel={sendBlockedReason ?? sendAccessibilityLabel}
-                      label={sendButtonLabel}
+                    <ComposerActionButton
+                      accessibilityLabel={sendBlockedReason ?? sendLabel}
+                      icon="arrow.up"
+                      variant="primary"
                       disabled={!canSend}
                       onPress={handleSend}
-                      delivery={deliveryChoice}
-                      onPickDelivery={handlePickDelivery}
                     />
                   ) : null}
                 </View>

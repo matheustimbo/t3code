@@ -2,7 +2,6 @@ import * as Equal from "effect/Equal";
 import { shallow } from "zustand/vanilla/shallow";
 import { renderCodexDirectivesForCopy } from "@t3tools/client-runtime/codex-markdown-directives";
 import { commandProgramName } from "@t3tools/client-runtime/work-log/command-label";
-import { queuedMessageOrdinalMap } from "@t3tools/client-runtime/composer/queued-messages";
 import {
   liveActivityToolStatus,
   normalizeCompactToolLabel,
@@ -32,7 +31,6 @@ import { type ChatMessage, type ProposedPlan, type TurnDiffSummary } from "../..
 import {
   type MessageId,
   type OrchestrationLatestTurn,
-  type QueuedMessageRef,
   type TurnId,
   type WorktreeSetupSnapshot,
 } from "@t3tools/contracts";
@@ -372,9 +370,6 @@ export type MessagesTimelineRow =
       assistantCopyStreaming: boolean;
       assistantTurnDiffSummary?: TurnDiffSummary | undefined;
       revertTurnCount?: number | undefined;
-      /** 1-based place in T3 Code's own send queue, counting only queued user
-          messages. A scalar so row reuse stays a `===` comparison. */
-      queuedOrdinal?: number | undefined;
     }
   | {
       kind: "assistant-meta";
@@ -822,10 +817,10 @@ function attachTrailingToolGroupsToAssistant(
   return result;
 }
 
+/** Match each user message to the next assistant checkpoint. */
 function buildRevertTurnCountByUserMessageId(input: {
   supportsConversationRollback: boolean;
   timelineEntries: ReadonlyArray<TimelineEntry>;
-  queuedMessageOrdinals: ReadonlyMap<MessageId, number>;
   turnDiffSummaryByAssistantMessageId: ReadonlyMap<MessageId, TurnDiffSummary>;
   inferredCheckpointTurnCountByTurnId: Readonly<Record<string, number | undefined>>;
 }): Map<MessageId, number> {
@@ -833,12 +828,7 @@ function buildRevertTurnCountByUserMessageId(input: {
   const entryCount = input.supportsConversationRollback ? input.timelineEntries.length : 0;
   for (let index = 0; index < entryCount; index += 1) {
     const entry = input.timelineEntries[index];
-    if (
-      !entry ||
-      entry.kind !== "message" ||
-      entry.message.role !== "user" ||
-      input.queuedMessageOrdinals.has(entry.message.id)
-    ) {
+    if (!entry || entry.kind !== "message" || entry.message.role !== "user") {
       continue;
     }
 
@@ -876,13 +866,11 @@ export function deriveMessagesTimelineRows(input: {
   activeTurnStartedAt: string | null;
   turnDiffSummaries: ReadonlyArray<TurnDiffSummary>;
   supportsConversationRollback: boolean;
-  queuedMessages?: ReadonlyArray<Pick<QueuedMessageRef, "messageId">>;
   /** Task ids of subagents still working, used by the active tool indicator. */
   liveAgentTaskIds?: ReadonlySet<string> | undefined;
   /** Live bootstrap progress. Renders a stage card under the first user message. */
   worktreeSetup?: WorktreeSetupSnapshot | null;
 }): MessagesTimelineRow[] {
-  const queuedMessageOrdinals = queuedMessageOrdinalMap(input.queuedMessages ?? []);
   const turnDiffSummaryByAssistantMessageId = new Map<MessageId, TurnDiffSummary>();
   for (const summary of input.turnDiffSummaries) {
     if (summary.assistantMessageId) {
@@ -892,7 +880,6 @@ export function deriveMessagesTimelineRows(input: {
   const revertTurnCountByUserMessageId = buildRevertTurnCountByUserMessageId({
     supportsConversationRollback: input.supportsConversationRollback,
     timelineEntries: input.timelineEntries,
-    queuedMessageOrdinals,
     turnDiffSummaryByAssistantMessageId,
     inferredCheckpointTurnCountByTurnId: input.supportsConversationRollback
       ? inferCheckpointTurnCountByTurnId(input.turnDiffSummaries)
@@ -1253,11 +1240,6 @@ export function deriveMessagesTimelineRows(input: {
       terminalAssistantMessageIds.has(timelineEntry.message.id) &&
       !assistantResponseStillInProgress;
 
-    const queuedOrdinal =
-      timelineEntry.message.role === "user"
-        ? queuedMessageOrdinals.get(timelineEntry.message.id)
-        : undefined;
-
     nextRows.push({
       kind: "message",
       id: timelineEntry.id,
@@ -1275,7 +1257,6 @@ export function deriveMessagesTimelineRows(input: {
         timelineEntry.message.role === "user"
           ? revertTurnCountByUserMessageId.get(timelineEntry.message.id)
           : undefined,
-      queuedOrdinal,
     });
   }
 
@@ -1493,8 +1474,7 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.showAssistantCopyButton === bm.showAssistantCopyButton &&
         a.assistantCopyStreaming === bm.assistantCopyStreaming &&
         a.assistantTurnDiffSummary === bm.assistantTurnDiffSummary &&
-        a.revertTurnCount === bm.revertTurnCount &&
-        a.queuedOrdinal === bm.queuedOrdinal
+        a.revertTurnCount === bm.revertTurnCount
       );
     }
   }

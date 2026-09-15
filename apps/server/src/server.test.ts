@@ -107,8 +107,11 @@ import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as ServerConfig from "./config.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import { HTTP_ROUTER_CONFIG, makeRoutesLayer } from "./server.ts";
-import { resolveAvailableEditorsForConfig, resolveFileManagerRevealKindForConfig } from "./ws.ts";
-import { isThreadDetailEvent } from "./orchestration/threadDetailEvents.ts";
+import {
+  isThreadDetailEvent,
+  resolveAvailableEditorsForConfig,
+  resolveFileManagerRevealKindForConfig,
+} from "./ws.ts";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as GitManager from "./git/GitManager.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
@@ -349,7 +352,6 @@ const makeDefaultOrchestrationReadModel = () => {
         messages: [],
         session: null,
         activities: [],
-        latestUserMessageAt: null,
         proposedPlans: [],
         checkpoints: [],
         deletedAt: null,
@@ -8175,7 +8177,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             messages: [],
             session: null,
             activities: [],
-            latestUserMessageAt: null,
             proposedPlans: [],
             checkpoints: [],
             deletedAt: null,
@@ -8516,7 +8517,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                     ...makeDefaultOrchestrationThreadShell(),
                     id: threadId,
                     title: "Build complete",
-                    latestUserMessageAt: null,
                   }),
                 ),
             },

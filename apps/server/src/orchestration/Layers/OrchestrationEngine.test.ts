@@ -397,7 +397,6 @@ describe("OrchestrationEngine", () => {
           settledAt: null,
           deletedAt: null,
           messages: [],
-          latestUserMessageAt: null,
           proposedPlans: [],
           activities: [],
           checkpoints: [],
@@ -410,7 +409,6 @@ describe("OrchestrationEngine", () => {
       threads: projectionSnapshot.threads.map((thread) => ({
         ...thread,
         messages: [],
-        latestUserMessageAt: null,
         proposedPlans: [],
         activities: [],
         checkpoints: [],

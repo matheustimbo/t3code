@@ -1,7 +1,6 @@
 import {
   ApprovalRequestId,
   EventId,
-  type ProviderConcurrentSend,
   ProviderDriverKind,
   ProviderInstanceId,
   RuntimeRequestId,
@@ -86,13 +85,6 @@ import {
 } from "../acp/AntigravityProtocol.ts";
 import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 import type { EventNdjsonLogger } from "./EventNdjsonLogger.ts";
-
-/**
- * Sending while a prompt fiber exists cancels the in-flight requests, cancels the
- * runtime and awaits the fiber before the new prompt goes out, so work in
- * progress is lost.
- */
-export const ANTIGRAVITY_CONCURRENT_SEND: ProviderConcurrentSend = "interrupt";
 
 const PROVIDER = ProviderDriverKind.make("antigravity");
 const ResumeCursor = Schema.Struct({
@@ -1255,11 +1247,7 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
 
   return {
     provider: PROVIDER,
-    capabilities: {
-      sessionModelSwitch: "in-session",
-      supportsConversationRollback: false,
-      concurrentSend: ANTIGRAVITY_CONCURRENT_SEND,
-    },
+    capabilities: { sessionModelSwitch: "in-session", supportsConversationRollback: false },
     compaction: { type: "slash-command", command: "/compact" },
     startSession,
     sendTurn,

@@ -9,14 +9,6 @@ import {
 import { feedbackBannerItem } from "./chat/ComposerFeedback";
 import { usageLimitsBannerItem } from "./chat/ComposerUsageLimits";
 import { derivePendingRequests } from "@t3tools/client-runtime/pending-requests";
-import { resolveSendWhileRunning } from "@t3tools/client-runtime/composer/send-while-running";
-import {
-  queuedMessageActionFailureNotice,
-  queuedMessageEditSession,
-  queuedMessageUnavailableNotice,
-  type QueuedMessageEditSession,
-} from "@t3tools/client-runtime/composer/queued-messages";
-import { useSendWhileRunningPreferenceStore } from "../sendWhileRunningPreferenceStore";
 import {
   questionAttachmentDraftId,
   questionAttachmentDraftPrefix,
@@ -42,7 +34,6 @@ import {
   type ScopedThreadRef,
   type ThreadId,
   type ThreadLinkedPullRequest,
-  type TurnDelivery,
   type TurnId,
   type KeybindingCommand,
   OrchestrationThreadActivity,
@@ -56,7 +47,6 @@ import {
 } from "@t3tools/contracts";
 import { type EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
 import {
-  queuedMessageUnavailableReason,
   wasBootstrapThreadDeleted,
 } from "@t3tools/client-runtime/errors";
 import { readPastedComposerContext } from "./composerInlineTokenPaste";
@@ -1432,7 +1422,6 @@ const EMPTY_HELD_TURN_DIFF_SUMMARIES: readonly never[] = [];
 const noopHeldTurnDiff = (_turnId: TurnId, _filePath?: string) => {};
 const noopHeldRevert = (_targetTurnCount: number) => {};
 const noopHeldAttachment = (_attachment: ChatFileAttachment) => {};
-const noopHeldQueuedMessage = (_messageId: MessageId) => {};
 
 /**
  * Drops the send-time anchored end space. That space is what holds a sent
@@ -1504,12 +1493,6 @@ export default function ChatView(props: ChatViewProps) {
     reportFailure: false,
   });
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, {
-    reportFailure: false,
-  });
-  const editQueuedMessage = useAtomCommand(threadEnvironment.editQueuedMessage, {
-    reportFailure: false,
-  });
-  const dropQueuedMessage = useAtomCommand(threadEnvironment.dropQueuedMessage, {
     reportFailure: false,
   });
   const respondToThreadApproval = useAtomCommand(threadEnvironment.respondToApproval, {
@@ -2761,22 +2744,6 @@ export default function ChatView(props: ChatViewProps) {
     conversationProviderStatus !== null &&
     conversationProviderStatus.supportsConversationRollback !== false;
   const phase = derivePhase(activeThread?.session ?? null);
-  // The record itself, never a fresh object built in the selector: the
-  // affordance memoizes on it and a new identity each render would defeat it.
-  const sendWhileRunningPreferences = useSendWhileRunningPreferenceStore(
-    (state) => state.deliveryByBehavior,
-  );
-  // Named from the session's provider, not the composer's selection: the
-  // running turn belongs to whoever is running it.
-  const sendWhileRunning = useMemo(
-    () =>
-      resolveSendWhileRunning({
-        isRunning: phase === "running",
-        provider: conversationProviderStatus,
-        preferences: sendWhileRunningPreferences,
-      }),
-    [conversationProviderStatus, phase, sendWhileRunningPreferences],
-  );
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
   const latestCheckpointCompletedAt = activeThread?.checkpoints.at(-1)?.completedAt ?? null;
   const workspaceMutationId = useMemo(() => {
@@ -6949,7 +6916,6 @@ export default function ChatView(props: ChatViewProps) {
   const onSend = async (
     e?: { preventDefault: () => void },
     submissionIntent: ComposerSubmissionIntent = "foreground",
-    delivery?: TurnDelivery,
     directAnnotation?: {
       annotation: PreviewAnnotationPayload;
       image: ComposerImageAttachment | null;
@@ -7667,9 +7633,6 @@ export default function ChatView(props: ChatViewProps) {
           runtimeMode,
           interactionMode: sendInteractionMode,
           ...(bootstrap ? { bootstrap } : {}),
-          // Absent means "now" per the contract, so an idle thread's payload
-          // is byte-identical to what it was before deliveries existed.
-          ...(delivery ? { delivery } : {}),
           createdAt: messageCreatedAt,
         },
       });
@@ -8601,103 +8564,12 @@ export default function ChatView(props: ChatViewProps) {
     },
     [activeThreadRef, isServerThread, onDiffPanelOpen],
   );
-  /** Read the current revision for an immediate action such as removal. */
-  const readQueuedMessageRevision = useCallback(
-    (messageId: MessageId) =>
-      activeThread?.queuedMessages?.find((queued) => queued.messageId === messageId)?.revision ??
-      null,
-    [activeThread],
-  );
-
-  const onEditQueuedMessage = useCallback(
-    (messageId: MessageId) => {
-      const text = activeThread?.messages.find((message) => message.id === messageId)?.text;
-      const edit = queuedMessageEditSession(activeThread?.queuedMessages ?? [], messageId);
-      if (text === undefined || edit === null) return;
-      // The composer owns every text transition, including parking whatever
-      // the user was already typing.
-      composerRef.current?.beginQueuedMessageEdit(edit, text);
-    },
-    [activeThread, composerRef],
-  );
-
-  const onRemoveQueuedMessage = useCallback(
-    async (messageId: MessageId) => {
-      if (!activeThread) return;
-      const expectedRevision = readQueuedMessageRevision(messageId);
-      if (expectedRevision === null) return;
-      const result = await dropQueuedMessage({
-        environmentId: activeThread.environmentId,
-        input: { threadId: activeThread.id, messageId, expectedRevision },
-      });
-      if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
-      const error = squashAtomCommandFailure(result);
-      const reason = queuedMessageUnavailableReason(error);
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          ...(reason
-            ? queuedMessageUnavailableNotice(reason, "remove")
-            : queuedMessageActionFailureNotice("remove", error)),
-        }),
-      );
-    },
-    [activeThread, dropQueuedMessage, readQueuedMessageRevision],
-  );
-
-  const onSaveQueuedMessageEdit = useCallback(
-    async (
-      edit: QueuedMessageEditSession,
-      text: string,
-    ): Promise<"saved" | "unavailable" | "failed"> => {
-      if (!activeThread) return "failed";
-      const result = await editQueuedMessage({
-        environmentId: activeThread.environmentId,
-        input: {
-          threadId: activeThread.id,
-          messageId: edit.messageId,
-          expectedRevision: edit.expectedRevision,
-          text,
-        },
-      });
-      if (result._tag !== "Failure") return "saved";
-      // An interrupted command means this view is going away, so it is not a
-      // refusal to report and the edit stays open.
-      if (isAtomCommandInterrupted(result)) return "failed";
-      const error = squashAtomCommandFailure(result);
-      const reason = queuedMessageUnavailableReason(error);
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          ...(reason
-            ? queuedMessageUnavailableNotice(reason, "edit")
-            : queuedMessageActionFailureNotice("edit", error)),
-        }),
-      );
-      return reason ? "unavailable" : "failed";
-    },
-    [activeThread, editQueuedMessage],
-  );
-
   // The revert handler is read from a ref at call-time so the callback
   // reference is fully stable and never busts TimelineRowCtx identity.
   const onRevertToTurnCountRef = useRef(onRevertToTurnCount);
   onRevertToTurnCountRef.current = onRevertToTurnCount;
   const onRevertTimelineTurn = useCallback((targetTurnCount: number, messageId: MessageId) => {
     void onRevertToTurnCountRef.current(targetTurnCount, messageId);
-  }, []);
-  // Same reason, and it matters more here: these two change on every thread
-  // snapshot, so a real dependency array would rebuild the timeline context on
-  // every keystroke of a running turn.
-  const onEditQueuedMessageRef = useRef(onEditQueuedMessage);
-  onEditQueuedMessageRef.current = onEditQueuedMessage;
-  const onEditTimelineQueuedMessage = useCallback((messageId: MessageId) => {
-    onEditQueuedMessageRef.current(messageId);
-  }, []);
-  const onRemoveQueuedMessageRef = useRef(onRemoveQueuedMessage);
-  onRemoveQueuedMessageRef.current = onRemoveQueuedMessage;
-  const onRemoveTimelineQueuedMessage = useCallback((messageId: MessageId) => {
-    void onRemoveQueuedMessageRef.current(messageId);
   }, []);
 
   // Files dropped on a sidebar row land here once the dropped-on thread is
@@ -8808,7 +8680,7 @@ export default function ChatView(props: ChatViewProps) {
           configuredUrls={configuredPreviewUrls}
           visible={rightPanelOpen}
           onSendAnnotation={(annotation, image) => {
-            void onSend(undefined, "foreground", undefined, { annotation, image });
+            void onSend(undefined, "foreground", { annotation, image });
           }}
         />
       </Suspense>
@@ -9113,9 +8985,6 @@ export default function ChatView(props: ChatViewProps) {
                 {...(onOpenWorktreeSetupTerminal ? { onOpenWorktreeSetupTerminal } : {})}
                 listRef={legendListRef}
                 timelineEntries={displayedTimeline.entries}
-                queuedMessages={
-                  paintOnlyDisplayedTimeline ? [] : (activeThread.queuedMessages ?? [])
-                }
                 latestTurn={paintOnlyDisplayedTimeline ? null : activeLatestTurn}
                 runningTurnId={paintOnlyDisplayedTimeline ? null : activeRunningTurnId}
                 turnDiffSummaries={
@@ -9136,12 +9005,6 @@ export default function ChatView(props: ChatViewProps) {
                   paintOnlyDisplayedTimeline ? noopHeldRevert : onRevertTimelineTurn
                 }
                 isRevertingCheckpoint={!paintOnlyDisplayedTimeline && isRevertingCheckpoint}
-                onEditQueuedMessage={
-                  paintOnlyDisplayedTimeline ? noopHeldQueuedMessage : onEditTimelineQueuedMessage
-                }
-                onRemoveQueuedMessage={
-                  paintOnlyDisplayedTimeline ? noopHeldQueuedMessage : onRemoveTimelineQueuedMessage
-                }
                 onImageExpand={onExpandTimelineImage}
                 onFileOpen={paintOnlyDisplayedTimeline ? noopHeldAttachment : openFileAttachment}
                 onFileDownload={
@@ -9272,7 +9135,6 @@ export default function ChatView(props: ChatViewProps) {
                             forceExpandedOnMobile={forceExpandedMobileComposer && isDraftHeroState}
                             projectSelectionRequired={isLocalDraftThread && activeProject === null}
                             phase={phase}
-                            sendWhileRunning={sendWhileRunning}
                             isConnecting={isConnecting}
                             isSendBusy={isSendBusy}
                             isRevertingCheckpoint={isRevertingCheckpoint}
@@ -9352,7 +9214,6 @@ export default function ChatView(props: ChatViewProps) {
                             onPageScrollRelease={onComposerPageScrollRelease}
                             onCompactContext={onCompactContext}
                             onSend={onSend}
-                            onSaveQueuedMessageEdit={onSaveQueuedMessageEdit}
                             onInterrupt={onInterrupt}
                             onImplementPlanInNewThread={onImplementPlanInNewThread}
                             onRespondToApproval={onRespondToApproval}

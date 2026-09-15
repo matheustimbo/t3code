@@ -35,8 +35,6 @@ import {
   pendingThreadCreationOutcomesAtom,
   recordPendingThreadCreationOutcome,
 } from "./pending-thread-creation";
-import { resolveOutboxTurnDelivery } from "./queued-turn-delivery";
-import { readSendWhileRunningPreferences } from "./send-while-running-preferences";
 import { serverEnvironment } from "./server";
 import {
   confirmThreadOutboxMessageQueued,
@@ -801,13 +799,6 @@ export function useThreadOutboxDrain(): void {
         settings,
         currentConfig.providers,
       );
-      // Resolved now rather than at enqueue time, and omitted unless it is
-      // "queued": an idle thread's payload then stays what it always was.
-      const delivery = resolveOutboxTurnDelivery({
-        thread,
-        providers: currentConfig.providers,
-        preferences: readSendWhileRunningPreferences(),
-      });
       const deliveryResult = await startTurn({
         environmentId: queuedMessage.environmentId,
         input: {
@@ -831,7 +822,6 @@ export function useThreadOutboxDrain(): void {
           runtimeMode: sendSettings.runtimeMode,
           interactionMode: sendSettings.interactionMode,
           createdAt: queuedMessage.createdAt,
-          ...(delivery ? { delivery } : {}),
         },
       });
       const failure = reportFailure(deliveryResult, "start-turn");

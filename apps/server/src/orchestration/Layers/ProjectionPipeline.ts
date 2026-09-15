@@ -508,8 +508,6 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             defaultModelSelection: event.payload.defaultModelSelection,
             defaultThreadEnvMode: null,
             autoPull: false,
-            ticketTitlePolicy: null,
-            ticketProviderBindings: [],
             faviconPath: event.payload.faviconPath ?? null,
             projectIcon: event.payload.projectIcon ?? null,
             scripts: event.payload.scripts,
@@ -539,12 +537,6 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               ? { defaultThreadEnvMode: event.payload.defaultThreadEnvMode }
               : {}),
             ...(event.payload.autoPull !== undefined ? { autoPull: event.payload.autoPull } : {}),
-            ...(event.payload.ticketTitlePolicy !== undefined
-              ? { ticketTitlePolicy: event.payload.ticketTitlePolicy }
-              : {}),
-            ...(event.payload.ticketProviderBindings !== undefined
-              ? { ticketProviderBindings: event.payload.ticketProviderBindings }
-              : {}),
             ...(event.payload.faviconPath !== undefined
               ? { faviconPath: event.payload.faviconPath }
               : {}),
@@ -587,22 +579,16 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         return;
       }
 
-      const [
-        latestUserMessageAt,
-        hasActionableProposedPlan,
-        activities,
-        pendingApprovalCount,
-        queuedMessageCount,
-      ] = yield* Effect.all([
-        projectionThreadMessageRepository.getLatestUserMessageAt({ threadId }),
-        projectionThreadProposedPlanRepository.hasActionableByThreadId({
-          threadId,
-          latestTurnId: existingRow.value.latestTurnId,
-        }),
-        projectionThreadActivityRepository.listUserInputLifecycleByThreadId({ threadId }),
-        projectionPendingApprovalRepository.countPendingByThreadId({ threadId }),
-        projectionThreadMessageRepository.countQueuedByThreadId({ threadId }),
-      ]);
+      const [latestUserMessageAt, hasActionableProposedPlan, activities, pendingApprovalCount] =
+        yield* Effect.all([
+          projectionThreadMessageRepository.getLatestUserMessageAt({ threadId }),
+          projectionThreadProposedPlanRepository.hasActionableByThreadId({
+            threadId,
+            latestTurnId: existingRow.value.latestTurnId,
+          }),
+          projectionThreadActivityRepository.listUserInputLifecycleByThreadId({ threadId }),
+          projectionPendingApprovalRepository.countPendingByThreadId({ threadId }),
+        ]);
 
       const pendingUserInputCount = derivePendingUserInputCountFromActivities(activities);
 
@@ -612,7 +598,6 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         pendingApprovalCount,
         pendingUserInputCount,
         hasActionableProposedPlan: hasActionableProposedPlan ? 1 : 0,
-        queuedMessageCount,
       });
     });
 
@@ -629,7 +614,6 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             threadId: event.payload.threadId,
             projectId: event.payload.projectId,
             title: event.payload.title,
-            titleRevision: 0,
             modelSelection: event.payload.modelSelection,
             runtimeMode: event.payload.runtimeMode,
             interactionMode: event.payload.interactionMode,
@@ -655,7 +639,6 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             pendingApprovalCount: 0,
             pendingUserInputCount: 0,
             hasActionableProposedPlan: 0,
-            queuedMessageCount: 0,
             deletedAt: null,
           });
           return;
@@ -823,12 +806,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           }
           yield* projectionThreadRepository.upsert({
             ...existingRow.value,
-            ...(event.payload.title !== undefined
-              ? {
-                  title: event.payload.title,
-                  titleRevision: (existingRow.value.titleRevision ?? 0) + 1,
-                }
-              : {}),
+            ...(event.payload.title !== undefined ? { title: event.payload.title } : {}),
             ...(event.payload.activeOrderKey !== undefined
               ? { activeOrderKey: event.payload.activeOrderKey }
               : {}),
@@ -1034,30 +1012,6 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
                 ? event.payload.createdAt
                 : previousLatest,
           });
-          if (event.payload.queuedTurnStart !== undefined) {
-            yield* refreshThreadShellSummary(event.payload.threadId);
-          }
-          return;
-        }
-
-        case "thread.turn-start-requested":
-        case "thread.message-requeued":
-        case "thread.queued-message-cancelled":
-        case "thread.queued-message-edited":
-        case "thread.queued-message-dropped": {
-          const existingRow = yield* projectionThreadRepository.getById({
-            threadId: event.payload.threadId,
-          });
-          if (Option.isNone(existingRow)) {
-            return;
-          }
-          yield* projectionThreadRepository.upsert({
-            ...existingRow.value,
-            updatedAt: event.occurredAt,
-          });
-          if (shouldRefreshThreadShellSummary(event)) {
-            yield* refreshThreadShellSummary(event.payload.threadId);
-          }
           return;
         }
 
@@ -1185,8 +1139,6 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               role: event.payload.role,
               text: event.payload.text,
               ...(attachments !== undefined ? { attachments: [...attachments] } : {}),
-              queuedTurnStart: event.payload.queuedTurnStart ?? null,
-              queuedRevision: 0,
               ...(event.payload.context !== undefined ? { context: event.payload.context } : {}),
               createdAt: event.payload.createdAt,
               updatedAt: event.payload.updatedAt,
@@ -1216,8 +1168,6 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             role: event.payload.role,
             text: nextText,
             ...(nextAttachments !== undefined ? { attachments: [...nextAttachments] } : {}),
-            queuedTurnStart: event.payload.queuedTurnStart ?? null,
-            queuedRevision: previousMessage?.queuedRevision ?? 0,
             ...((event.payload.context ?? previousMessage?.context) !== undefined
               ? { context: event.payload.context ?? previousMessage?.context }
               : {}),
@@ -1227,46 +1177,6 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           });
           return;
         }
-
-        case "thread.turn-start-requested":
-        case "thread.message-requeued":
-        case "thread.queued-message-cancelled": {
-          const existingMessage = yield* projectionThreadMessageRepository.getByMessageId({
-            messageId: event.payload.messageId,
-          });
-          if (Option.isNone(existingMessage)) {
-            return;
-          }
-          yield* projectionThreadMessageRepository.upsert({
-            ...existingMessage.value,
-            queuedTurnStart:
-              event.type === "thread.message-requeued" ? event.payload.queuedTurnStart : null,
-          });
-          return;
-        }
-
-        case "thread.queued-message-edited": {
-          const existingMessage = yield* projectionThreadMessageRepository.getByMessageId({
-            messageId: event.payload.messageId,
-          });
-          if (Option.isNone(existingMessage)) {
-            return;
-          }
-          yield* projectionThreadMessageRepository.upsert({
-            ...existingMessage.value,
-            text: event.payload.text,
-            queuedRevision: event.payload.revision,
-            updatedAt: event.payload.updatedAt,
-          });
-          return;
-        }
-
-        case "thread.queued-message-dropped":
-          yield* projectionThreadMessageRepository.deleteByMessageId({
-            messageId: event.payload.messageId,
-          });
-          attachmentSideEffects.prunedThreadRelativePaths.set(event.payload.threadId, new Set());
-          return;
 
         case "thread.reverted": {
           const existingRows = yield* projectionThreadMessageRepository.listByThreadId({

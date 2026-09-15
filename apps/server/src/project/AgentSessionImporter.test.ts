@@ -122,7 +122,6 @@ const makeProjectedThread = (input: {
     id: threadId,
     projectId: input.projectId ?? PROJECT_ID,
     title: sourceThread.title,
-    latestUserMessageAt: null,
     modelSelection: { instanceId: sourceThread.providerInstanceId, model: "default" },
     runtimeMode: "full-access",
     interactionMode: "default",

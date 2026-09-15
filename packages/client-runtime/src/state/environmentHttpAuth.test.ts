@@ -87,7 +87,6 @@ const THREAD = {
     pullRequests: [],
     worktreePath: null,
     latestTurn: null,
-    latestUserMessageAt: null,
     createdAt: "2026-09-04T00:00:00.000Z",
     updatedAt: "2026-09-04T00:00:00.000Z",
     archivedAt: null,

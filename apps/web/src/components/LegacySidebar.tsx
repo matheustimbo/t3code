@@ -16,7 +16,6 @@ import {
 import {
   ChangeRequestStatusIcon,
   prStatusIndicator,
-  QueuedMessagesIndicator,
   PrStatusTooltipContent,
   terminalStatusFromRunningIds,
   ThreadStatusLabel,
@@ -762,7 +761,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             </a>
           ) : null}
           {threadStatus && <ThreadStatusLabel status={threadStatus} />}
-          <QueuedMessagesIndicator threadId={thread.id} count={thread.queuedMessageCount} />
           {renamingThreadKey === threadKey ? (
             <input
               ref={handleRenameInputRef}

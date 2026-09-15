@@ -79,11 +79,7 @@ function threadDetailToShell(
     snoozedUntil: thread.snoozedUntil ?? null,
     snoozedAt: thread.snoozedAt ?? null,
     session: thread.session,
-    latestUserMessageAt:
-      thread.latestUserMessageAt !== undefined
-        ? thread.latestUserMessageAt
-        : latestUserMessageAt(thread),
-    queuedMessageCount: (thread.queuedMessages ?? []).length,
+    latestUserMessageAt: latestUserMessageAt(thread),
     hasPendingApprovals: false,
     hasPendingUserInput: false,
     hasActionableProposedPlan: false,

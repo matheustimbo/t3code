@@ -27,7 +27,7 @@ import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderDriverError } from "../Errors.ts";
-import { OPENCODE_CONCURRENT_SEND, makeOpenCodeAdapter } from "../Layers/OpenCodeAdapter.ts";
+import { makeOpenCodeAdapter } from "../Layers/OpenCodeAdapter.ts";
 import {
   checkOpenCodeProviderStatus,
   makePendingOpenCodeProvider,
@@ -121,7 +121,6 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
         displayName,
         accentColor,
         continuationGroupKey: continuationIdentity.continuationKey,
-        concurrentSend: OPENCODE_CONCURRENT_SEND,
       });
       const effectiveConfig = { ...config, enabled } satisfies OpenCodeSettings;
       const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(

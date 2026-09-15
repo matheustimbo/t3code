@@ -90,7 +90,7 @@ describe("resolveThreadFeedSubmissionAnchor", () => {
         submittedMessageId: "first-message",
         hasStartedTurn: false,
         hasUserMessage: false,
-        outboxMessageCount: 0,
+        queuedMessageCount: 0,
       }),
     ).toBe("first-message");
   });
@@ -102,7 +102,7 @@ describe("resolveThreadFeedSubmissionAnchor", () => {
         submittedMessageId: "second-message",
         hasStartedTurn: false,
         hasUserMessage: false,
-        outboxMessageCount: 1,
+        queuedMessageCount: 1,
       }),
     ).toBe("first-message");
   });
@@ -114,7 +114,7 @@ describe("resolveThreadFeedSubmissionAnchor", () => {
         submittedMessageId: "second-message",
         hasStartedTurn: false,
         hasUserMessage: false,
-        outboxMessageCount: 0,
+        queuedMessageCount: 0,
       }),
     ).toBe("first-message");
   });
@@ -126,7 +126,7 @@ describe("resolveThreadFeedSubmissionAnchor", () => {
         submittedMessageId: "second-message",
         hasStartedTurn: false,
         hasUserMessage: true,
-        outboxMessageCount: 0,
+        queuedMessageCount: 0,
       }),
     ).toBeNull();
   });
@@ -138,7 +138,7 @@ describe("resolveThreadFeedSubmissionAnchor", () => {
         submittedMessageId: "second-message",
         hasStartedTurn: true,
         hasUserMessage: false,
-        outboxMessageCount: 0,
+        queuedMessageCount: 0,
       }),
     ).toBeNull();
   });

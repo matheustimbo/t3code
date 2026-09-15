@@ -16,12 +16,6 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import {
-  queuedMessageActionFailureNotice,
-  queuedMessageUnavailableNotice,
-  type QueuedMessageUnavailableNotice,
-} from "@t3tools/client-runtime/composer/queued-messages";
-import {
-  queuedMessageUnavailableReason,
   safeErrorLogAttributes,
 } from "@t3tools/client-runtime/errors";
 import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
@@ -36,8 +30,6 @@ import {
   applyComposerSkillModePrefix,
   type ComposerSkillMode,
 } from "@t3tools/shared/composerTrigger";
-import * as Cause from "effect/Cause";
-import { AsyncResult } from "effect/unstable/reactivity";
 import { upgradeLegacyContextMessage } from "@t3tools/shared/composerContextLegacy";
 import { composerContextSendBlockReason, reidentifyComposerContext } from "../lib/composerContext";
 import { uuidv4 } from "../lib/uuid";
@@ -81,13 +73,6 @@ import {
 import { setPendingConnectionError } from "../state/use-remote-environment-registry";
 import { useSelectedThreadDetail } from "../state/use-thread-detail";
 import { useThreadSelection } from "../state/use-thread-selection";
-import {
-  editingQueuedTurnMessage,
-  editingQueuedTurnMessageId,
-  editingQueuedTurnMessagesAtom,
-  endEditQueuedTurnMessage,
-  replaceEditingQueuedTurnMessageDraftText,
-} from "./edit-queued-thread-message";
 import { enqueueThreadOutboxMessage } from "./thread-outbox";
 import { dispatchingQueuedMessageIdAtom, useThreadOutboxMessages } from "./use-thread-outbox";
 import { threadEnvironment } from "./threads";
@@ -147,7 +132,6 @@ export function useThreadDraftForThread(input: {
 export function useThreadComposerState() {
   const {
     selectedThread: selectedThreadShell,
-    selectedThreadRef,
     selectedThreadCreation,
     selectedEnvironmentRuntime,
   } = useThreadSelection();
@@ -160,9 +144,6 @@ export function useThreadComposerState() {
     Record<string, ReadonlyArray<CodexFeedbackSubmission>>
   >({});
   const uploadThreadFeedback = useAtomCommand(threadEnvironment.uploadFeedback, {
-    reportFailure: false,
-  });
-  const editQueuedMessage = useAtomCommand(threadEnvironment.editQueuedMessage, {
     reportFailure: false,
   });
   const pastedTextFileNamesRef = useRef<{ threadKey: string | null; names: Set<string> }>({
@@ -187,12 +168,12 @@ export function useThreadComposerState() {
     ensureComposerDraftsLoaded();
   }, []);
 
-  const selectedThreadKey = selectedThreadRef
-    ? scopedThreadKey(selectedThreadRef.environmentId, selectedThreadRef.threadId)
+  const selectedThreadKey = selectedThreadShell
+    ? scopedThreadKey(selectedThreadShell.environmentId, selectedThreadShell.id)
     : null;
   // The creation entry is the thread itself (rendered as the first message),
   // not a follow-up waiting behind it.
-  const selectedThreadOutboxMessages = useMemo(
+  const selectedThreadQueuedMessages = useMemo(
     () =>
       selectedThreadKey
         ? (queuedMessagesByThreadKey[selectedThreadKey] ?? []).filter(
@@ -216,7 +197,6 @@ export function useThreadComposerState() {
     [selectedThreadKey],
   );
   const selectedThreadMessages = selectedThreadDetail?.messages;
-  const selectedThreadQueuedMessages = selectedThreadDetail?.queuedMessages ?? [];
   const selectedThreadActivities = selectedThreadDetail?.activities;
   // A thread whose creation has not delivered its turn yet: the prompt only
   // exists in the outbox, so it is appended to whatever the server has. The
@@ -239,7 +219,7 @@ export function useThreadComposerState() {
     const pendingAcknowledgments = acknowledgedMessages.filter(
       (message) =>
         scopedThreadKey(message.environmentId, message.threadId) === selectedThreadKey &&
-        !selectedThreadOutboxMessages.some((queued) => queued.messageId === message.messageId),
+        !selectedThreadQueuedMessages.some((queued) => queued.messageId === message.messageId),
     );
     if (pendingAcknowledgments.length === 0) return feed;
     return appendPendingThreadMessages(feed, feed, pendingAcknowledgments).map((entry) =>
@@ -250,34 +230,9 @@ export function useThreadComposerState() {
     selectedThreadMessages,
     pendingCreationMessage,
     selectedThreadKey,
-    selectedThreadOutboxMessages,
+    selectedThreadQueuedMessages,
     acknowledgedMessages,
   ]);
-  // The turn can finish, or another device can drop the message, while the
-  // draft still holds its text. Leaving edit mode here keeps the send button
-  // from promising an edit that has nothing left to edit; the text stays put
-  // and goes out as a new message.
-  useEffect(() => {
-    if (selectedThreadKey === null) return;
-    const editing = appAtomRegistry.get(editingQueuedTurnMessagesAtom)[selectedThreadKey];
-    if (editing === undefined) return;
-
-    // A deleted thread has no detail snapshot left to tell us that its
-    // message disappeared. The route ref survives that transition, so clear
-    // the edit state while the composer hook is still mounted.
-    if (selectedThreadDetail === null) {
-      if (selectedThreadShell === null && selectedThreadCreation === null) {
-        endEditQueuedTurnMessage(selectedThreadKey);
-      }
-      return;
-    }
-
-    const queued = selectedThreadDetail.queuedMessages;
-    if (queued && !queued.some((entry) => entry.messageId === editing.messageId)) {
-      endEditQueuedTurnMessage(selectedThreadKey);
-    }
-  }, [selectedThreadCreation, selectedThreadDetail, selectedThreadKey, selectedThreadShell]);
-
   useEffect(() => {
     const echoedIds = new Set(selectedThreadMessages?.map((message) => message.id));
     if (acknowledgedMessages.some((message) => echoedIds.has(message.messageId))) {
@@ -293,7 +248,7 @@ export function useThreadComposerState() {
   const selectedDraft = selectedThreadKey ? composerDrafts[selectedThreadKey] : null;
   const draftMessage = selectedDraft?.text ?? "";
   const draftAttachments = selectedDraft?.attachments ?? [];
-  const selectedThreadOutboxCount = selectedThreadOutboxMessages.length;
+  const selectedThreadQueueCount = selectedThreadQueuedMessages.length;
   const selectedThread = selectedThreadDetail ?? selectedThreadShell;
   const modelSelection = selectedDraft?.modelSelection ?? selectedThread?.modelSelection ?? null;
   const runtimeMode = selectedDraft?.runtimeMode ?? selectedThread?.runtimeMode ?? null;
@@ -321,7 +276,7 @@ export function useThreadComposerState() {
   }, [selectedThreadDetail, selectedThreadShell]);
 
   const isCompacting = useMemo(() => {
-    const queuedMessage = selectedThreadOutboxMessages.findLast(
+    const queuedMessage = selectedThreadQueuedMessages.findLast(
       (message) =>
         message.messageId === dispatchingQueuedMessageId &&
         message.text.trim().toLowerCase() === "/compact" &&
@@ -359,7 +314,7 @@ export function useThreadComposerState() {
     dispatchingQueuedMessageId,
     selectedThread,
     selectedThreadDetail,
-    selectedThreadOutboxMessages,
+    selectedThreadQueuedMessages,
   ]);
 
   const activeWorkStartedAt = useMemo(() => {
@@ -374,49 +329,6 @@ export function useThreadComposerState() {
       null,
     );
   }, [selectedThreadDetail, selectedThreadSessionActivity, selectedThreadShell]);
-
-  /**
-   * Replace a queued message's text. Returns the notice to show, or null when
-   * it went through. The draft is cleared only on success, because every
-   * refusal's copy promises the user their text is still in the composer.
-   *
-   * Edit mode ends when the message is gone for good; a failure that says
-   * "try again" keeps it, so the retry is still an edit and cannot leave the
-   * queue holding both the original and a duplicate.
-   */
-  const saveEditedQueuedMessage = useCallback(
-    async (message: {
-      readonly environmentId: EnvironmentId;
-      readonly threadId: ThreadId;
-      readonly messageId: MessageId;
-      readonly expectedRevision: number;
-      readonly text: string;
-    }): Promise<QueuedMessageUnavailableNotice | null> => {
-      const threadKey = scopedThreadKey(message.environmentId, message.threadId);
-      const result = await editQueuedMessage({
-        environmentId: message.environmentId,
-        input: {
-          threadId: message.threadId,
-          messageId: message.messageId,
-          expectedRevision: message.expectedRevision,
-          text: message.text,
-        },
-      });
-      if (AsyncResult.isFailure(result)) {
-        const error = Cause.squash(result.cause);
-        const reason = queuedMessageUnavailableReason(error);
-        if (reason === null) {
-          return queuedMessageActionFailureNotice("edit", error);
-        }
-        endEditQueuedTurnMessage(threadKey);
-        return queuedMessageUnavailableNotice(reason, "edit");
-      }
-      endEditQueuedTurnMessage(threadKey);
-      clearComposerDraftContent(threadKey);
-      return null;
-    },
-    [editQueuedMessage],
-  );
 
   const onSendMessage = useCallback(async () => {
     if (!selectedThreadShell) {
@@ -447,27 +359,6 @@ export function useThreadComposerState() {
     )
       return null;
     if (text.length === 0 && attachments.length === 0) {
-      return null;
-    }
-    // A queued message is replaced in place so it keeps its place in line.
-    // Edit is text-only on the wire, so attaching a file drops the draft out
-    // of edit mode; the send button's label changes with it before the user
-    // commits, and the send then goes out as a new message.
-    const editedMessage = attachments.length === 0 ? editingQueuedTurnMessage(threadKey) : null;
-    if (attachments.length > 0) {
-      endEditQueuedTurnMessage(threadKey);
-    }
-    if (editedMessage !== null) {
-      const notice = await saveEditedQueuedMessage({
-        environmentId: selectedThreadShell.environmentId,
-        threadId: selectedThreadShell.id,
-        messageId: editedMessage.messageId,
-        expectedRevision: editedMessage.expectedRevision,
-        text,
-      });
-      if (notice) {
-        Alert.alert(notice.title, notice.description);
-      }
       return null;
     }
     // A send-failure restore appends with allowOverflow so it never drops the
@@ -599,7 +490,6 @@ export function useThreadComposerState() {
     selectedThreadCreation,
     selectedThreadDetail,
     selectedThreadShell,
-    saveEditedQueuedMessage,
     uploadThreadFeedback,
   ]);
 
@@ -610,10 +500,6 @@ export function useThreadComposerState() {
       }
 
       const threadKey = scopedThreadKey(selectedThreadShell.environmentId, selectedThreadShell.id);
-      if (editingQueuedTurnMessageId(threadKey) !== null) {
-        replaceEditingQueuedTurnMessageDraftText(threadKey, value);
-        return;
-      }
       setComposerDraftText(threadKey, value);
     },
     [selectedThreadShell],
@@ -937,9 +823,8 @@ export function useThreadComposerState() {
     feedbackSubmissions,
     dismissFeedback,
     selectedThreadFeed,
+    selectedThreadQueueCount,
     selectedThreadQueuedMessages,
-    selectedThreadOutboxCount,
-    selectedThreadOutboxMessages,
     dispatchingQueuedMessageId,
     activeWorkStartedAt,
     isCompacting,

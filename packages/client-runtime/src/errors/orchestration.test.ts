@@ -1,7 +1,7 @@
 import { OrchestrationDispatchCommandError } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { queuedMessageUnavailableReason, wasBootstrapThreadDeleted } from "./orchestration.ts";
+import { wasBootstrapThreadDeleted } from "./orchestration.ts";
 
 describe("wasBootstrapThreadDeleted", () => {
   it("accepts only a confirmed deleted bootstrap thread", () => {
@@ -19,24 +19,5 @@ describe("wasBootstrapThreadDeleted", () => {
       ),
     ).toBe(false);
     expect(wasBootstrapThreadDeleted(new Error("connection lost"))).toBe(false);
-  });
-});
-
-describe("queuedMessageUnavailableReason", () => {
-  it("returns only the structured queued-message reason", () => {
-    expect(
-      queuedMessageUnavailableReason(
-        new OrchestrationDispatchCommandError({
-          message: "This message is not queued.",
-          queuedMessageUnavailableReason: "not-queued",
-        }),
-      ),
-    ).toBe("not-queued");
-    expect(
-      queuedMessageUnavailableReason(
-        new OrchestrationDispatchCommandError({ message: "This message is not queued." }),
-      ),
-    ).toBe(null);
-    expect(queuedMessageUnavailableReason(new Error("not-queued"))).toBe(null);
   });
 });
