@@ -554,7 +554,7 @@ function ProjectDetail({
             title="Project icon"
             description={
               projectIcon?.kind === "lucide"
-                ? `${projectIcon.name} · ${projectIcon.color}`
+                ? `${projectIcon.monogram ?? projectIcon.name} · ${projectIcon.color}`
                 : projectIcon?.kind === "emoji"
                   ? projectIcon.emoji
                   : (faviconPath ?? "Automatic")
@@ -758,6 +758,7 @@ function ProjectDetail({
         <Suspense fallback={null}>
           <ProjectIconPickerDialog
             current={projectIcon}
+            projectName={representative.title}
             open
             onOpenChange={setIconPickerOpen}
             onSelect={(icon) => void setProjectIcon({ faviconPath: null, projectIcon: icon })}
