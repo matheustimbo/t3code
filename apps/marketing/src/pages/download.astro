@@ -131,9 +131,10 @@ const imageProps = {
           <svg class="platform-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 7l5 5-5 5M12 17h7"/></svg>
           <h2 class="platform-name">Terminal</h2>
         </div>
-        <code class="cli-line">curl -fsSL https://raw.githubusercontent.com/matheustimbo/t3code/fork-main/scripts/install.sh | sh</code>
-        <p class="cli-note">On Windows, run this command in PowerShell:</p>
-        <code class="cli-line">irm https://raw.githubusercontent.com/matheustimbo/t3code/fork-main/scripts/install.ps1 | iex</code>
+<        <code class="cli-line cli-line--stable">curl -fsSL https://raw.githubusercontent.com/matheustimbo/t3code/fork-main/scripts/install.sh | sh</code>
+        <code class="cli-line cli-line--stable">irm https://raw.githubusercontent.com/matheustimbo/t3code/fork-main/scripts/install.ps1 | iex</code>
+        <code class="cli-line cli-line--nightly">curl -fsSL https://raw.githubusercontent.com/matheustimbo/t3code/fork-main/scripts/install.sh | T3CODE_CHANNEL=nightly sh</code>
+        <code class="cli-line cli-line--nightly">$env:T3CODE_CHANNEL="nightly"; irm https://raw.githubusercontent.com/matheustimbo/t3code/fork-main/scripts/install.ps1 | iex</code>
       </section>
     </div>
 
@@ -401,16 +402,18 @@ const imageProps = {
     gap: 0.75rem;
   }
 
-  .platform-section--cli {
-    display: none;
-  }
-
   .download-page[data-channel="nightly"] .platform-section--mobile {
     display: none;
   }
 
-  .download-page[data-channel="nightly"] .platform-section--cli {
-    display: flex;
+  /* The CLI ships on both trains; only the install command differs. */
+  .cli-line--nightly,
+  .download-page[data-channel="nightly"] .cli-line--stable {
+    display: none;
+  }
+
+  .download-page[data-channel="nightly"] .cli-line--nightly {
+    display: block;
   }
 
   .platform-header {

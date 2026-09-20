@@ -2,9 +2,25 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   applyComposerSkillModePrefix,
+  detectComposerTrigger,
   serializeComposerFileLink,
   startsWithProviderSlashCommand,
 } from "./composerTrigger.ts";
+
+describe("detectComposerTrigger", () => {
+  it.each(["$", "€", "£", "¥", "₹", "₩", "₿", "𑿝"])(
+    "detects %s skill prefixes and their source range",
+    (prefix) => {
+      const text = `Use ${prefix}review`;
+      expect(detectComposerTrigger(text, text.length)).toEqual({
+        kind: "skill",
+        query: "review",
+        rangeStart: 4,
+        rangeEnd: text.length,
+      });
+    },
+  );
+});
 
 describe("serializeComposerFileLink", () => {
   it("uses the basename as the markdown label", () => {
