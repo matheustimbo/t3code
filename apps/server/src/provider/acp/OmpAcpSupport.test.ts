@@ -204,4 +204,19 @@ describe("applyOmpAcpModelSelection", () => {
       expect(calls).toEqual([]);
     }),
   );
+
+  it.effect("trusts session-advertised levels outside the static catalog", () =>
+    Effect.gen(function* () {
+      const calls: Array<string> = [];
+      yield* applyOmpAcpModelSelection({
+        runtime: stubRuntime(calls, {
+          thinking: { current: "low", values: ["minimal", "low"] },
+        }),
+        model: "auto",
+        selections: [{ id: "thinking", value: "minimal" }],
+        mapError: (context) => context.step,
+      });
+      expect(calls).toEqual(["config:thinking=minimal"]);
+    }),
+  );
 });

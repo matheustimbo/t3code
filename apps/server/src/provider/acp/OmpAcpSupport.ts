@@ -188,10 +188,10 @@ export function applyOmpAcpModelSelection<E>(input: {
       );
     }
 
-    const requestedThinking = normalizeOmpThinking(
-      getProviderOptionStringSelectionValue(input.selections, "thinking"),
-    );
-    if (requestedThinking) {
+    const requestedThinkingRaw = getProviderOptionStringSelectionValue(input.selections, "thinking")
+      ?.trim()
+      .toLowerCase();
+    if (requestedThinkingRaw) {
       const configOptions = yield* input.runtime.getConfigOptions;
       const thinkingOption = configOptions.find((option) => option.id === "thinking");
       // The session may not advertise thinking at all (older CLI, or a model
@@ -201,11 +201,18 @@ export function applyOmpAcpModelSelection<E>(input: {
         return;
       }
       const advertised = ompSelectOptionValues(thinkingOption);
-      if (advertised.length > 0 && !advertised.includes(requestedThinking)) {
+      const supported =
+        advertised.length > 0
+          ? // The live session is authoritative: the catalog may name levels the
+            // session does not offer (or vice versa), so an unadvertised value
+            // keeps the current level instead of failing the turn.
+            advertised.includes(requestedThinkingRaw)
+          : isValidOmpThinkingToken(requestedThinkingRaw);
+      if (!supported) {
         return;
       }
-      if (requestedThinking !== thinkingOption.currentValue) {
-        yield* input.runtime.setConfigOption("thinking", requestedThinking).pipe(
+      if (requestedThinkingRaw !== thinkingOption.currentValue) {
+        yield* input.runtime.setConfigOption("thinking", requestedThinkingRaw).pipe(
           Effect.mapError((cause) =>
             input.mapError({
               cause,

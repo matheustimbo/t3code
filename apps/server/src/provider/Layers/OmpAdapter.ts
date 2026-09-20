@@ -1140,6 +1140,7 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
     return {
       provider: PROVIDER,
       capabilities: { sessionModelSwitch: "in-session", supportsConversationRollback: false },
+      compaction: { type: "slash-command", command: "/compact" },
       startSession,
       sendTurn,
       interruptTurn,

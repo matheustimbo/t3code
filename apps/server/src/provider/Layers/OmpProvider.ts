@@ -54,7 +54,7 @@ const OMP_PRESENTATION = {
   displayName: "Omp",
   supportsConversationRollback: false,
   badgeLabel: "Early Access",
-  showInteractionModeToggle: false,
+  showInteractionModeToggle: true,
 } as const;
 
 const OMP_THINKING_LABELS: Record<string, string> = {

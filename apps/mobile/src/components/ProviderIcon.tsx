@@ -73,6 +73,26 @@ export function ProviderIcon(props: ProviderIconProps) {
     );
   }
 
+  if (props.provider === "omp") {
+    const stroke = isDarkMode ? "#F5F5F5" : "#0F0F0F";
+    return (
+      <Svg
+        width={size}
+        height={size}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke={stroke}
+        strokeWidth={2}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <Path d="M4 6h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1Z" />
+        <Path d="m7 9 3 3-3 3" />
+        <Path d="M12 15h5" />
+      </Svg>
+    );
+  }
+
   // codex (and unknown drivers)
   return (
     <Svg width={size} height={size} viewBox="0 0 256 260" fill="none">
