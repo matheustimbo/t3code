@@ -1,0 +1,170 @@
+diff --git a/dist/v2/gen/core/serverSentEvents.gen.js b/dist/v2/gen/core/serverSentEvents.gen.js
+index 9684cb4f19593266b94f78e933f5039dc362c5a9..ac048557fbccc87509df6a489763ce631daa24f5 100644
+--- a/dist/v2/gen/core/serverSentEvents.gen.js
++++ b/dist/v2/gen/core/serverSentEvents.gen.js
+@@ -37,7 +37,100 @@ export const createSseClient = ({ onRequest, onSseError, onSseEvent, responseTra
+                 if (!response.body)
+                     throw new Error("No body in SSE response");
+                 const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+-                let buffer = "";
++                const lineFragments = [];
++                let dataLines = [];
++                let eventName;
++                let pendingCarriageReturn = false;
++                const dispatchLine = async (line) => {
++                    if (line.startsWith("data:")) {
++                        dataLines.push(line.replace(/^data:\s*/, ""));
++                        return;
++                    }
++                    if (line.startsWith("event:")) {
++                        eventName = line.replace(/^event:\s*/, "");
++                        return;
++                    }
++                    if (line.startsWith("id:")) {
++                        lastEventId = line.replace(/^id:\s*/, "");
++                        return;
++                    }
++                    if (line.startsWith("retry:")) {
++                        const parsed = Number.parseInt(line.replace(/^retry:\s*/, ""), 10);
++                        if (!Number.isNaN(parsed)) {
++                            retryDelay = parsed;
++                        }
++                        return;
++                    }
++                    if (line !== "")
++                        return;
++                    let data;
++                    let parsedJson = false;
++                    if (dataLines.length) {
++                        const rawData = dataLines.join("\n");
++                        try {
++                            data = JSON.parse(rawData);
++                            parsedJson = true;
++                        }
++                        catch {
++                            data = rawData;
++                        }
++                    }
++                    if (parsedJson) {
++                        if (responseValidator) {
++                            await responseValidator(data);
++                        }
++                        if (responseTransformer) {
++                            data = await responseTransformer(data);
++                        }
++                    }
++                    onSseEvent?.({
++                        data,
++                        event: eventName,
++                        id: lastEventId,
++                        retry: retryDelay,
++                    });
++                    const event = dataLines.length ? { data } : undefined;
++                    dataLines = [];
++                    eventName = undefined;
++                    return event;
++                };
++                const finishLine = () => {
++                    const line = lineFragments.join("");
++                    lineFragments.length = 0;
++                    return dispatchLine(line);
++                };
++                const processChunk = async function* (value) {
++                    let offset = 0;
++                    if (pendingCarriageReturn) {
++                        pendingCarriageReturn = false;
++                        if (value.startsWith("\n")) {
++                            offset = 1;
++                        }
++                    }
++                    const lineEndings = /[\r\n]/g;
++                    lineEndings.lastIndex = offset;
++                    let lineEnding;
++                    while ((lineEnding = lineEndings.exec(value))) {
++                        lineFragments.push(value.slice(offset, lineEnding.index));
++                        if (lineEnding[0] === "\r" && lineEndings.lastIndex === value.length) {
++                            pendingCarriageReturn = true;
++                            const event = await finishLine();
++                            if (event) {
++                                yield event;
++                            }
++                            return;
++                        }
++                        if (lineEnding[0] === "\r" && value[lineEndings.lastIndex] === "\n") {
++                            lineEndings.lastIndex++;
++                        }
++                        offset = lineEndings.lastIndex;
++                        const event = await finishLine();
++                        if (event) {
++                            yield event;
++                        }
++                    }
++                    lineFragments.push(value.slice(offset));
++                };
+                 const abortHandler = () => {
+                     try {
+                         reader.cancel();
+@@ -52,61 +145,8 @@ export const createSseClient = ({ onRequest, onSseError, onSseEvent, responseTra
+                         const { done, value } = await reader.read();
+                         if (done)
+                             break;
+-                        buffer += value;
+-                        // Normalize line endings: CRLF -> LF, then CR -> LF
+-                        buffer = buffer.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+-                        const chunks = buffer.split("\n\n");
+-                        buffer = chunks.pop() ?? "";
+-                        for (const chunk of chunks) {
+-                            const lines = chunk.split("\n");
+-                            const dataLines = [];
+-                            let eventName;
+-                            for (const line of lines) {
+-                                if (line.startsWith("data:")) {
+-                                    dataLines.push(line.replace(/^data:\s*/, ""));
+-                                }
+-                                else if (line.startsWith("event:")) {
+-                                    eventName = line.replace(/^event:\s*/, "");
+-                                }
+-                                else if (line.startsWith("id:")) {
+-                                    lastEventId = line.replace(/^id:\s*/, "");
+-                                }
+-                                else if (line.startsWith("retry:")) {
+-                                    const parsed = Number.parseInt(line.replace(/^retry:\s*/, ""), 10);
+-                                    if (!Number.isNaN(parsed)) {
+-                                        retryDelay = parsed;
+-                                    }
+-                                }
+-                            }
+-                            let data;
+-                            let parsedJson = false;
+-                            if (dataLines.length) {
+-                                const rawData = dataLines.join("\n");
+-                                try {
+-                                    data = JSON.parse(rawData);
+-                                    parsedJson = true;
+-                                }
+-                                catch {
+-                                    data = rawData;
+-                                }
+-                            }
+-                            if (parsedJson) {
+-                                if (responseValidator) {
+-                                    await responseValidator(data);
+-                                }
+-                                if (responseTransformer) {
+-                                    data = await responseTransformer(data);
+-                                }
+-                            }
+-                            onSseEvent?.({
+-                                data,
+-                                event: eventName,
+-                                id: lastEventId,
+-                                retry: retryDelay,
+-                            });
+-                            if (dataLines.length) {
+-                                yield data;
+-                            }
++                        for await (const event of processChunk(value)) {
++                            yield event.data;
+                         }
+                     }
+                 }
