@@ -14,11 +14,18 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
-import { type ProviderApprovalDecision, type ProviderEvent, ThreadId } from "@t3tools/contracts";
+import {
+  CodexSettings,
+  type ProviderApprovalDecision,
+  type ProviderEvent,
+  type ProviderRuntimeEvent,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -26,8 +33,12 @@ import * as Stream from "effect/Stream";
 import { assert, describe } from "vite-plus/test";
 
 import wireFixture from "../testFixtures/codexMultiAgentWire.json" with { type: "json" };
+import { ServerConfig } from "../../config.ts";
+import { makeCodexAdapter } from "./CodexAdapter.ts";
 import { CodexResumeCursorSchema, makeCodexSessionRuntime } from "./CodexSessionRuntime.ts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+
+type SessionExitedRuntimeEvent = Extract<ProviderRuntimeEvent, { readonly type: "session.exited" }>;
 
 const ROOT = wireFixture.rootThreadId;
 const [CHILD_A, CHILD_B] = wireFixture.childThreadIds as [string, string];
@@ -41,6 +52,7 @@ const decodeMcpElicitationResponse = Schema.decodeUnknownEffect(
   ),
 );
 const decodeResumeCursor = Schema.decodeUnknownEffect(CodexResumeCursorSchema);
+const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 const decodeResumeRequest = Schema.decodeUnknownEffect(
   Schema.fromJsonString(
     Schema.Struct({
@@ -54,6 +66,7 @@ import * as fs from "node:fs";
 const fixture = ${JSON.stringify({ threadStart, turnStart })};
 const pidPath = process.env.T3_CODEX_RECOVERY_PID;
 const requestsPath = process.env.T3_CODEX_RECOVERY_REQUESTS;
+const completePath = process.env.T3_CODEX_RECOVERY_COMPLETE_PATH;
 if (pidPath) fs.writeFileSync(pidPath, String(process.pid));
 const write = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
 const rl = (await import("node:readline")).createInterface({ input: process.stdin });
@@ -70,7 +83,7 @@ rl.on("line", (line) => {
   if (method === "turn/start") {
     write({ id, result: fixture.turnStart });
     write({ jsonrpc: "2.0", method: "turn/started", params: { threadId: fixture.threadStart.thread.id, turn: fixture.turnStart.turn } });
-    if (process.env.T3_CODEX_RECOVERY_COMPLETE === "1") write({ jsonrpc: "2.0", method: "turn/completed", params: { threadId: fixture.threadStart.thread.id, turn: { ...fixture.turnStart.turn, status: "completed" } } });
+    if (process.env.T3_CODEX_RECOVERY_COMPLETE === "1" || (completePath && fs.existsSync(completePath))) write({ jsonrpc: "2.0", method: "turn/completed", params: { threadId: fixture.threadStart.thread.id, turn: { ...fixture.turnStart.turn, status: "completed" } } });
     if (process.env.T3_CODEX_RECOVERY_EXIT_CODE !== undefined) {
       const code = Number(process.env.T3_CODEX_RECOVERY_EXIT_CODE);
       process.stdout.end(() => process.exit(code));
@@ -303,6 +316,145 @@ describe("CodexSessionRuntime collab integration", () => {
         assert.equal(resumeRequest.excludeTurns, true);
         yield* secondRuntime.close;
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+    "drops a killed app-server from the adapter before resuming its next turn",
+    () =>
+      Effect.gen(function* () {
+        const recoveryPeerPath = NodePath.join(
+          NodeOS.tmpdir(),
+          `t3-codex-adapter-recovery-peer-${process.pid}.mjs`,
+        );
+        const recoveryPidPath = `${recoveryPeerPath}.pid`;
+        const recoveryRequestsPath = `${recoveryPeerPath}.requests`;
+        const recoveryCompletePath = `${recoveryPeerPath}.complete`;
+        NodeFS.writeFileSync(
+          recoveryPeerPath,
+          recoveryPeerSource(wireFixture.responses.threadStart, wireFixture.responses.turnStart),
+          "utf8",
+        );
+        NodeFS.chmodSync(recoveryPeerPath, 0o755);
+        NodeFS.rmSync(recoveryPidPath, { force: true });
+        NodeFS.rmSync(recoveryRequestsPath, { force: true });
+        NodeFS.rmSync(recoveryCompletePath, { force: true });
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            NodeFS.rmSync(recoveryPeerPath, { force: true });
+            NodeFS.rmSync(recoveryPidPath, { force: true });
+            NodeFS.rmSync(recoveryRequestsPath, { force: true });
+            NodeFS.rmSync(recoveryCompletePath, { force: true });
+          }),
+        );
+
+        const threadId = ThreadId.make("thread-codex-adapter-signal-recovery");
+        const adapter = yield* makeCodexAdapter(
+          decodeCodexSettings({ binaryPath: recoveryPeerPath }),
+          {
+            environment: {
+              ...process.env,
+              T3_CODEX_RECOVERY_COMPLETE_PATH: recoveryCompletePath,
+              T3_CODEX_RECOVERY_PID: recoveryPidPath,
+              T3_CODEX_RECOVERY_REQUESTS: recoveryRequestsPath,
+            },
+          },
+        );
+        const turnStarted = yield* Deferred.make<void>();
+        const resumedTurnCompleted = yield* Deferred.make<void>();
+        const exited = yield* Deferred.make<{
+          readonly event: SessionExitedRuntimeEvent;
+          readonly wasLiveWhenObserved: boolean;
+        }>();
+        const gracefulExit = yield* Deferred.make<SessionExitedRuntimeEvent>();
+        const terminalEvents = yield* Ref.make<ReadonlyArray<SessionExitedRuntimeEvent>>([]);
+        yield* adapter.streamEvents.pipe(
+          Stream.runForEach((event) => {
+            if (event.threadId !== threadId) return Effect.void;
+            if (event.type === "turn.started") {
+              return Deferred.succeed(turnStarted, undefined).pipe(Effect.asVoid);
+            }
+            if (event.type === "turn.completed") {
+              return Deferred.succeed(resumedTurnCompleted, undefined).pipe(Effect.asVoid);
+            }
+            if (event.type === "session.exited") {
+              return Effect.gen(function* () {
+                const wasLiveWhenObserved = yield* adapter.hasSession(threadId);
+                yield* Ref.update(terminalEvents, (events) => [...events, event]);
+                yield* Deferred.succeed(exited, { event, wasLiveWhenObserved });
+                if (event.payload.exitKind === "graceful") {
+                  yield* Deferred.succeed(gracefulExit, event);
+                }
+              });
+            }
+            return Effect.void;
+          }),
+          Effect.forkScoped,
+        );
+
+        const firstSession = yield* adapter.startSession({
+          threadId,
+          runtimeMode: "full-access",
+        });
+        const cursor = yield* decodeResumeCursor(firstSession.resumeCursor);
+        yield* adapter.sendTurn({ threadId, input: "leave this turn open" });
+        yield* Deferred.await(turnStarted);
+
+        const childPid = Number(NodeFS.readFileSync(recoveryPidPath, "utf8"));
+        assert.isTrue(Number.isInteger(childPid));
+        process.kill(childPid, "SIGKILL");
+        const firstExit = yield* Deferred.await(exited).pipe(Effect.timeout("5 seconds"));
+        assert.equal(firstExit.wasLiveWhenObserved, false);
+        assert.equal(firstExit.event.payload.exitKind, undefined);
+        assert.match(firstExit.event.payload.reason ?? "", /exited unexpectedly/u);
+        assert.equal(yield* adapter.hasSession(threadId), false);
+        assert.deepEqual(yield* adapter.listSessions(), []);
+
+        NodeFS.writeFileSync(recoveryCompletePath, "continue", "utf8");
+        const resumed = yield* adapter.startSession({
+          threadId,
+          resumeCursor: cursor,
+          runtimeMode: "full-access",
+        });
+        assert.deepEqual(resumed.resumeCursor, cursor);
+        const turn = yield* adapter.sendTurn({ threadId, input: "continue without replay" });
+        assert.isDefined(turn.turnId);
+        const { params: resumeRequest } = yield* decodeResumeRequest(
+          NodeFS.readFileSync(recoveryRequestsPath, "utf8").trim(),
+        );
+        assert.equal(resumeRequest.threadId, wireFixture.responses.threadStart.thread.id);
+        assert.equal(resumeRequest.excludeTurns, true);
+        yield* Deferred.await(resumedTurnCompleted).pipe(Effect.timeout("5 seconds"));
+        const exits = yield* Ref.get(terminalEvents);
+        assert.equal(exits.length, 1);
+        const [onlyExit] = exits;
+        if (!onlyExit) return;
+        if (!onlyExit.raw) {
+          throw new Error("Expected the terminal event to retain its native source.");
+        }
+        assert.equal(onlyExit.raw.method, "session/exited");
+
+        yield* adapter.stopSession(threadId);
+        const graceful = yield* Deferred.await(gracefulExit).pipe(Effect.timeout("5 seconds"));
+        assert.equal(graceful.payload.exitKind, "graceful");
+        assert.equal(graceful.payload.reason, "Session stopped");
+        assert.equal(yield* adapter.hasSession(threadId), false);
+        const eventsAfterStop = yield* Ref.get(terminalEvents);
+        assert.equal(eventsAfterStop.length, 2);
+        assert.equal(
+          eventsAfterStop.filter((event) => event.payload.exitKind === "graceful").length,
+          1,
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.merge(
+            NodeServices.layer,
+            ServerConfig.layerTest(process.cwd(), process.cwd()).pipe(
+              Layer.provide(NodeServices.layer),
+            ),
+          ),
+        ),
+      ),
   );
 
   it.live.skipIf(HostProcessPlatform.defaultValue() === "win32")(
