@@ -31,6 +31,8 @@ import {
   ThreadId,
   ProviderSendTurnInput,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as NodeCrypto from "node:crypto";
 import * as Crypto from "effect/Crypto";
@@ -66,7 +68,6 @@ import {
   makeCodexSessionRuntime,
   type CodexSessionRuntimeError,
   type CodexSessionRuntimeOptions,
-  type CodexSessionRuntimeSendTurnInput,
   type CodexSessionRuntimeShape,
 } from "./CodexSessionRuntime.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
@@ -106,7 +107,10 @@ interface CodexAdapterSessionContext {
   readonly runtime: CodexSessionRuntimeShape;
   readonly eventFiber: Fiber.Fiber<void, never>;
   readonly turnTokenUsage: CodexTurnTokenUsageState;
+  readonly teardownCompletion: Deferred.Deferred<void>;
   stopped: boolean;
+  terminalEventPublished: boolean;
+  resourcesReleased: boolean;
 }
 
 type CodexCumulativeTokenUsage = {
@@ -2251,6 +2255,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
   const adapterScope = yield* Scope.Scope;
   const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
   const sessions = new Map<ThreadId, CodexAdapterSessionContext>();
+  const sessionsPendingTeardown = new Set<CodexAdapterSessionContext>();
 
   const startSession: CodexAdapterShape["startSession"] = (input) =>
     Effect.scoped(
@@ -2265,7 +2270,11 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
 
         const existing = sessions.get(input.threadId);
         if (existing && !existing.stopped) {
-          yield* Effect.suspend(() => stopSessionInternal(existing));
+          // Replacing a session is an internal transition. Its stale runtime
+          // must not publish a terminal event for the session being started.
+          yield* Effect.suspend(() =>
+            stopSessionInternal(existing, { publishTerminalEvent: false }),
+          );
         }
 
         const serviceTier =
@@ -2309,6 +2318,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
             : {}),
         };
         const turnTokenUsage = makeCodexTurnTokenUsageState();
+        const teardownCompletion = yield* Deferred.make<void>();
         // Codex reports a usage-limit stop as OpenAI's own sentence, which on a
         // Business workspace blames credits for a window that ran out. The
         // snapshot naming that window arrives in its own notification, before or
@@ -2316,6 +2326,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
         // it and read it when a turn fails on the limit.
         let rateLimits: CodexRateLimitSnapshot | undefined;
         const sessionScope = yield* Scope.make("sequential");
+        let session: CodexAdapterSessionContext | undefined;
         let sessionScopeTransferred = false;
         yield* Effect.addFinalizer(() =>
           sessionScopeTransferred ? Effect.void : Scope.close(sessionScope, Exit.void),
@@ -2457,31 +2468,54 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
               });
               return;
             }
+
+            const activeSession = session;
+            if (
+              !activeSession ||
+              activeSession.stopped ||
+              sessions.get(input.threadId) !== activeSession
+            ) {
+              return;
+            }
+
+            const terminalSession = runtimeEvents.some(
+              (runtimeEvent) => runtimeEvent.type === "session.exited",
+            )
+              ? activeSession
+              : undefined;
+            if (terminalSession) {
+              // A session exit makes the runtime unusable. Remove its exact
+              // map entry before publishing the event so observers can
+              // immediately recover the thread. The stopped flag also drops
+              // the graceful close event emitted while releasing this runtime.
+              terminalSession.stopped = true;
+              terminalSession.terminalEventPublished = true;
+              sessions.delete(input.threadId);
+            }
             yield* Queue.offerAll(runtimeEventQueue, runtimeEvents);
 
-            // A runtime that reported its own exit is gone, but startup
-            // reconciliation and the session reaper keep reading the thread as
-            // live until it leaves this map. Teardown is forked because it
-            // interrupts this fiber and closes the scope it runs in.
-            if (runtimeEvents.some((runtimeEvent) => runtimeEvent.type === "session.exited")) {
-              const exited = sessions.get(input.threadId);
-              if (exited?.scope === sessionScope) {
-                sessions.delete(input.threadId);
-                yield* stopSessionInternal(exited).pipe(Effect.forkIn(adapterScope));
-              }
+            if (terminalSession) {
+              // Teardown is forked because it interrupts this fiber and closes
+              // the scope it runs in.
+              yield* releaseSessionResources(terminalSession).pipe(Effect.forkIn(adapterScope));
             }
           }),
         ).pipe(Effect.forkIn(sessionScope));
 
-        const session: CodexAdapterSessionContext = {
+        const startedSession: CodexAdapterSessionContext = {
           threadId: input.threadId,
           scope: sessionScope,
           runtime,
           eventFiber,
           turnTokenUsage,
+          teardownCompletion,
           stopped: false,
+          terminalEventPublished: false,
+          resourcesReleased: false,
         };
-        sessions.set(input.threadId, session);
+        session = startedSession;
+        sessions.set(input.threadId, startedSession);
+        sessionsPendingTeardown.add(startedSession);
 
         const started = yield* runtime.start().pipe(
           Effect.mapError(
@@ -2493,8 +2527,19 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
                 cause,
               }),
           ),
-          Effect.onError(() => stopSessionInternal(session)),
+          Effect.onError(() =>
+            stopSessionInternal(startedSession, { publishTerminalEvent: false }),
+          ),
         );
+
+        if (startedSession.stopped || sessions.get(input.threadId) !== startedSession) {
+          yield* releaseSessionResources(startedSession);
+          return yield* new ProviderAdapterProcessError({
+            provider: PROVIDER,
+            threadId: input.threadId,
+            detail: "Codex App Server exited while starting the session.",
+          });
+        }
 
         sessionScopeTransferred = true;
 
@@ -2681,8 +2726,52 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     yield* nativeEventLogger.write(event, event.threadId);
   });
 
+  const releaseSessionResources = Effect.fn("releaseSessionResources")(
+    (session: CodexAdapterSessionContext) =>
+      Effect.uninterruptible(
+        Effect.gen(function* () {
+          if (session.resourcesReleased) {
+            return yield* Deferred.await(session.teardownCompletion);
+          }
+          session.resourcesReleased = true;
+          yield* Effect.gen(function* () {
+            yield* session.runtime.close.pipe(Effect.ignore);
+            yield* Effect.ignore(Scope.close(session.scope, Exit.void));
+            yield* Fiber.interrupt(session.eventFiber).pipe(Effect.ignore);
+          }).pipe(
+            Effect.ensuring(
+              Effect.sync(() => sessionsPendingTeardown.delete(session)).pipe(
+                Effect.andThen(Deferred.succeed(session.teardownCompletion, undefined)),
+              ),
+            ),
+          );
+        }),
+      ),
+  );
+
+  const publishGracefulSessionExit = Effect.fn("publishGracefulSessionExit")(function* (
+    session: CodexAdapterSessionContext,
+  ) {
+    if (session.terminalEventPublished) {
+      return;
+    }
+    session.terminalEventPublished = true;
+    yield* Queue.offer(runtimeEventQueue, {
+      type: "session.exited",
+      eventId: EventId.make(NodeCrypto.randomUUID()),
+      provider: PROVIDER,
+      threadId: session.threadId,
+      createdAt: DateTime.formatIso(yield* DateTime.now),
+      payload: {
+        reason: "Session stopped",
+        exitKind: "graceful",
+      },
+    });
+  });
+
   const stopSessionInternal = Effect.fn("stopSessionInternal")(function* (
     session: CodexAdapterSessionContext,
+    options?: { readonly publishTerminalEvent?: boolean },
   ) {
     if (session.stopped) {
       return;
@@ -2691,9 +2780,15 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     if (sessions.get(session.threadId) === session) {
       sessions.delete(session.threadId);
     }
-    yield* session.runtime.close.pipe(Effect.ignore);
-    yield* Effect.ignore(Scope.close(session.scope, Exit.void));
-    yield* Fiber.interrupt(session.eventFiber).pipe(Effect.ignore);
+    if (options?.publishTerminalEvent === false) {
+      // Closing the runtime can emit session/closed. This stop is internal
+      // (startup failure or replacement), so suppress that stale terminal
+      // notification at the adapter boundary.
+      session.terminalEventPublished = true;
+    } else {
+      yield* publishGracefulSessionExit(session);
+    }
+    yield* releaseSessionResources(session);
   });
 
   const stopSession: CodexAdapterShape["stopSession"] = (threadId) =>
@@ -2716,10 +2811,15 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     Effect.succeed(Boolean(sessions.get(threadId) && !sessions.get(threadId)?.stopped));
 
   const stopAll: CodexAdapterShape["stopAll"] = () =>
-    Effect.forEach(Array.from(sessions.values()), stopSessionInternal, {
-      concurrency: 1,
-      discard: true,
-    }).pipe(Effect.asVoid);
+    Effect.forEach(
+      Array.from(sessionsPendingTeardown),
+      (session) =>
+        session.stopped ? releaseSessionResources(session) : stopSessionInternal(session),
+      {
+        concurrency: 1,
+        discard: true,
+      },
+    ).pipe(Effect.asVoid);
 
   yield* Effect.acquireRelease(Effect.void, () =>
     stopAll().pipe(
