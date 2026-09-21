@@ -125,9 +125,18 @@ In the desktop app, open **Settings → Connections → Add environment**, choos
 or reuses a server there and opens the port forward for you. Projects, provider
 credentials, and agent work stay on the remote machine.
 
-The remote host needs `curl` or `wget`, `tar`, and a SHA-256 checksum command.
+<The remote host must be Linux or an Apple Silicon Mac with `curl` or `wget`,
+`tar`, and a SHA-256 checksum command (`sha256sum` or `shasum`).
 It does not need Node.js for the T3 Code server. Install and authenticate each
 [provider](./install.md#providers) on the remote host.
+The first launch downloads T3 Code's server to `~/.t3/runtime` on the host, so
+it takes longer than later ones.
+Provider CLIs must be on the `PATH` of a non-interactive login shell there;
+check with:
+
+```bash
+ssh user@example.com 'sh -lc "command -v claude codex"'
+```
 
 If SSH reconnecting fails after an app update, retry the launch once. Removing
 the connection stops a server that T3 Code launched; a server that was already

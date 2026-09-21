@@ -18,14 +18,14 @@ export function connectionTone(state: RemoteClientConnectionState): StatusTone {
     case "connecting":
       return {
         label: "Connecting",
-        pillClassName: "bg-primary/10",
-        textClassName: "text-foreground-secondary",
+        pillClassName: "bg-update",
+        textClassName: "text-update-foreground",
       };
     case "unsupported":
       return {
         label: "Client not supported",
-        pillClassName: "bg-danger",
-        textClassName: "text-danger-foreground",
+        pillClassName: "bg-subtle",
+        textClassName: "text-foreground-secondary",
       };
     case "error":
       return {

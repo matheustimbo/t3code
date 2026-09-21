@@ -31,7 +31,7 @@ The offered action depends on how the server runs:
 | **Update the desktop app** | Update the desktop app on the machine running the server, then reopen it if needed.                                                                                                             |
 | **Copy update command**    | Stop the command-line server on its host and relaunch with the copied command, keeping your usual startup options.                                                                              |
 
-For a background service, run the matching version's CLI on the host:
+On the host, run:
 
 ```sh
 t3 update <client-version>
@@ -40,12 +40,18 @@ t3 service update
 
 Replace `<client-version>` with the version shown in the notice. An older
 service launcher may require this local update before it supports remote updates
-and rollback.
+and rollback. The command
+asks before restarting the background service; if you decline, run
+`t3 service restart` (or `t3 service update`) when you are ready.
 
 For a foreground server, run `t3 update <client-version>`, stop the old server,
 and start it again. Add `serve` if you normally run without a browser, and
 preserve options such as `--host` or `--tailscale-serve`. See
 [background services](./background-service.md) for service management.
+
+If you run the server with `npx` rather than an installed `t3`, there is
+nothing to update on the host: stop the server and relaunch it as
+`npx t3@<client-version>` with the same subcommand and options.
 
 ## If an update fails
 
