@@ -11,27 +11,38 @@ compiler. The native desktop app includes the same server runtime.
 You need an installed, authenticated provider before starting a thread. You can
 launch T3 Code and configure providers afterwards.
 
-## Install the CLI
+## Command line
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/matheustimbo/t3code/fork-main/scripts/install.sh | sh
 ```
 
-On Windows, run this command in PowerShell:
+On Windows, in PowerShell:
 
 ```powershell
 irm https://raw.githubusercontent.com/matheustimbo/t3code/fork-main/scripts/install.ps1 | iex
 ```
 
-Run `t3` to start the server and open the local web app. Run `t3 --help` for
-command-line options. The installer follows stable releases by default. Set
-`T3CODE_CHANNEL=nightly` to install the latest nightly.
+This puts `t3` in `~/.local/bin`. If your shell reports `command not found`
+afterwards, that directory is not on your `PATH` yet; the installer prints the
+line to add. Set `T3CODE_CHANNEL=nightly` to install the nightly train, or
+`T3CODE_VERSION` to pin an exact version.
 
-The executable is built for Apple Silicon Macs, Linux, and Windows. There is
-no Intel Mac build of it, because Node cannot produce a single executable for
-that platform; the Intel desktop app is unaffected. To run a standalone server
-on an Intel Mac, build it from source. You need Node.js 24 and `vp` (see
-[Install vp](https://github.com/pingdotgg/t3code#install-vp)):
+| Task                                             | Command                                                   |
+| ------------------------------------------------ | --------------------------------------------------------- |
+| Start the server and open the web app            | `t3`                                                      |
+| Start the server without a browser               | `t3 serve`                                                |
+| Keep it running in the background (macOS, Linux) | `t3 service install` ([details](./background-service.md)) |
+| Move to the newest release                       | `t3 update`                                               |
+| Remove it again                                  | `t3 uninstall`                                            |
+
+Run `t3 --help` for the full reference.
+
+### Intel Macs
+
+There is no `t3` executable for Intel Macs (the desktop app is available). To
+run a server there, build it from source with Node.js 24 and `vp`
+([Install vp](https://github.com/pingdotgg/t3code#install-vp)):
 
 ```bash
 git clone https://github.com/pingdotgg/t3code
@@ -39,9 +50,8 @@ cd t3code && vp i && vp run build:desktop
 node apps/server/dist/bin.mjs
 ```
 
-A server run this way is a plain Node program: `t3 update` and the background
-service do not apply, so update it with `git pull` and a rebuild, and start it
-however you run other Node processes.
+`t3 update` and the background service do not apply to a server run this way;
+update it with `git pull` and a rebuild.
 
 ## Desktop app
 
@@ -61,9 +71,9 @@ want ticket-derived thread titles and this fork's updates.
 ### Windows Subsystem for Linux
 
 Choose a WSL distro in **Settings → Connections** to run agents and projects
-there. Install Node.js and provider CLIs inside that distro. T3 Code installs its
-matching server runtime there automatically; the first launch after an app
-update can take longer.
+there. Install the provider CLIs inside that distro. T3 Code installs its own
+server runtime there automatically; the first launch after an app update can
+take longer.
 
 ### Open a project from a terminal
 

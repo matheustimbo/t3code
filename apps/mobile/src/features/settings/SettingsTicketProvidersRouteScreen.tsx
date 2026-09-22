@@ -177,7 +177,7 @@ function EnvironmentTicketProviders({
 
   if (!settings) {
     return (
-      <SettingsSection title={label} card>
+      <SettingsSection title={label}>
         <Text className="p-4 text-sm text-foreground-muted">
           Connect this environment to configure ticket providers.
         </Text>
@@ -400,7 +400,7 @@ function EnvironmentTicketProviders({
 
   return (
     <View className="gap-3">
-      <SettingsSection title={label} card>
+      <SettingsSection title={label}>
         {MODE_OPTIONS.map((option, index) => (
           <Pressable
             key={option.mode}
@@ -444,7 +444,7 @@ function EnvironmentTicketProviders({
         ) : null}
       </SettingsSection>
 
-      <SettingsSection title="Accounts" card>
+      <SettingsSection title="Accounts">
         {instances.map(([instanceId, instance], index) => {
           const probe = probeByInstanceId[instanceId];
           return (
@@ -831,7 +831,7 @@ function ProjectTicketTitles({ project }: { readonly project: EnvironmentProject
   };
 
   return (
-    <SettingsSection title={project.title} card>
+    <SettingsSection title={project.title}>
       {[
         {
           mode: "inherit",

@@ -401,16 +401,18 @@ const imageProps = {
     gap: 0.75rem;
   }
 
-  .platform-section--cli {
-    display: none;
-  }
-
   .download-page[data-channel="nightly"] .platform-section--mobile {
     display: none;
   }
 
-  .download-page[data-channel="nightly"] .platform-section--cli {
-    display: flex;
+  /* The CLI ships on both trains; only the install command differs. */
+  .cli-line--nightly,
+  .download-page[data-channel="nightly"] .cli-line--stable {
+    display: none;
+  }
+
+  .download-page[data-channel="nightly"] .cli-line--nightly {
+    display: block;
   }
 
   .platform-header {
