@@ -59,6 +59,7 @@ import {
   useLinkedThreadPullRequest,
 } from "./ThreadStatusIndicators";
 import { Button } from "./ui/button";
+import { ComposerControl } from "./chat/ComposerControl";
 import { Switch } from "./ui/switch";
 import { getVirtualizedScrollFadeClassName } from "./ui/scroll-area";
 import {
@@ -790,7 +791,7 @@ export function BranchToolbarBranchSelector({
         data-composer-context-control
       >
         <ThreadPullRequestBadgeControl
-          variant="ghost"
+          render={<ComposerControl size="xs" />}
           badge={prBadge}
           number={prNumber}
           url={prUrl}
@@ -918,7 +919,7 @@ export function BranchToolbarBranchSelector({
                   </label>
                 }
               />
-              <TooltipPopup side="top" className="max-w-72 whitespace-normal leading-tight">
+              <TooltipPopup side="top">
                 Creates the worktree from the latest matching branch on origin instead of your local
                 branch.
               </TooltipPopup>
