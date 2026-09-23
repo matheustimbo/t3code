@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { environmentDisplayLabel } from "@t3tools/shared/environmentLabel";
 import type {
   EnvironmentId,
   ProviderConsumeResetCreditOutcome,
@@ -312,7 +313,7 @@ export function useRefreshLimits(
           setFailedEnvironments((previous) => [
             ...previous.filter((failed) => failed.environmentId !== environmentId),
             ...(result._tag === "Failure"
-              ? [{ environmentId, label: presentation.entry.target.label }]
+              ? [{ environmentId, label: environmentDisplayLabel(presentation) }]
               : []),
           ]);
         }),

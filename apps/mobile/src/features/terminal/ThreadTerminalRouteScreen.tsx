@@ -1,4 +1,5 @@
 import { DEFAULT_TERMINAL_ID, EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { environmentDisplayLabel } from "@t3tools/shared/environmentLabel";
 import { type KnownTerminalSession } from "@t3tools/client-runtime/state/terminal";
 import { SymbolView } from "../../components/AppSymbol";
 import { ScreenHeader } from "../../components/ScreenHeader";
@@ -1217,9 +1218,9 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
           {!isEnvironmentReady ? (
             <EnvironmentConnectionNotice
               environmentLabel={
-                environment.presentation?.entry.target.label ??
-                selectedEnvironmentConnection?.environmentLabel ??
-                "Environment"
+                environment.presentation
+                  ? environmentDisplayLabel(environment.presentation)
+                  : (selectedEnvironmentConnection?.environmentLabel ?? "Environment")
               }
               connection={
                 environment.presentation?.connection ?? {

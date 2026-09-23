@@ -1197,6 +1197,11 @@ export const ServerSettings = Schema.Struct({
   /** Whether the server-local Device panel setup flow has been completed. */
   deviceOnboardingCompleted: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   deviceHosts: SshDeviceHostConfigs.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  /**
+   * The name this machine goes by in every client, overriding the one the
+   * server reads from the OS. Empty keeps the detected name.
+   */
+  environmentLabel: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   sidebarAutoSettleAfterDays: Schema.NullOr(SidebarAutoSettleAfterDays).pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS)),
   ),
@@ -1542,6 +1547,7 @@ export const ServerSettingsPatch = Schema.Struct({
   enableDeviceSupport: Schema.optionalKey(Schema.Boolean),
   deviceOnboardingCompleted: Schema.optionalKey(Schema.Boolean),
   deviceHosts: Schema.optionalKey(SshDeviceHostConfigs),
+  environmentLabel: Schema.optionalKey(TrimmedString),
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
   sidebarAutoSettleOnMerge: Schema.optionalKey(Schema.Boolean),
   backgroundActivity: Schema.optionalKey(

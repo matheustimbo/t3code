@@ -69,6 +69,7 @@ import {
 import { LocalEnvironmentSetting } from "./LocalEnvironmentSetting";
 import { searchableSetting } from "./settingsSearch";
 import { EnvironmentIconMenu } from "./EnvironmentIconPicker";
+import { EnvironmentRenameDialog } from "./EnvironmentRenameDialog";
 import {
   EnvironmentRow,
   environmentTransportLabel,
@@ -1481,6 +1482,7 @@ function SavedBackendListRow({
   onRemove,
 }: SavedBackendListRowProps) {
   const environmentId = environment.environmentId;
+  const [renaming, setRenaming] = useState(false);
   const unsupported = environment.connection.phase === "unsupported";
   const enabled = environment.entry.enabled && !unsupported;
   const isConnected = environment.connection.phase === "connected";
@@ -1632,6 +1634,7 @@ function SavedBackendListRow({
           <EllipsisIcon className="size-3.5" />
         </MenuTrigger>
         <MenuPopup align="end">
+          <MenuItem onClick={() => setRenaming(true)}>Rename…</MenuItem>
           <EnvironmentIconMenu
             environmentId={environmentId}
             serverConfig={environment.serverConfig}
@@ -1645,6 +1648,13 @@ function SavedBackendListRow({
           </MenuItem>
         </MenuPopup>
       </Menu>
+      {renaming ? (
+        <EnvironmentRenameDialog
+          environmentId={environmentId}
+          serverConfig={environment.serverConfig}
+          onClose={() => setRenaming(false)}
+        />
+      ) : null}
     </EnvironmentRow>
   );
 }
@@ -1829,6 +1839,7 @@ export function ConnectionsSettings() {
     reportFailure: false,
   });
   const primaryEnvironmentId = primaryEnvironment?.environmentId ?? null;
+  const [renamingPrimary, setRenamingPrimary] = useState(false);
   const primarySessionState = usePrimarySessionState();
   const currentSessionScopes = desktopBridge
     ? AuthAdministrativeScopes
@@ -3296,6 +3307,7 @@ export function ConnectionsSettings() {
                     <EllipsisIcon className="size-3.5" />
                   </MenuTrigger>
                   <MenuPopup align="end">
+                    <MenuItem onClick={() => setRenamingPrimary(true)}>Rename…</MenuItem>
                     <EnvironmentIconMenu
                       environmentId={primaryEnvironmentId}
                       serverConfig={primaryServerConfig}
@@ -3305,6 +3317,13 @@ export function ConnectionsSettings() {
               ) : null
             }
           >
+            {renamingPrimary && primaryEnvironmentId !== null ? (
+              <EnvironmentRenameDialog
+                environmentId={primaryEnvironmentId}
+                serverConfig={primaryServerConfig}
+                onClose={() => setRenamingPrimary(false)}
+              />
+            ) : null}
             <LocalEnvironmentSetting />
             {canManageLocalBackend ? (
               <SettingsRow

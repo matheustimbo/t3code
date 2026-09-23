@@ -4,6 +4,7 @@ import type {
 } from "@t3tools/client-runtime/connection";
 import { connectionCatalogDisplayUrl } from "@t3tools/client-runtime/connection";
 import type { EnvironmentId, ServerConfig } from "@t3tools/contracts";
+import { environmentDisplayLabel } from "@t3tools/shared/environmentLabel";
 import * as Option from "effect/Option";
 import { Atom } from "effect/unstable/reactivity";
 
@@ -58,7 +59,7 @@ export function createRemoteEnvironmentProjectionAtoms(input: {
       previousPrepared = prepared;
       previous = {
         environmentId,
-        environmentLabel: presentation.entry.target.label,
+        environmentLabel: environmentDisplayLabel(presentation),
         pairingUrl: displayUrl,
         displayUrl,
         httpBaseUrl,

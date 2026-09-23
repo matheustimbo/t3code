@@ -1,4 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
+import { EnvironmentId, type ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
 import * as NodePath from "@effect/platform-node/NodePath";
 import {
   HostProcessEnvironment,
@@ -17,6 +18,22 @@ import { HttpClient } from "effect/unstable/http";
 import * as NetService from "@t3tools/shared/Net";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+
+const environmentNamed = (label: string) =>
+  Layer.succeed(
+    ServerEnvironment.ServerEnvironment,
+    ServerEnvironment.ServerEnvironment.of({
+      getEnvironmentId: Effect.succeed(EnvironmentId.make("env-local-device-host")),
+      getDescriptor: Effect.succeed({
+        environmentId: EnvironmentId.make("env-local-device-host"),
+        label,
+        platform: { os: "linux", arch: "x64" },
+        serverVersion: "0.0.0-test",
+        capabilities: { repositoryIdentity: true },
+      } satisfies ExecutionEnvironmentDescriptor),
+    }),
+  );
 
 const diagnose = (
   files: ReadonlyArray<string>,
@@ -141,7 +158,13 @@ it.effect(
       const fs = yield* FileSystem.FileSystem;
       const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-consent-" });
       const host = yield* LocalDeviceHost.make().pipe(
-        Effect.provide(Layer.mergeAll(ServerConfig.layerTest(baseDir, baseDir), NetService.layer)),
+        Effect.provide(
+          Layer.mergeAll(
+            ServerConfig.layerTest(baseDir, baseDir),
+            NetService.layer,
+            environmentNamed("rog-fedora"),
+          ),
+        ),
         Effect.provideService(HostProcessEnvironment, { HOME: baseDir, PATH: "" }),
         Effect.provideService(HostProcessPlatform, "linux"),
         Effect.provideService(
@@ -169,4 +192,34 @@ it.effect(
       yield* host.stop;
       expect(yield* fs.exists(`${baseDir}/tools`)).toBe(false);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("names the local host after the environment it runs on", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-label-" });
+    const host = yield* LocalDeviceHost.make().pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          ServerConfig.layerTest(baseDir, baseDir),
+          NetService.layer,
+          environmentNamed("MacBook Pro de Matheus"),
+        ),
+      ),
+      Effect.provideService(HostProcessEnvironment, { HOME: baseDir, PATH: "" }),
+      Effect.provideService(HostProcessPlatform, "linux"),
+      Effect.provideService(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(() => Effect.die(new Error("Must not spawn processes"))),
+      ),
+      Effect.provideService(ProcessRunner.ProcessRunner, {
+        run: () => Effect.die(new Error("Must not run commands")),
+      }),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make(() => Effect.die(new Error("Must not make network requests"))),
+      ),
+    );
+    expect((yield* host.summary).label).toBe("MacBook Pro de Matheus");
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

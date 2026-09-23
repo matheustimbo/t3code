@@ -19,6 +19,7 @@ import {
 } from "@t3tools/contracts";
 
 import * as DateTime from "effect/DateTime";
+import { environmentDisplayLabel } from "./environmentLabel.ts";
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -46,6 +47,8 @@ export type LimitPresentations = ReadonlyMap<
   {
     readonly entry: { readonly target: { readonly label: string } };
     readonly serverConfig: {
+      readonly environment?: { readonly label?: string | undefined } | undefined;
+      readonly settings?: { readonly environmentLabel?: string | undefined } | undefined;
       readonly providers?: readonly ServerProvider[] | undefined;
       readonly usageLimitSources?: UsageLimitSourceSnapshots | undefined;
     } | null;
@@ -155,7 +158,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
     });
   };
   for (const [environmentId, presentation] of presentations) {
-    const label = presentation.entry.target.label;
+    const label = environmentDisplayLabel(presentation);
     for (const provider of providersWithLimits(presentation.serverConfig?.providers ?? [])) {
       if (!provider.usageLimits || limitsNotice(provider.usageLimits) !== null) continue;
       merge(
@@ -183,7 +186,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
   for (const [environmentId, presentation] of presentations) {
     for (const source of presentation.serverConfig?.usageLimitSources ?? []) {
       const sourceLabel = labelEnvironment
-        ? `${presentation.entry.target.label} · ${source.label}`
+        ? `${environmentDisplayLabel(presentation)} · ${source.label}`
         : source.label;
       for (const account of source.accounts) {
         if (limitsNotice(account.usageLimits) !== null) continue;
@@ -225,7 +228,7 @@ export function collectLimitNotices(presentations: LimitPresentations): readonly
     presentations.size > 1 ? `${environmentLabel} · ${subject}` : subject;
   const notices: string[] = [];
   for (const presentation of presentations.values()) {
-    const environmentLabel = presentation.entry.target.label;
+    const environmentLabel = environmentDisplayLabel(presentation);
     for (const provider of providersWithLimits(presentation.serverConfig?.providers ?? [])) {
       // An account that can never report (API key) is left out; one that
       // failed, or reported nothing at all, is worth a line.

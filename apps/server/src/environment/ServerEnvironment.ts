@@ -20,6 +20,7 @@ import { resolveServerSelfUpdateCapability } from "../cloud/selfUpdate.ts";
 import { resolveServiceLauncherMode } from "../cloud/serviceLauncherClient.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { resolveServerEnvironmentLabel } from "./ServerEnvironmentLabel.ts";
 import { detectServerEnvironmentMachineKind } from "./ServerEnvironmentMachine.ts";
 
@@ -185,6 +186,7 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const serverConfig = yield* ServerConfig.ServerConfig;
   const secrets = yield* ServerSecretStore.ServerSecretStore;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
   const identity = yield* ServerEnvironmentIdentity;
   const hostPlatform = yield* HostProcessPlatform;
   const hostArchitecture = yield* HostProcessArchitecture;
@@ -241,6 +243,7 @@ export const make = Effect.gen(function* () {
       pullRequestStackActions: true,
       threadPullRequestLinking: true,
       environmentIcon: true,
+      environmentRename: true,
       projectCloneTracking: true,
       ...(serverSelfUpdate === null ? {} : { serverSelfUpdate }),
       ...(serverSelfUpdate === "boot-service" || desktopAppUpdate
@@ -256,11 +259,19 @@ export const make = Effect.gen(function* () {
   return ServerEnvironment.of({
     getEnvironmentId: Effect.succeed(environmentId),
     // The publish opt-in and relay link change at runtime (`t3 connect
-    // publish`, the client settings toggle), so the capability is read per
-    // descriptor request rather than baked in at startup.
-    getDescriptor: readAgentActivityPublishingActive(secrets).pipe(
-      Effect.map((agentActivityPublishing) => ({
+    // publish`, the client settings toggle), and the name is the user's to
+    // change, so both are read per descriptor request rather than baked in at
+    // startup.
+    getDescriptor: Effect.all([
+      readAgentActivityPublishingActive(secrets),
+      serverSettings.getSettings.pipe(
+        Effect.map((settings) => settings.environmentLabel),
+        Effect.orElseSucceed(() => ""),
+      ),
+    ]).pipe(
+      Effect.map(([agentActivityPublishing, labelOverride]) => ({
         ...descriptor,
+        label: labelOverride || descriptor.label,
         capabilities: { ...descriptor.capabilities, agentActivityPublishing },
       })),
     ),

@@ -19,15 +19,17 @@ import {
   RELAY_URL_SECRET,
 } from "../cloud/config.ts";
 import * as ServerConfig from "../config.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as ServerEnvironment from "./ServerEnvironment.ts";
 
 const isServerEnvironmentIdPersistenceError = Schema.is(
   ServerEnvironment.ServerEnvironmentIdPersistenceError,
 );
 
-const makeServerEnvironmentLayer = (baseDir: string) =>
+const makeServerEnvironmentLayer = (baseDir: string, environmentLabel = "") =>
   ServerEnvironment.layer.pipe(
     Layer.provide(ServerSecretStore.layer),
+    Layer.provide(ServerSettings.layerTest({ environmentLabel })),
     Layer.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
   );
 
@@ -192,7 +194,10 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
       const testLayer = Layer.mergeAll(
         ServerEnvironment.layer.pipe(Layer.provide(ServerSecretStore.layer)),
         ServerSecretStore.layer,
-      ).pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), baseDir)));
+      ).pipe(
+        Layer.provide(ServerSettings.layerTest()),
+        Layer.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
+      );
 
       yield* Effect.gen(function* () {
         const secrets = yield* ServerSecretStore.ServerSecretStore;
@@ -229,6 +234,24 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
     }),
   );
 
+  it.effect("prefers the name the user set over the one detected from the host", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-server-environment-label-test-",
+      });
+      const describeWith = (environmentLabel: string) =>
+        Effect.gen(function* () {
+          const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
+          return yield* serverEnvironment.getDescriptor;
+        }).pipe(Effect.provide(makeServerEnvironmentLayer(baseDir, environmentLabel)));
+
+      const detected = yield* describeWith("");
+      expect((yield* describeWith("Fedora da sala")).label).toBe("Fedora da sala");
+      expect((yield* describeWith("")).label).toBe(detected.label);
+    }),
+  );
+
   it.effect("advertises desktopAppUpdate only with desktop mode and the control fd", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -246,6 +269,7 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
           Effect.provide(
             ServerEnvironment.layer.pipe(
               Layer.provide(ServerSecretStore.layer),
+              Layer.provide(ServerSettings.layerTest()),
               Layer.provide(ServerConfig.layer({ ...serverConfig, ...overrides })),
             ),
           ),
@@ -310,6 +334,7 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
           Effect.provide(
             ServerEnvironment.layer.pipe(
               Layer.provide(emptySecretStoreLayer),
+              Layer.provide(ServerSettings.layerTest()),
               Layer.provide(Layer.merge(ServerConfig.layer(serverConfig), failingFileSystemLayer)),
             ),
           ),

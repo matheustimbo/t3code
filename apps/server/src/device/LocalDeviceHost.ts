@@ -44,6 +44,7 @@ import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import * as ServerConfig from "../config.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as DeviceHost from "./DeviceHost.ts";
 import {
@@ -207,6 +208,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
   const net = yield* NetService.NetService;
   const runner = yield* ProcessRunner.ProcessRunner;
   const httpClient = yield* HttpClient.HttpClient;
+  const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
   const environment = yield* HostProcessEnvironment;
   const hostPlatform = yield* HostProcessPlatform;
   const sdk = yield* androidSdk;
@@ -226,7 +228,14 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     return reason === null ? { platform, available: true } : { platform, available: false, reason };
   });
 
+  // This host is the machine the server runs on, so it goes by the same name
+  // the environment does, including the one the user set in settings.
+  const resolveLabel = serverEnvironment.getDescriptor.pipe(
+    Effect.map((descriptor) => descriptor.label),
+  );
+
   const summary: Effect.Effect<DeviceHostSummary> = Effect.gen(function* () {
+    const label = yield* resolveLabel;
     const [platforms, hubInstalled, agentDeviceInstalled] = yield* Effect.all([
       Effect.all([platformAvailability("ios"), platformAvailability("android")]),
       isDeviceHubInstalled(config.baseDir).pipe(
@@ -260,7 +269,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       tools,
       id: hostId,
       kind: "local",
-      label: "This machine",
+      label,
       platforms,
       hubInstalled,
       agentDeviceInstalled,

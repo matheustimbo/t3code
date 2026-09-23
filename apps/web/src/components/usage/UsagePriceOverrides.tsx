@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId } from "@t3tools/contracts";
+import { environmentDisplayLabel } from "@t3tools/shared/environmentLabel";
 import { ChevronDownIcon, PlusIcon, RotateCcwIcon, XIcon } from "lucide-react";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
@@ -61,7 +62,7 @@ const priceTargetsAtom = Atom.make((get): readonly UsagePriceTarget[] =>
       : resolveRemoteOperateAccess(sessionAccess);
     return {
       environmentId,
-      label: environment.entry.target.label,
+      label: environmentDisplayLabel(environment),
       prices: settings?.usagePriceOverrides ?? null,
       unavailable:
         environment.connection.phase !== "connected"

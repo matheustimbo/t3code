@@ -5,6 +5,7 @@ import {
 } from "@t3tools/client-runtime/connection";
 import { Discovery } from "@t3tools/client-runtime/relay";
 import type { EnvironmentId } from "@t3tools/contracts";
+import { environmentDisplayLabel } from "@t3tools/shared/environmentLabel";
 import * as Option from "effect/Option";
 import { useMemo } from "react";
 
@@ -28,7 +29,7 @@ function projectEnvironmentPresentation(
   return {
     ...presentation,
     environmentId,
-    label: presentation.entry.target.label,
+    label: environmentDisplayLabel(presentation),
     displayUrl: connectionCatalogDisplayUrl(presentation.entry),
     relayManaged: presentation.entry.target._tag === "RelayConnectionTarget",
   };

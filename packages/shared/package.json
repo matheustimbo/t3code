@@ -11,6 +11,10 @@
       "types": "./src/delimitedPreview.ts",
       "import": "./src/delimitedPreview.ts"
     },
+    "./environmentLabel": {
+      "types": "./src/environmentLabel.ts",
+      "import": "./src/environmentLabel.ts"
+    },
     "./composerPullRequestMatches": {
       "types": "./src/composerPullRequestMatches.ts",
       "import": "./src/composerPullRequestMatches.ts"

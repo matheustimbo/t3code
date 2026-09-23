@@ -62,6 +62,19 @@ created in Settings can only be copied from the client that created them while
 its Connections page stays open. If you leave or reload that page, create
 another link to share.
 
+### Rename a machine
+
+A machine goes by the name its own operating system reports, which is often a
+hostname such as `rog-fedora`. To change it, open **Settings → Connections**, open
+the row menu for that machine, and choose **Rename**. Clear the field to go back to
+the reported name.
+
+The name is stored on the machine itself, so every client connected to it shows
+the new name, including the mobile app and a browser on another device. It also
+names the machine in the device picker. Renaming needs a session that can change
+that machine's settings, and a machine running an older T3 Code server says so
+instead of accepting a name it would drop.
+
 ### Balance new threads across machines
 
 Auto balance is off by default. On web and desktop, enable it in
