@@ -49,7 +49,7 @@ export function resolveEnvironmentIconPickerLock(input: {
 // Same split the provider settings use: the desktop app owns its primary
 // server outright, a browser session on the primary checks its cookie
 // session's scopes, and a remote checks the scopes its own server reports.
-function useEnvironmentOperateAccess(environmentId: EnvironmentId) {
+export function useEnvironmentOperateAccess(environmentId: EnvironmentId) {
   const isPrimary = usePrimaryEnvironmentId() === environmentId;
   const primarySession = usePrimarySessionState();
   const remoteSession = useEnvironmentSessionState(environmentId);

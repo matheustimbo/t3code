@@ -10,6 +10,7 @@
  * @module state/usage
  */
 import { useAtomValue } from "@effect/atom-react";
+import { environmentDisplayLabel } from "@t3tools/shared/environmentLabel";
 import {
   USAGE_CONTRACT_VERSION,
   type EnvironmentId,
@@ -52,7 +53,7 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
       const result = get(serverEnvironment.usageSummary({ environmentId, input }));
       statuses.push({
         environmentId,
-        label: presentation.entry.target.label,
+        label: environmentDisplayLabel(presentation),
         isPending: result.waiting,
         isConnected: presentation.connection.phase === "connected",
         error: result._tag === "Failure" ? "This environment could not report usage." : null,
