@@ -7,13 +7,13 @@
 //   t3-thread --stop <threadId> | --archive <threadId>
 //
 // Token: ~/.config/t3-thread/token, issued automatically when missing or rejected. Requires Node >= 22.
-import { execFileSync } from "node:child_process";
-import { randomUUID, randomBytes } from "node:crypto";
-import { readFileSync, existsSync, writeFileSync, mkdirSync, chmodSync } from "node:fs";
-import { homedir } from "node:os";
-import { resolve, dirname, basename } from "node:path";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 
-const HOME = homedir();
+const HOME = NodeOS.homedir();
 const BASE_DIR = process.env.T3CODE_HOME ?? `${HOME}/.t3`;
 const DB = `${BASE_DIR}/userdata/state.sqlite`;
 const RUNTIME = `${BASE_DIR}/userdata/server-runtime.json`;
@@ -52,7 +52,7 @@ for (let i = 0; i < args.length; i++) {
   else if (a === "--archive") opts.control = { type: "thread.archive", threadId: next() };
   else if (a === "-h" || a === "--help") {
     console.log(
-      readFileSync(new URL(import.meta.url))
+      NodeFS.readFileSync(new URL(import.meta.url))
         .toString()
         .split("\n")
         .slice(1, 9)
@@ -62,8 +62,8 @@ for (let i = 0; i < args.length; i++) {
   } else positional.push(a);
 }
 
-if (!existsSync(RUNTIME)) die(`T3 Code server is not running (no ${RUNTIME})`);
-const { origin, pid } = JSON.parse(readFileSync(RUNTIME, "utf8"));
+if (!NodeFS.existsSync(RUNTIME)) die(`T3 Code server is not running (no ${RUNTIME})`);
+const { origin, pid } = JSON.parse(NodeFS.readFileSync(RUNTIME, "utf8"));
 
 async function request(url, init) {
   try {
@@ -76,10 +76,11 @@ async function request(url, init) {
 // The server's own CLI, so the token lands in the same auth store. server-runtime.json
 // can outlive a crashed server, so only trust a pid that still looks like T3 Code.
 function serverCli() {
-  const read = (cmd, cmdArgs) => execFileSync(cmd, cmdArgs, { encoding: "utf8" }).trim();
+  const read = (cmd, cmdArgs) =>
+    NodeChildProcess.execFileSync(cmd, cmdArgs, { encoding: "utf8" }).trim();
   let exe, argv;
-  if (existsSync(`/proc/${pid}/cmdline`)) {
-    argv = readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0").filter(Boolean);
+  if (NodeFS.existsSync(`/proc/${pid}/cmdline`)) {
+    argv = NodeFS.readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0").filter(Boolean);
     exe = read("readlink", ["-f", `/proc/${pid}/exe`]);
   } else {
     // macOS `ps` joins argv with spaces and app paths contain spaces, so cut after the exe.
@@ -99,7 +100,7 @@ function serverCli() {
     };
   }
   if (entry) return { cmd: exe, pre: [entry], env: {} };
-  if (basename(exe) === "t3") return { cmd: exe, pre: [], env: {} };
+  if (NodePath.basename(exe) === "t3") return { cmd: exe, pre: [], env: {} };
   die(
     `pid ${pid} from ${RUNTIME} does not look like a T3 Code server (${exe}); issue a token manually into ${TOKEN_FILE}`,
   );
@@ -119,15 +120,15 @@ function issueToken() {
     "t3-thread-cli",
     "--token-only",
   ];
-  const fresh = execFileSync(cmd, [...pre, ...issueArgs], {
+  const fresh = NodeChildProcess.execFileSync(cmd, [...pre, ...issueArgs], {
     encoding: "utf8",
     env: { ...process.env, ...env },
   }).trim();
   if (!/^\S+$/.test(fresh)) die(`unexpected output issuing a token with ${cmd}`);
-  mkdirSync(dirname(TOKEN_FILE), { recursive: true });
-  chmodSync(dirname(TOKEN_FILE), 0o700);
-  writeFileSync(TOKEN_FILE, fresh);
-  chmodSync(TOKEN_FILE, 0o600);
+  NodeFS.mkdirSync(NodePath.dirname(TOKEN_FILE), { recursive: true });
+  NodeFS.chmodSync(NodePath.dirname(TOKEN_FILE), 0o700);
+  NodeFS.writeFileSync(TOKEN_FILE, fresh);
+  NodeFS.chmodSync(TOKEN_FILE, 0o600);
   return fresh;
 }
 
@@ -139,7 +140,7 @@ async function dispatch(command) {
     process.exit(0);
   }
   await request(origin);
-  let token = existsSync(TOKEN_FILE) ? readFileSync(TOKEN_FILE, "utf8").trim() : "";
+  let token = NodeFS.existsSync(TOKEN_FILE) ? NodeFS.readFileSync(TOKEN_FILE, "utf8").trim() : "";
   const requestTicket = () =>
     request(`${origin}/api/auth/websocket-ticket`, {
       method: "POST",
@@ -206,18 +207,20 @@ async function dispatch(command) {
 
 if (opts.control) {
   const { type, threadId } = opts.control;
-  const command = { type, commandId: randomUUID(), threadId };
+  const command = { type, commandId: NodeCrypto.randomUUID(), threadId };
   if (type === "thread.session.stop") command.createdAt = new Date().toISOString();
   console.log(JSON.stringify({ threadId, type, result: await dispatch(command) }));
   process.exit(0);
 }
 
 let text = positional.join(" ").trim();
-if (!text && !process.stdin.isTTY) text = readFileSync(0, "utf8").trim();
+if (!text && !process.stdin.isTTY) text = NodeFS.readFileSync(0, "utf8").trim();
 if (!text) die("empty message");
 
 const sql = (q) =>
-  execFileSync("sqlite3", ["-readonly", "-json", `file:${DB}?mode=ro`, q], { encoding: "utf8" });
+  NodeChildProcess.execFileSync("sqlite3", ["-readonly", "-json", `file:${DB}?mode=ro`, q], {
+    encoding: "utf8",
+  });
 const projects = JSON.parse(
   sql(
     "select project_id, title, workspace_root, default_model_selection_json from projection_projects where deleted_at is null;",
@@ -226,7 +229,7 @@ const projects = JSON.parse(
 
 const git = (dir, gitArgs) => {
   try {
-    return execFileSync("git", ["-C", dir, ...gitArgs], {
+    return NodeChildProcess.execFileSync("git", ["-C", dir, ...gitArgs], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
     }).trim();
@@ -236,13 +239,15 @@ const git = (dir, gitArgs) => {
 };
 const gitMainRoot = (dir) => {
   const common = git(dir, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
-  return common ? resolve(common, "..") : null;
+  return common ? NodePath.resolve(common, "..") : null;
 };
 
 let project;
 if (opts.project) {
   const wanted = opts.project;
-  const asPath = existsSync(wanted) ? (gitMainRoot(resolve(wanted)) ?? resolve(wanted)) : null;
+  const asPath = NodeFS.existsSync(wanted)
+    ? (gitMainRoot(NodePath.resolve(wanted)) ?? NodePath.resolve(wanted))
+    : null;
   project = projects.find(
     (p) => p.title === wanted || p.project_id === wanted || p.workspace_root === asPath,
   );
@@ -268,7 +273,7 @@ const base =
     : git(project.workspace_root, ["branch", "--show-current"]) || null);
 
 const now = new Date().toISOString();
-const threadId = randomUUID();
+const threadId = NodeCrypto.randomUUID();
 const title = (opts.title ?? text.split("\n")[0]).trim().slice(0, 80) || die("empty title");
 const projectDefault = project.default_model_selection_json
   ? JSON.parse(project.default_model_selection_json)
@@ -284,14 +289,14 @@ const modelSelection =
     : projectDefault);
 const runtimeMode = "full-access";
 const interactionMode = opts.plan ? "plan" : "default";
-const branchName = `t3code/${randomBytes(4).toString("hex")}`;
+const branchName = `t3code/${NodeCrypto.randomBytes(4).toString("hex")}`;
 
 console.error(`t3-thread: creating ${threadId} in ${project.title}`);
 const result = await dispatch({
   type: "thread.turn.start",
-  commandId: randomUUID(),
+  commandId: NodeCrypto.randomUUID(),
   threadId,
-  message: { messageId: randomUUID(), role: "user", text, attachments: [] },
+  message: { messageId: NodeCrypto.randomUUID(), role: "user", text, attachments: [] },
   modelSelection,
   titleSeed: title,
   runtimeMode,
