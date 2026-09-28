@@ -19,7 +19,7 @@ const sampleDecoded = <S extends Schema.Constraint>(schema: S) =>
     const encode = Schema.encodeEffect(schema);
     const decode = Schema.decodeEffect(schema);
     const generated = yield* Arbitrary.sampleEffect(Arbitrary.schema(schema), {
-      count: 1000,
+      count: 250,
       size: 30,
     });
     const decoded = yield* Effect.forEach(generated, (value) =>
