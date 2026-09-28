@@ -75,7 +75,7 @@ describe("DesktopLocalEnvironmentAuth", () => {
           {
             id: PRIMARY_LOCAL_ENVIRONMENT_ID,
             label: Effect.succeed("Windows"),
-            currentConfig: Effect.succeed(Option.some(config)),
+            currentConfig: Effect.succeedSome(config),
           },
         ]),
       } as unknown as DesktopBackendPool.DesktopBackendPool["Service"]);

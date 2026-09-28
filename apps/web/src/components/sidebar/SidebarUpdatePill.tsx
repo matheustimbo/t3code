@@ -374,7 +374,7 @@ function SidebarUpdateControl() {
               !isInteractionDisabled && "hover:bg-sidebar-row-hover",
             )
           : cn(
-              "text-[var(--sidebar-icon-color)]",
+              "text-(--sidebar-icon-color)",
               !isInteractionDisabled && "hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
             ),
         disabled && !showUpdateIconState && "opacity-60",
@@ -467,7 +467,6 @@ function SidebarUpdateControl() {
           <PopoverPopup
             align="center"
             aria-label="Nightly update release notes"
-            className="text-balance shadow-xl shadow-black/25"
             initialFocus={false}
             onKeyDownCapture={(event) => {
               if (

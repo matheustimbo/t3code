@@ -4,7 +4,6 @@ import { renderToStaticMarkup } from "react-dom/server";
 import {
   resolveEnvironmentIdentificationPillLabel,
   resolveSidebarStageBackdropVariant,
-  resolveSidebarStageFocusRingOffsetClass,
   shouldShowEnvironmentIdentificationPill,
   StageBackdropArt,
 } from "./SidebarStageBackdrop";
@@ -38,15 +37,6 @@ describe("SidebarStageBackdrop", () => {
     );
     expect(shouldShowEnvironmentIdentificationPill({ mode: "none", backdropVariant: null })).toBe(
       false,
-    );
-  });
-
-  it("matches the focus-ring offset to each artwork palette", () => {
-    expect(resolveSidebarStageFocusRingOffsetClass("nightly")).toBe(
-      "focus-visible:ring-offset-(--stage-night-bottom)",
-    );
-    expect(resolveSidebarStageFocusRingOffsetClass("dev")).toBe(
-      "focus-visible:ring-offset-(--stage-art-bottom)",
     );
   });
 

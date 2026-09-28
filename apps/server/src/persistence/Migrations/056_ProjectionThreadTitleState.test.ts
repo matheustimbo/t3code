@@ -18,6 +18,7 @@ it.layer(Layer.mergeAll(NodeSqliteClient.layer({ filename: ":memory:" })))(
         assert.deepEqual(applied, [
           [56, "ProjectionThreadTitleState"],
           [57, "PullRequestFilesViewed"],
+          [58, "ProjectionThreadsAutoSettleDisabledAt"],
         ]);
         assert.deepEqual(
           yield* sql`SELECT * FROM effect_sql_migrations WHERE migration_id <= 55 ORDER BY migration_id`,
