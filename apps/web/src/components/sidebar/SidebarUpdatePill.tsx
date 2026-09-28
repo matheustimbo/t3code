@@ -131,7 +131,7 @@ function SidebarUpdateReleaseNotesTooltip({
       <div className="max-h-[min(28rem,calc(100vh-6rem))] overflow-y-auto px-1 pt-4 pb-1">
         {state.releaseNotes.map((releaseNote, index) => (
           <div key={releaseNote.version}>
-            {index > 0 && <Separator className="my-3 bg-border/60" />}
+            {index > 0 && <Separator className="my-3" />}
             <section>
               <h3 className="text-foreground text-xs leading-4 font-semibold">
                 {index === 0 ? "What's changed" : `Changes in ${releaseNote.version}`}
@@ -449,7 +449,7 @@ function SidebarUpdateControl() {
                 showUpdateDetails && state && shouldShowDesktopUpdateReleaseNotes(state)
                   ? // pointer-events-auto overrides the positioner's pointer-events-none so the
                     // release notes stay open (and scrollable) when the cursor moves into them.
-                    "pointer-events-auto max-w-none text-balance"
+                    "pointer-events-auto max-w-none"
                   : undefined
               }
               side="top"

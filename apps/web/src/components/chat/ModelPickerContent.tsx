@@ -969,7 +969,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                             render={
                               <div
                                 className={cn(
-                                  "flex min-w-0 items-center gap-1 rounded-md border border-border/70 bg-background/55 px-1.5 py-1 text-[10px]",
+                                  "flex min-w-0 items-center gap-1 rounded-md border border-border/70 bg-background/55 px-1.5 py-1 text-3xs",
                                   remaining === 0 && "border-destructive/70 bg-destructive/5",
                                   remaining !== 0 &&
                                     window.id === selectedMostRestrictiveWindowId &&
@@ -1006,7 +1006,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                     })}
                   </div>
                 ) : (
-                  <div className="px-2 py-2 text-[11px] text-muted-foreground">
+                  <div className="px-2 py-2 text-2xs text-muted-foreground">
                     {selectedLimitsNotice ?? "Plan limits unavailable."}
                   </div>
                 )}

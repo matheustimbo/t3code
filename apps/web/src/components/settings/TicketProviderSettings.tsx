@@ -362,7 +362,7 @@ function AddTicketProviderDialog({
             stored by this environment and never returned to clients.
           </DialogDescription>
         </DialogHeader>
-        <DialogPanel className="space-y-4">
+        <DialogPanel>
           <Field>
             <FieldLabel>Provider</FieldLabel>
             <Select value={driver} onValueChange={selectDriver}>
@@ -417,7 +417,7 @@ function AddTicketProviderDialog({
             </Field>
           ) : null}
           <Field>
-            <FieldLabel className="w-full justify-between gap-4">
+            <FieldLabel className="w-full justify-between">
               Default for this provider and host
               <Switch
                 checked={isDefault}

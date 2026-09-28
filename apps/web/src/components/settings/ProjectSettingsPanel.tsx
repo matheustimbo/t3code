@@ -633,7 +633,7 @@ function ProjectDetail({
                     }}
                   >
                     <SelectTrigger size="sm" aria-label="Checkout">
-                      <SelectValue className="max-w-96 truncate">
+                      <SelectValue className="max-w-96">
                         {checkoutLabel(selectedCheckout)}
                       </SelectValue>
                     </SelectTrigger>

@@ -352,9 +352,10 @@ function SidebarThreadTooltip({
       align="start"
       sideOffset={4}
       variant="glass"
-      className="max-w-md text-left whitespace-normal [&_[data-slot=tooltip-viewport]]:p-0"
+      className="max-w-md text-left whitespace-normal"
     >
-      <div className="flex min-w-0 max-w-md flex-col gap-2 p-[var(--floating-content-inset)]">
+      {/* The viewport's own inset (py-1 px-2) plus this one make the floating inset. */}
+      <div className="flex min-w-0 max-w-md flex-col gap-2 px-1 py-2">
         <div className="min-w-0 wrap-break-word text-xs leading-4 font-medium text-foreground">
           {thread.title}
         </div>

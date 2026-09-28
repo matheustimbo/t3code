@@ -230,9 +230,7 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
         {props.isActive && isComposerPinnableItem(props.item) ? (
           <span className="ms-auto flex shrink-0 items-center gap-1.5 text-secondary-label text-xs">
             Mode
-            <Kbd className="h-4 min-w-0 rounded-sm px-1.5 text-[10px]">
-              {PIN_SKILL_MODE_SHORTCUT_LABEL}
-            </Kbd>
+            <Kbd>{PIN_SKILL_MODE_SHORTCUT_LABEL}</Kbd>
           </span>
         ) : skillSourceKind ? (
           <SkillSourceBadge
