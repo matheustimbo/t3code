@@ -221,13 +221,15 @@ it("accepts Codex misalignment policy errors for historical and live turns", () 
   assert.throws(() => decodeThreadResumeResponse(malformedResponse));
 });
 
-it("accepts Codex 0.150 account plan values", () => {
+it("accepts account plan slugs newer than the pinned protocol", () => {
   const planTypes = [
     "self_serve_business_prolite",
     "ent26",
     "enterprise_cbp_automation",
     "edu_plus",
     "edu_pro",
+    "promax",
+    "some_future_plan",
   ];
 
   for (const planType of planTypes) {
