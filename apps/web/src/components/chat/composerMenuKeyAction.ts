@@ -6,7 +6,7 @@ export type ComposerMenuKeyAction =
   | { kind: "pin-mode" };
 
 export function resolveComposerMenuKeyAction(params: {
-  key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab";
+  key: string;
   altKey: boolean;
   itemCount: number;
   activeItemType: ComposerCommandItem["type"] | null;
