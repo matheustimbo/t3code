@@ -19,6 +19,7 @@ const ApiCall = Schema.Struct({
   header: Schema.Record(Schema.String, Schema.String),
 });
 const decodeApiCall = Schema.decodeUnknownSync(Schema.fromJsonString(ApiCall));
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 function fixture(
   files: ReadonlyArray<unknown>,
@@ -38,7 +39,7 @@ function fixture(
       const result = respond(call);
       return HttpClientResponse.fromWeb(
         request,
-        Response.json({ status_code: result.status, body: JSON.stringify(result.body) }),
+        Response.json({ status_code: result.status, body: encodeJson(result.body) }),
       );
     }),
   );
