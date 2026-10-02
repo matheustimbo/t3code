@@ -254,6 +254,7 @@ export const resolveServerConfig = (
   options?: {
     readonly startupPresentation?: ServerConfig.StartupPresentation;
     readonly forceAutoBootstrapProjectFromCwd?: boolean;
+    readonly prepareServerState?: boolean;
   },
 ) =>
   Effect.gen(function* () {
@@ -324,16 +325,19 @@ export const resolveServerConfig = (
     );
     const rawCwd = Option.getOrElse(normalizedFlags.cwd, () => process.cwd());
     const cwd = path.resolve(yield* expandHomePath(rawCwd.trim()));
-    yield* fs.makeDirectory(cwd, { recursive: true });
+    const prepareServerState = options?.prepareServerState ?? true;
+    if (prepareServerState) yield* fs.makeDirectory(cwd, { recursive: true });
     const derivedPaths = yield* ServerConfig.deriveServerPaths(baseDir, devUrl, {
       baseDirIsExplicit: Option.isSome(explicitBaseDir),
     });
-    yield* ServerConfig.ensureServerDirectories(derivedPaths);
-    const persistedObservabilitySettings = yield* loadPersistedObservabilitySettings(
-      derivedPaths.settingsPath,
-    );
+    if (prepareServerState) yield* ServerConfig.ensureServerDirectories(derivedPaths);
+    else yield* fs.makeDirectory(derivedPaths.stateDir, { recursive: true });
+    const persistedObservabilitySettings = prepareServerState
+      ? yield* loadPersistedObservabilitySettings(derivedPaths.settingsPath)
+      : { otlpTracesUrl: undefined, otlpMetricsUrl: undefined, otlpLogsUrl: undefined };
     const serverTracePath = env.traceFile ?? derivedPaths.serverTracePath;
-    yield* fs.makeDirectory(path.dirname(serverTracePath), { recursive: true });
+    if (prepareServerState)
+      yield* fs.makeDirectory(path.dirname(serverTracePath), { recursive: true });
     const startupPresentation = options?.startupPresentation ?? "browser";
     const isHeadlessStartup = startupPresentation === "headless";
     const noBrowser = Option.getOrElse(
@@ -470,7 +474,8 @@ export const resolveCliAuthConfig = (
   resolveServerConfig(
     {
       mode: Option.none(),
-      port: Option.none(),
+      // Auth commands use local storage; their unused port must not trigger a probe.
+      port: Option.some(ServerConfig.DEFAULT_PORT),
       host: Option.none(),
       baseDir: flags.baseDir,
       cwd: Option.none(),
@@ -483,6 +488,7 @@ export const resolveCliAuthConfig = (
       tailscaleServePort: Option.none(),
     },
     cliLogLevel,
+    { prepareServerState: false },
   );
 
 const DurationShorthandPattern = /^(?<value>\d+)(?<unit>ms|s|m|h|d|w)$/i;

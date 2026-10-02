@@ -216,6 +216,8 @@ export const make = Effect.gen(function* () {
     serverVersion: packageJson.version,
     orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
     capabilities: {
+      threadCommandPreconditions: true,
+      threadTurnMessageCorrelation: true,
       repositoryIdentity: true,
       connectionProbe: true,
       attachmentUploads: true,

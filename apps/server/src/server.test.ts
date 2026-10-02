@@ -5482,6 +5482,23 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             scratchRoot =
               (yield* client[WS_METHODS.serverGetConfig]({})).scratchWorkspaceRoot ?? "";
             const createdAt = "2026-09-25T10:00:00.000Z";
+            const guarded = yield* client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+              type: "thread.create",
+              commandId: CommandId.make("guarded-scratch-create"),
+              expectedSnapshotSequence: 0,
+              threadId: ThreadId.make("guarded-scratch-thread"),
+              projectId: scratchProjectId,
+              title: "Guarded Scratch",
+              modelSelection: defaultModelSelection,
+              runtimeMode: "approval-required",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: null,
+              createdAt,
+            }).pipe(Effect.flip);
+            assert.include(guarded.message, "automatic Scratch folder creation");
+            assert.deepEqual(created, []);
+            assert.isFalse(yield* fileSystem.exists(scratchRoot));
             // The second id shares the first's short prefix, the third tries to
             // climb out of the scratch root, and the fourth pastes a long token.
             const text = "Convert these PNGs to WebP, please!";
@@ -11665,6 +11682,33 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
         const createdAt = "2026-01-01T00:00:00.000Z";
         const wsUrl = yield* getWsServerUrl("/ws");
+        const guarded = yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+              type: "thread.turn.start",
+              commandId: CommandId.make("guarded-bootstrap"),
+              expectedSnapshotSequence: 0,
+              threadId: ThreadId.make("thread-bootstrap"),
+              message: {
+                messageId: MessageId.make("guarded-bootstrap-message"),
+                role: "user",
+                text: "Synthetic guarded request",
+                attachments: [],
+              },
+              runtimeMode: "approval-required",
+              interactionMode: "default",
+              createdAt,
+              bootstrap: {
+                prepareWorktree: { projectCwd: "/tmp/project", baseBranch: "main" },
+                runSetupScript: true,
+              },
+            }).pipe(Effect.flip),
+          ),
+        );
+        assert.include(guarded.message, "cannot bootstrap");
+        assert.deepEqual(dispatchedCommands, []);
+        assert.deepEqual(bootstrapGitOperations, []);
+        assert.equal(runForThread.mock.calls.length, 0);
         const response = yield* Effect.scoped(
           withWsRpcClient(wsUrl, (client) =>
             client[ORCHESTRATION_WS_METHODS.dispatchCommand]({

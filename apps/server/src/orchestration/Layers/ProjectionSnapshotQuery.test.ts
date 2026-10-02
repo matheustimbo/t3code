@@ -468,6 +468,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           branchPullRequest,
           latestTurn: {
             turnId: asTurnId("turn-1"),
+            userMessageId: null,
             state: "completed",
             requestedAt: "2026-02-24T00:00:08.000Z",
             startedAt: "2026-02-24T00:00:08.000Z",
@@ -598,6 +599,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           branchPullRequest,
           latestTurn: {
             turnId: asTurnId("turn-1"),
+            userMessageId: null,
             state: "completed",
             requestedAt: "2026-02-24T00:00:08.000Z",
             startedAt: "2026-02-24T00:00:08.000Z",
@@ -2001,14 +2003,33 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       const commandReadModel = yield* snapshotQuery.getCommandReadModel();
       assert.equal(commandReadModel.threads[0]?.latestTurn?.turnId, asTurnId("turn-running"));
       assert.equal(commandReadModel.threads[0]?.latestTurn?.state, "running");
+      assert.equal(
+        commandReadModel.threads[0]?.latestTurn?.userMessageId,
+        asMessageId("message-user-2"),
+      );
 
       const shellSnapshot = yield* snapshotQuery.getShellSnapshot();
       assert.equal(shellSnapshot.threads[0]?.latestTurn?.turnId, asTurnId("turn-running"));
       assert.equal(shellSnapshot.threads[0]?.latestTurn?.state, "running");
+      assert.equal(
+        shellSnapshot.threads[0]?.latestTurn?.userMessageId,
+        asMessageId("message-user-2"),
+      );
 
       const fullSnapshot = yield* snapshotQuery.getSnapshot();
       assert.equal(fullSnapshot.threads[0]?.latestTurn?.turnId, asTurnId("turn-running"));
       assert.equal(fullSnapshot.threads[0]?.latestTurn?.state, "running");
+      assert.equal(
+        fullSnapshot.threads[0]?.latestTurn?.userMessageId,
+        asMessageId("message-user-2"),
+      );
+      const detail = yield* snapshotQuery.getThreadDetailSnapshot(ThreadId.make("thread-1"), {
+        turnLimit: 1,
+      });
+      assert.equal(
+        Option.getOrThrow(detail).thread.latestTurn?.userMessageId,
+        asMessageId("message-user-2"),
+      );
     }),
   );
 

@@ -1819,6 +1819,7 @@ const makeWsRpcLayer = (
         readonly worktreePath: string | null;
         readonly createdAt: string;
         readonly text: string;
+        readonly expectedSnapshotSequence?: number;
       }): Effect.Effect<string | null, OrchestrationDispatchCommandError> =>
         Effect.gen(function* () {
           if (input.worktreePath !== null) return null;
@@ -1839,6 +1840,12 @@ const makeWsRpcLayer = (
               normalizeProjectPathForComparison(scratchRoot)
           ) {
             return null;
+          }
+          if (input.expectedSnapshotSequence !== undefined) {
+            return yield* new OrchestrationDispatchCommandError({
+              message:
+                "Guarded thread creation requires a project checkout; automatic Scratch folder creation is not supported.",
+            });
           }
           // Only [a-z0-9] reaches the name, so it stays one path segment inside
           // the scratch root, and the words are capped so pasted data cannot
@@ -1951,7 +1958,15 @@ const makeWsRpcLayer = (
       const dispatchNormalizedCommand = (
         command: OrchestrationCommand,
       ): Effect.Effect<{ readonly sequence: number }, OrchestrationDispatchCommandError> =>
-        withScratchThreadFolder(command).pipe(Effect.flatMap(dispatchPreparedCommand));
+        command.type === "thread.turn.start" &&
+        command.expectedSnapshotSequence !== undefined &&
+        command.bootstrap !== undefined
+          ? Effect.fail(
+              new OrchestrationDispatchCommandError({
+                message: "Guarded turn starts cannot bootstrap a thread or worktree.",
+              }),
+            )
+          : withScratchThreadFolder(command).pipe(Effect.flatMap(dispatchPreparedCommand));
 
       // One Scratch project per environment, created the first time a client
       // asks. Two clients racing the create both reach dispatch; the loser's

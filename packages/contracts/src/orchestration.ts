@@ -683,6 +683,8 @@ export type OrchestrationLatestTurnState = typeof OrchestrationLatestTurnState.T
 
 export const OrchestrationLatestTurn = Schema.Struct({
   turnId: TurnId,
+  /** Correlates a provider turn with the accepted user message, including delayed starts. */
+  userMessageId: Schema.optionalKey(Schema.NullOr(MessageId)),
   state: OrchestrationLatestTurnState,
   requestedAt: IsoDateTime,
   startedAt: Schema.NullOr(IsoDateTime),
@@ -1131,6 +1133,7 @@ const ProjectDeleteCommand = Schema.Struct({
 const ThreadCreateCommand = Schema.Struct({
   type: Schema.Literal("thread.create"),
   commandId: CommandId,
+  expectedSnapshotSequence: Schema.optionalKey(NonNegativeInt),
   threadId: ThreadId,
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
@@ -1333,6 +1336,7 @@ export type ThreadTurnStartBootstrap = typeof ThreadTurnStartBootstrap.Type;
 export const ThreadTurnStartCommand = Schema.Struct({
   type: Schema.Literal("thread.turn.start"),
   commandId: CommandId,
+  expectedSnapshotSequence: Schema.optionalKey(NonNegativeInt),
   threadId: ThreadId,
   message: Schema.Struct({
     messageId: MessageId,
@@ -1355,6 +1359,7 @@ export const ThreadTurnStartCommand = Schema.Struct({
 const ClientThreadTurnStartCommand = Schema.Struct({
   type: Schema.Literal("thread.turn.start"),
   commandId: CommandId,
+  expectedSnapshotSequence: Schema.optionalKey(NonNegativeInt),
   threadId: ThreadId,
   message: Schema.Struct({
     messageId: MessageId,
