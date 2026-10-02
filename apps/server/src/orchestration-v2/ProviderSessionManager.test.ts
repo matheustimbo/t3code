@@ -246,6 +246,7 @@ function makeProviderAdapter(
     readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
     readonly hangSessionScopeClose?: boolean;
     readonly beforeUnload?: Effect.Effect<void>;
+    readonly onEventStreamEnd?: Effect.Effect<void>;
   } = {},
 ): ProviderAdapterV2Shape {
   return {
@@ -298,7 +299,7 @@ function makeProviderAdapter(
           driver: CODEX_DRIVER,
           providerSessionId: input.providerSessionId,
           providerSession: session,
-          events: options.failEventStream
+          events: (options.failEventStream
             ? Stream.fail(
                 new ProviderAdapterEventStreamError({
                   driver: CODEX_DRIVER,
@@ -306,7 +307,8 @@ function makeProviderAdapter(
                   cause: "process exited",
                 }),
               )
-            : Stream.fromQueue(events),
+            : Stream.fromQueue(events)
+          ).pipe(Stream.ensuring(options.onEventStreamEnd ?? Effect.void)),
           ...(options.hasPendingBackgroundWork === undefined
             ? {}
             : { hasPendingBackgroundWork: options.hasPendingBackgroundWork }),
@@ -361,6 +363,7 @@ function makeTestLayer(input: {
   readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
   readonly hangSessionScopeClose?: boolean;
   readonly beforeUnload?: Effect.Effect<void>;
+  readonly onEventStreamEnd?: Effect.Effect<void>;
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
 }) {
@@ -380,6 +383,7 @@ function makeTestLayer(input: {
         ? {}
         : { hangSessionScopeClose: input.hangSessionScopeClose }),
       ...(input.beforeUnload === undefined ? {} : { beforeUnload: input.beforeUnload }),
+      ...(input.onEventStreamEnd === undefined ? {} : { onEventStreamEnd: input.onEventStreamEnd }),
     }),
   );
   const providerEventIngestorTestLayer = ProviderEventIngestor.layer.pipe(
@@ -2202,7 +2206,15 @@ it.effect("ProviderSessionManagerV2 releases sessions when provider event stream
         runtimePolicy,
       });
       yield* runtime.events.pipe(Stream.runDrain, Effect.ignore, Effect.forkScoped);
-      yield* Effect.yieldNow;
+      yield* eventSink.stream({ threadId }).pipe(
+        Stream.filter(
+          (stored) =>
+            stored.event.type === "provider-session.updated" &&
+            stored.event.payload.status === "error",
+        ),
+        Stream.take(1),
+        Stream.runDrain,
+      );
 
       const liveSession = yield* manager.get(providerSessionId);
       const runtimeState = yield* Ref.get(state);
@@ -2211,6 +2223,8 @@ it.effect("ProviderSessionManagerV2 releases sessions when provider event stream
       assert.isTrue(Option.isNone(liveSession));
       assert.equal(runtimeState.closeCount, 1);
       assert.equal(projection.providerSessions.at(-1)?.status, "error");
+      yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+      assert.equal((yield* Ref.get(state)).openCount, 2);
     });
 
     yield* effect.pipe(
@@ -2290,6 +2304,62 @@ it.effect("ProviderSessionManagerV2 marks pending runtime requests non-live on r
 
     yield* effect.pipe(Effect.provide(makeTestLayer({ state, idleTimeoutMs: 1000 })));
   }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 ignores a released runtime's late event stream completion",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const oldStreamEnded = yield* Deferred.make<void>();
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const threadId = yield* idAllocator.allocate.thread({
+          fixtureName: "late-runtime-stream",
+          projectId: yield* idAllocator.allocate.project({ fixtureName: "late-runtime-stream" }),
+        });
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+        const oldQueue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
+        assert.isDefined(oldQueue);
+        if (oldQueue === undefined) return;
+        yield* manager.close(providerSessionId);
+        const replacement = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* Queue.end(oldQueue);
+        yield* Deferred.await(oldStreamEnded);
+        const current = yield* manager.get(providerSessionId);
+        assert.isTrue(Option.isSome(current));
+        if (Option.isSome(current)) assert.strictEqual(current.value, replacement);
+        const snapshot = yield* Ref.get(state);
+        assert.equal(snapshot.openCount, 2);
+        assert.equal(snapshot.closeCount, 1);
+        const projection = yield* projectionStore.getThreadProjection(threadId);
+        assert.equal(projection.providerSessions.at(-1)?.status, "ready");
+      }).pipe(
+        Effect.provide(
+          makeTestLayer({
+            state,
+            idleTimeoutMs: 1000,
+            onEventStreamEnd: Deferred.succeed(oldStreamEnded, undefined).pipe(Effect.asVoid),
+          }),
+        ),
+      );
+    }),
 );
 it.effect("ProviderSessionManagerV2 terminalizes a pending input transcript item on release", () =>
   Effect.gen(function* () {

@@ -33,9 +33,12 @@ import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hos
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as CodexClient from "effect-codex-app-server/client";
 import * as CodexReplay from "effect-codex-app-server/replay";
+import * as CodexErrors from "effect-codex-app-server/errors";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Cause from "effect/Cause";
 import * as Predicate from "effect/Predicate";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
@@ -44,6 +47,7 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
@@ -59,10 +63,12 @@ import * as Orchestrator from "../Orchestrator.ts";
 import { makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
 import {
   ProviderAdapterForkThreadError,
+  ProviderAdapterEventStreamError,
   ProviderAdapterOpenSessionError,
   ProviderAdapterRollbackThreadError,
   ProviderAdapterV2RuntimePolicy,
   type ProviderAdapterV2Event,
+  type ProviderAdapterV2Error,
   type ProviderAdapterV2TurnInput,
 } from "../ProviderAdapter.ts";
 import type { ProviderContinuationRequest } from "../ProviderContinuationRequests.ts";
@@ -1604,6 +1610,84 @@ function makeCodexReplayTranscript(input: {
 }
 
 describe("CodexAdapterV2 post-settle continuation", () => {
+  const makeCapturedChildHarness = Effect.fnUntraced(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const idAllocator = yield* IdAllocator.IdAllocatorV2;
+    const serverConfig = yield* makeReplayServerConfig("captured-child").pipe(Effect.orDie);
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const scope = yield* Scope.make();
+    yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+    const handle = yield* spawner
+      .spawn(
+        ChildProcess.make(process.execPath, [
+          path.resolve(
+            import.meta.dirname,
+            "../../../../../packages/effect-codex-app-server/test/fixtures/codex-app-server-mock-peer.ts",
+          ),
+        ]),
+      )
+      .pipe(Effect.provideService(Scope.Scope, scope));
+    const context = yield* Layer.buildWithScope(CodexClient.layerChildProcess(handle), scope);
+    const client = yield* Effect.service(CodexClient.CodexAppServerClient).pipe(
+      Effect.provide(context),
+    );
+    yield* client.request("initialize", {
+      clientInfo: { name: "termination-test", title: "Termination test", version: "0.0.0" },
+      capabilities: { experimentalApi: true, optOutNotificationMethods: null },
+    });
+    const adapter = CodexAdapterV2.makeCodexAdapterV2({
+      instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
+      settings: DEFAULT_CODEX_SETTINGS,
+      environment: {},
+      clientFactory: { open: () => Effect.succeed(client) },
+      fileSystem,
+      idAllocator,
+      serverConfig,
+    });
+    const runtime = yield* adapter
+      .openSession({
+        threadId: ThreadId.make("captured-child"),
+        providerSessionId: ProviderSessionId.make("captured-child-session"),
+        modelSelection: CODEX_TEST_MODEL_SELECTION,
+        runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+      })
+      .pipe(Effect.provideService(Scope.Scope, scope));
+    return { runtime, handle, scope };
+  });
+
+  it.effect("fails adapter events when its captured child receives SIGTERM", () =>
+    Effect.gen(function* () {
+      const { runtime, handle } = yield* makeCapturedChildHarness();
+      yield* handle.kill({ killSignal: "SIGTERM" });
+      const exit = yield* runtime.events.pipe(Stream.runDrain, Effect.exit);
+      assert.isTrue(Exit.isFailure(exit));
+      if (Exit.isFailure(exit)) {
+        const error = Cause.findErrorOption(exit.cause);
+        assert.isTrue(error._tag === "Some");
+        if (error._tag === "Some") {
+          assert.instanceOf(error.value, ProviderAdapterEventStreamError);
+          assert.instanceOf(error.value.cause, CodexErrors.CodexAppServerTransportError);
+        }
+      }
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
+  it.effect("interrupts its termination watcher on intentional scope close", () =>
+    Effect.gen(function* () {
+      const { runtime, scope } = yield* makeCapturedChildHarness();
+      yield* Scope.close(scope, Exit.void);
+      const observer = yield* runtime.events.pipe(
+        Stream.runDrain,
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      assert.isUndefined(observer.pollUnsafe());
+      yield* Fiber.interrupt(observer);
+      const exit = yield* Fiber.await(observer);
+      assert.isTrue(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause));
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
   const awaitUntil = (predicate: () => boolean, label: string): Effect.Effect<void> =>
     Effect.gen(function* () {
       for (let attempt = 0; attempt < 5000; attempt++) {
@@ -1686,6 +1770,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       });
       const events: Array<ProviderAdapterV2Event> = [];
       const firstTerminal = yield* Deferred.make<void>();
+      const streamExit = yield* Deferred.make<Exit.Exit<void, ProviderAdapterV2Error>>();
       yield* runtime.events.pipe(
         Stream.runForEach((event) =>
           Effect.sync(() => {
@@ -1699,6 +1784,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             Effect.andThen(onEvent(event)),
           ),
         ),
+        Effect.exit,
+        Effect.flatMap((exit) => Deferred.succeed(streamExit, exit)),
         Effect.forkScoped,
       );
       if (runtime.hasPendingBackgroundWork === undefined) {
@@ -1725,8 +1812,62 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         subagentUpdates,
         hasPendingBackgroundWork,
         firstTerminal: Deferred.await(firstTerminal),
+        streamExit: Deferred.await(streamExit),
       };
     });
+
+  for (const completed of [false, true]) {
+    it.effect(
+      `fails the event stream after runtime exit with ${completed ? "a completed" : "an active"} turn`,
+      () =>
+        Effect.gen(function* () {
+          const nativeThreadId = `termination-${completed}`;
+          const nativeTurnId = `turn-termination-${completed}`;
+          const transcript = makeCodexReplayTranscript({
+            scenario: `termination-${completed}`,
+            entries: [
+              ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Run" }),
+              ...(completed
+                ? [
+                    {
+                      type: "emit_inbound" as const,
+                      label: "turn/completed",
+                      frame: {
+                        method: "turn/completed",
+                        params: {
+                          threadId: nativeThreadId,
+                          turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                        },
+                      },
+                    },
+                  ]
+                : []),
+              { type: "runtime_exit", status: "success" },
+            ],
+          });
+          const harness = yield* makeCodexReplayHarness(transcript);
+          yield* harness.runtime.startTurn(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              attemptId: RunAttemptId.make(`termination-${completed}`),
+              text: "Run",
+            }),
+          );
+          const exit = yield* harness.streamExit;
+          assert.isTrue(Exit.isFailure(exit));
+          if (Exit.isFailure(exit)) {
+            const reason = Cause.findErrorOption(exit.cause);
+            assert.isTrue(reason._tag === "Some");
+            if (reason._tag === "Some") {
+              assert.instanceOf(reason.value, ProviderAdapterEventStreamError);
+              assert.instanceOf(reason.value.cause, CodexErrors.CodexAppServerProcessExitedError);
+            }
+          }
+          assert.equal(harness.terminalEvents().length, completed ? 1 : 0);
+        }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    );
+  }
 
   for (const response of ["supported", "unsupported", "invalid"] as const) {
     it.effect(`delivers native history with ${response} app-server protocol`, () =>

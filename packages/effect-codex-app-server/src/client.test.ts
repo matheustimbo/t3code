@@ -2,6 +2,7 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Effect from "effect/Effect";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
@@ -10,6 +11,8 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 
 import * as CodexClient from "./client.ts";
+import * as CodexError from "./errors.ts";
+import { makeInMemoryStdio } from "./_internal/stdio.ts";
 
 const mockPeerPath = Effect.map(Effect.service(Path.Path), (path) =>
   path.join(import.meta.dirname, "../test/fixtures/codex-app-server-mock-peer.ts"),
@@ -17,6 +20,32 @@ const mockPeerPath = Effect.map(Effect.service(Path.Path), (path) =>
 const mockPeerArgs = (path: string) => [path];
 
 it.layer(NodeServices.layer)("effect-codex-app-server client", (it) => {
+  it.effect("retains EOF for late and repeated termination observers", () =>
+    Effect.gen(function* () {
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const client = yield* CodexClient.make(stdio);
+      yield* Queue.end(input);
+      const first = yield* client.terminated;
+      assert.instanceOf(first, CodexError.CodexAppServerInputStreamEndedError);
+      const observations = yield* Effect.all([client.terminated, client.terminated], {
+        concurrency: "unbounded",
+      });
+      assert.strictEqual(observations[0], first);
+      assert.strictEqual(observations[1], first);
+    }),
+  );
+
+  it.effect("retains the supplied process termination classification", () =>
+    Effect.gen(function* () {
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const reason = new CodexError.CodexAppServerProcessExitedError({ code: 137, pid: 42 });
+      const client = yield* CodexClient.make(stdio, {}, Effect.succeed(reason));
+      yield* Queue.end(input);
+      assert.strictEqual(yield* client.terminated, reason);
+      assert.strictEqual(yield* client.terminated, reason);
+    }),
+  );
+
   const makeHandle = (env?: Record<string, string>) =>
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -28,6 +57,28 @@ it.layer(NodeServices.layer)("effect-codex-app-server client", (it) => {
       });
       return yield* spawner.spawn(command);
     });
+
+  it.effect("observes a captured child terminated by SIGTERM", () =>
+    Effect.gen(function* () {
+      const handle = yield* makeHandle();
+      const context = yield* Layer.build(CodexClient.layerChildProcess(handle));
+      const client = yield* Effect.service(CodexClient.CodexAppServerClient).pipe(
+        Effect.provide(context),
+      );
+      yield* client.request("initialize", {
+        clientInfo: { name: "termination-test", title: "Termination test", version: "0.0.0" },
+        capabilities: { experimentalApi: true, optOutNotificationMethods: null },
+      });
+      yield* handle.kill({ killSignal: "SIGTERM" });
+      const reason = yield* client.terminated;
+      assert.instanceOf(reason, CodexError.CodexAppServerTransportError);
+      if (reason._tag === "CodexAppServerTransportError") {
+        assert.equal(reason.pid, handle.pid);
+        assert.equal(reason.operation, "read-process-exit-status");
+      }
+      assert.strictEqual(yield* client.terminated, reason);
+    }),
+  );
 
   it.effect("initializes, handles typed server requests, and reads account and skills data", () =>
     Effect.gen(function* () {
