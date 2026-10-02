@@ -2311,7 +2311,7 @@ it.effect(
   () =>
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
-      const oldStreamEnded = yield* Deferred.make<void>();
+      const oldPump = yield* Deferred.make<Fiber.Fiber<unknown, unknown>>();
       yield* Effect.gen(function* () {
         const eventSink = yield* EventSink.EventSinkV2;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -2341,7 +2341,7 @@ it.effect(
           runtimePolicy,
         });
         yield* Queue.end(oldQueue);
-        yield* Deferred.await(oldStreamEnded);
+        yield* Fiber.await(yield* Deferred.await(oldPump));
         const current = yield* manager.get(providerSessionId);
         assert.isTrue(Option.isSome(current));
         if (Option.isSome(current)) assert.strictEqual(current.value, replacement);
@@ -2355,7 +2355,9 @@ it.effect(
           makeTestLayer({
             state,
             idleTimeoutMs: 1000,
-            onEventStreamEnd: Deferred.succeed(oldStreamEnded, undefined).pipe(Effect.asVoid),
+            onEventStreamEnd: Effect.withFiber((fiber) =>
+              Deferred.succeed(oldPump, fiber).pipe(Effect.asVoid),
+            ),
           }),
         ),
       );
