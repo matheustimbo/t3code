@@ -34,6 +34,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as ServerConfig from "../../config.ts";
 import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
 import type { OpenCodeRuntimeShape } from "../../provider/opencodeRuntime.ts";
+import { readThreadProcessClaims } from "../../resourceTelemetry/ThreadProcessRegistry.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 
 import {
@@ -146,6 +147,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
   suffix: string,
   nativeSessionId: string,
   client: object,
+  connection: { readonly external: boolean; readonly pid?: number } = { external: true },
 ) {
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const instanceId = ProviderInstanceId.make(`opencode-${suffix}`);
@@ -161,7 +163,8 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
     settings: OPEN_CODE_TEST_SETTINGS,
     environment: {},
     runtime: {
-      connectToOpenCodeServer: () => Effect.succeed({ url: "http://test.invalid", external: true }),
+      connectToOpenCodeServer: () =>
+        Effect.succeed({ url: "http://test.invalid", exitCode: null, ...connection }),
       createOpenCodeSdkClient: () => client,
     } as unknown as OpenCodeRuntimeShape,
     idAllocator,
@@ -237,6 +240,35 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
 });
 
 describe("OpenCodeAdapterV2", () => {
+  for (const local of [false, true]) {
+    it.effect(`tracks process ownership for ${local ? "local" : "external"} connections`, () =>
+      Effect.gen(function* () {
+        const scope = yield* Scope.make();
+        const nativeEvents = asyncEventStream();
+        const harness = yield* makeOpenCodeRuntimeHarness(
+          `ownership-${local}`,
+          "root",
+          {
+            event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+            session: {
+              create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+              children: async () => ({ data: [] }),
+            },
+          },
+          { external: !local, ...(local ? { pid: 8123 } : {}) },
+        ).pipe(Effect.provideService(Scope.Scope, scope));
+        const claims = () =>
+          readThreadProcessClaims().filter((claim) => claim.threadId === harness.threadId);
+        assert.deepEqual(
+          claims(),
+          local ? [{ threadId: harness.threadId, kind: "agent", pid: 8123 }] : [],
+        );
+        yield* Scope.close(scope, Exit.void);
+        assert.deepEqual(claims(), []);
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    );
+  }
+
   for (const ending of ["completed", "failed", "unresolved", "unavailable", "reconnect"] as const) {
     it.effect(`normalizes OpenCode step usage for ${ending} turns`, () =>
       Effect.gen(function* () {

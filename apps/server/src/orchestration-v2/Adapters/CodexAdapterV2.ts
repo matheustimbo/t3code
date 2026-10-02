@@ -108,6 +108,7 @@ import {
 } from "../../provider/Layers/codexLaunchArgs.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import { claimAgentProcessScoped } from "../../resourceTelemetry/ThreadProcessRegistry.ts";
 import {
   ProviderAdapterDriverCreateError,
   type ProviderAdapterDriver,
@@ -1294,6 +1295,11 @@ const makeCodexAppServerClientFactoryCommandLayer = (
                   }),
               ),
             );
+            yield* claimAgentProcessScoped({
+              scope,
+              threadId: input.threadId,
+              pid: Number(handle.pid),
+            });
             const context = yield* Layer.build(CodexClient.layerChildProcess(handle, options));
             return yield* Effect.service(CodexClient.CodexAppServerClient).pipe(
               Effect.provide(context),
@@ -1413,6 +1419,11 @@ export const codexAppServerClientFactoryFromSettingsLayer: Layer.Layer<
                 }),
             ),
           );
+          yield* claimAgentProcessScoped({
+            scope,
+            threadId: input.threadId,
+            pid: Number(handle.pid),
+          });
           const protocolLogger = makeCodexAppServerProtocolLogger({
             nativeEventLogger,
             threadId: input.threadId,

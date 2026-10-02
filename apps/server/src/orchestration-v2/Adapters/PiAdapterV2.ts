@@ -420,6 +420,7 @@ export function makePiAdapterV2(
         runtimeMode: input.runtimePolicy.runtimeMode,
       });
       const connection: PiRpcConnection = yield* makePiRpcConnection({
+        owner: { threadId: input.threadId },
         command: options.settings.binaryPath || "pi",
         args: launch.args,
         cwd,

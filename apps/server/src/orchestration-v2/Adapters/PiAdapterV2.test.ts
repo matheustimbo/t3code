@@ -20,12 +20,14 @@ import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -33,6 +35,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import * as ServerConfig from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import { readThreadProcessClaims } from "../../resourceTelemetry/ThreadProcessRegistry.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 import {
   ProviderAdapterV2RuntimePolicy,
@@ -461,6 +464,24 @@ const expectModelFailure = (errorMessage: string) =>
   }).pipe(Effect.scoped, Effect.provide(testLayer));
 
 describe("PiAdapterV2", () => {
+  it.effect("claims the captured Pi process for its runtime scope", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("pi-process-claim");
+      const scope = yield* Scope.make();
+      const fake = yield* makeFakePi;
+      yield* openRuntime(fake, "default", threadId).pipe(Effect.provideService(Scope.Scope, scope));
+      assert.deepEqual(
+        readThreadProcessClaims().filter((claim) => claim.threadId === threadId),
+        [{ threadId, kind: "agent", pid: FAKE_PID }],
+      );
+      yield* Scope.close(scope, Exit.void);
+      assert.deepEqual(
+        readThreadProcessClaims().filter((claim) => claim.threadId === threadId),
+        [],
+      );
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
   it.effect("stops provider-initiated work that has no T3 turn owner", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;

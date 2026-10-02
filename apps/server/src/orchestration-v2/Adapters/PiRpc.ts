@@ -31,6 +31,7 @@ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
 import { signalProcessGroup } from "../../process/processGroup.ts";
+import { claimAgentProcessScoped } from "../../resourceTelemetry/ThreadProcessRegistry.ts";
 
 export class PiRpcError extends Schema.TaggedError<PiRpcError>()("PiRpcError", {
   operation: Schema.String,
@@ -82,6 +83,7 @@ export function parsePiModelSlug(slug: string): { provider: string; modelId: str
 }
 
 export interface PiRpcSpawnOptions {
+  readonly owner?: { readonly threadId: string };
   readonly command: string;
   readonly args: ReadonlyArray<string>;
   readonly cwd: string | undefined;
@@ -231,6 +233,14 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
       }),
     )
     .pipe(Effect.mapError((cause) => new PiRpcError({ operation: "spawn", cause })));
+
+  if (options.owner !== undefined) {
+    yield* claimAgentProcessScoped({
+      scope,
+      threadId: options.owner.threadId,
+      pid: Number(child.pid),
+    });
+  }
 
   let childExited = false;
   let diagnosingStdoutClose = false;

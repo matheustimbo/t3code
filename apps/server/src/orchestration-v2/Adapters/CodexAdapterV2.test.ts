@@ -54,6 +54,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import packageJson from "../../../package.json" with { type: "json" };
 import * as ServerConfig from "../../config.ts";
+import { readThreadProcessClaims } from "../../resourceTelemetry/ThreadProcessRegistry.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
 import * as ProviderEventLoggers from "../../provider/Layers/ProviderEventLoggers.ts";
@@ -1618,20 +1619,38 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const scope = yield* Scope.make();
     yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
-    const handle = yield* spawner
-      .spawn(
-        ChildProcess.make(process.execPath, [
-          path.resolve(
-            import.meta.dirname,
-            "../../../../../packages/effect-codex-app-server/test/fixtures/codex-app-server-mock-peer.ts",
-          ),
-        ]),
-      )
-      .pipe(Effect.provideService(Scope.Scope, scope));
-    const context = yield* Layer.buildWithScope(CodexClient.layerChildProcess(handle), scope);
-    const client = yield* Effect.service(CodexClient.CodexAppServerClient).pipe(
-      Effect.provide(context),
+    const captured = yield* Deferred.make<ChildProcessSpawner.ChildProcessHandle>();
+    const captureSpawner = ChildProcessSpawner.make(() =>
+      spawner
+        .spawn(
+          ChildProcess.make(process.execPath, [
+            path.resolve(
+              import.meta.dirname,
+              "../../../../../packages/effect-codex-app-server/test/fixtures/codex-app-server-mock-peer.ts",
+            ),
+          ]),
+        )
+        .pipe(Effect.tap((handle) => Deferred.succeed(captured, handle))),
     );
+    const factory = yield* CodexAdapterV2.CodexAppServerClientFactory.pipe(
+      Effect.provide(CodexAdapterV2.codexAppServerClientFactoryFromSettingsLayer),
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, captureSpawner),
+      Effect.provideService(
+        ProviderEventLoggers.ProviderEventLoggers,
+        ProviderEventLoggers.NoOpProviderEventLoggers,
+      ),
+    );
+    const client = yield* factory
+      .open({
+        instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
+        threadId: ThreadId.make("captured-child"),
+        providerSessionId: ProviderSessionId.make("captured-child-session"),
+        runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+        settings: DEFAULT_CODEX_SETTINGS,
+        environment: {},
+      })
+      .pipe(Effect.provideService(Scope.Scope, scope));
+    const handle = yield* Deferred.await(captured);
     yield* client.request("initialize", {
       clientInfo: { name: "termination-test", title: "Termination test", version: "0.0.0" },
       capabilities: { experimentalApi: true, optOutNotificationMethods: null },
@@ -1655,6 +1674,20 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       .pipe(Effect.provideService(Scope.Scope, scope));
     return { runtime, handle, scope };
   });
+
+  it.effect("tracks its captured runtime PID until scope cleanup", () =>
+    Effect.gen(function* () {
+      const { handle, scope } = yield* makeCapturedChildHarness();
+      const claims = () =>
+        readThreadProcessClaims().filter((claim) => claim.threadId === "captured-child");
+      assert.deepEqual(claims(), [
+        { threadId: "captured-child", kind: "agent", pid: Number(handle.pid) },
+      ]);
+      yield* Scope.close(scope, Exit.void);
+      assert.deepEqual(claims(), []);
+      assert.isFalse(yield* handle.isRunning);
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
 
   it.effect("fails adapter events when its captured child receives SIGTERM", () =>
     Effect.gen(function* () {

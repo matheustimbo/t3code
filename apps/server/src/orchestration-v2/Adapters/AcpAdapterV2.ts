@@ -128,6 +128,7 @@ export const ACP_PROTOCOL = "acp.ndjson-jsonrpc" as const;
 const ACP_DEFERRED_FINALIZE_DEBOUNCE: Duration.Input = "3000 millis";
 
 export interface AcpAdapterV2RuntimeInput {
+  readonly owner?: { readonly threadId: string };
   readonly cwd: string;
   /**
    * Policy the session opened with. A runtime-mode change reopens the session,
@@ -2014,6 +2015,7 @@ export function makeAcpAdapterV2(
           const mcpContext = acpMcpContext(threadId, self);
           return {
             cwd: input.runtimePolicy.cwd ?? process.cwd(),
+            ...(threadId === null ? {} : { owner: { threadId } }),
             runtimePolicy: input.runtimePolicy,
             mcpServers: mcpContext.servers,
             acpMcpServers: mcpContext.acpServers,

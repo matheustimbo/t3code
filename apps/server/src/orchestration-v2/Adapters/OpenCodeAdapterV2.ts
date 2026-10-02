@@ -70,6 +70,7 @@ import * as OpenCodeRuntime from "../../provider/opencodeRuntime.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 import { makeProviderFailure } from "../ProviderFailure.ts";
 import { turnScopedSelectionTransition } from "../ProviderSelectionTransition.ts";
+import { claimAgentProcessScoped } from "../../resourceTelemetry/ThreadProcessRegistry.ts";
 import { providerMessageTextWithAttachmentPaths } from "../AttachmentPrompt.ts";
 import * as ProviderAdapter from "../ProviderAdapter.ts";
 import {
@@ -959,6 +960,11 @@ export function makeOpenCodeAdapterV2(
           directory: cwd,
           serverUrl: options.settings.serverUrl,
           environment: options.environment,
+        });
+        yield* claimAgentProcessScoped({
+          scope,
+          threadId: input.threadId,
+          ...(connection.pid === undefined ? {} : { pid: connection.pid }),
         });
         const client = runtime.createOpenCodeSdkClient({
           baseUrl: connection.url,
