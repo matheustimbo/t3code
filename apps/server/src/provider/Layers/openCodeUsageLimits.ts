@@ -39,25 +39,29 @@ export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(
   if (!input.enabled || input.serverUrl.trim()) return unsupported;
 
   return yield* Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
     const env = input.environment;
-    const dataHome =
-      env.XDG_DATA_HOME ||
-      path.join(env.HOME || env.USERPROFILE || NodeOS.homedir(), ".local", "share");
-    const authPath = path.join(dataHome, "opencode", "auth.json");
-    const contents =
-      env.OPENCODE_AUTH_CONTENT ||
-      (yield* fs.readFileString(authPath).pipe(
-        Effect.catchTags({
-          PlatformError: (error) =>
-            error.reason._tag === "NotFound" ? Effect.succeed("{}") : Effect.fail(error),
-        }),
-      ));
-    const auth = yield* decodeAuthFile(contents);
-    const apiAuth = decodeApiAuth(auth["opencode-go"]);
-    // OpenCode overlays stored API credentials after environment credentials.
-    const apiKey = (Option.isSome(apiAuth) ? apiAuth.value.key : env.OPENCODE_API_KEY)?.trim();
+    const apiKey =
+      env.OPENCODE_GO_API_KEY?.trim() ||
+      (yield* Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dataHome =
+          env.XDG_DATA_HOME ||
+          path.join(env.HOME || env.USERPROFILE || NodeOS.homedir(), ".local", "share");
+        const authPath = path.join(dataHome, "opencode", "auth.json");
+        const contents =
+          env.OPENCODE_AUTH_CONTENT ||
+          (yield* fs.readFileString(authPath).pipe(
+            Effect.catchTags({
+              PlatformError: (error) =>
+                error.reason._tag === "NotFound" ? Effect.succeed("{}") : Effect.fail(error),
+            }),
+          ));
+        const auth = yield* decodeAuthFile(contents);
+        const apiAuth = decodeApiAuth(auth["opencode-go"]);
+        // OpenCode overlays stored API credentials after environment credentials.
+        return (Option.isSome(apiAuth) ? apiAuth.value.key : env.OPENCODE_API_KEY)?.trim();
+      }));
     if (!apiKey) return unsupported;
 
     const client = yield* HttpClient.HttpClient;
@@ -98,9 +102,6 @@ export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(
     ];
     return {
       ...makeUsageLimits({ checkedAt, windows }),
-      // Go's usage response has no account ID. An unkeyed hash matches across
-      // environments without a shared secret. It permits offline guesses, but
-      // Go keys are randomly generated.
       credentialFingerprint: NodeCrypto.createHash("sha256")
         .update("opencode-go\0")
         .update(apiKey)

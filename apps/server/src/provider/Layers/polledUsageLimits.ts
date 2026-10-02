@@ -1,17 +1,3 @@
-/**
- * Usage-window parsers for the providers that only answer over HTTP: Cursor,
- * Grok (through a CLIProxyAPI hub) and OpenCode Go.
- *
- * Claude and Codex get their windows from `account.rate-limits.updated` during
- * a turn, so they live in `claudeUsageLimits.ts` / `codexUsageLimits.ts` beside
- * the adapters that emit them. These three have no runtime channel, so
- * `providerUsageLimitReaders.ts` polls the endpoint and hands the payload here.
- *
- * Everything in this module is fork-only. Keeping it in one file that upstream
- * does not have keeps the sync conflict surface to the driver call sites.
- *
- * @module provider/Layers/polledUsageLimits
- */
 import type { ServerProviderUsageWindow } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
@@ -28,11 +14,6 @@ function asIsoDateTime(value: string | number | null | undefined): string | unde
   return Option.map(dateTime, DateTime.formatIso).pipe(Option.getOrUndefined);
 }
 
-/**
- * Builds a window, or nothing when the provider gave no usable percentage.
- * `usedPercent` is required by the contract, and a bar with no number is worse
- * than no bar: it reads as "zero used" to anyone glancing at it.
- */
 function usageWindow(input: {
   readonly id: string;
   readonly kind: ServerProviderUsageWindow["kind"];
@@ -69,46 +50,6 @@ function slugifyUsageWindowId(value: string): string {
 const NumericValue = Schema.Union([Schema.Number, Schema.String]);
 const NullableNumericValue = Schema.Union([NumericValue, Schema.Null]);
 const NullableDateValue = Schema.Union([Schema.String, Schema.Number, Schema.Null]);
-
-// ---------------------------------------------------------------- Cursor ----
-
-const CursorUsagePayload = Schema.Struct({
-  billingCycleEnd: Schema.optional(NullableDateValue),
-  planUsage: Schema.optional(
-    Schema.Struct({
-      totalPercentUsed: Schema.optional(Schema.Number),
-      remaining: Schema.optional(Schema.Number),
-      limit: Schema.optional(Schema.Number),
-    }),
-  ),
-  totalPercentUsed: Schema.optional(Schema.Number),
-});
-const decodeCursorUsagePayload = Schema.decodeUnknownOption(CursorUsagePayload);
-
-/** Cursor reports one allowance per billing cycle, as a percentage or a remaining/limit pair. */
-export function parseCursorUsageWindows(input: unknown): ReadonlyArray<ServerProviderUsageWindow> {
-  const decoded = decodeCursorUsagePayload(input);
-  if (Option.isNone(decoded)) return [];
-  const payload = decoded.value;
-  const usedPercent =
-    payload.planUsage?.totalPercentUsed ??
-    payload.totalPercentUsed ??
-    (payload.planUsage?.remaining !== undefined &&
-    payload.planUsage.limit !== undefined &&
-    payload.planUsage.limit > 0
-      ? 100 - (payload.planUsage.remaining / payload.planUsage.limit) * 100
-      : undefined);
-  const window = usageWindow({
-    id: "billing_cycle",
-    kind: "monthly",
-    label: "Billing cycle",
-    usedPercent,
-    resetsAt: payload.billingCycleEnd,
-  });
-  return window ? [window] : [];
-}
-
-// ------------------------------------------------------------------ Grok ----
 
 const GrokBillingCent = Schema.Union([
   NumericValue,
@@ -227,11 +168,6 @@ export function parseGrokUsageWindows(input: unknown): ReadonlyArray<ServerProvi
   return windows;
 }
 
-/**
- * A CLIProxy hub pools several Grok accounts behind one provider instance, but
- * the provider snapshot has room for exactly one set of windows. Prefixing the
- * account keeps every account's bars visible and distinguishable.
- */
 export function prefixUsageWindowsWithAccount(
   accountLabel: string,
   windows: ReadonlyArray<ServerProviderUsageWindow>,
@@ -242,45 +178,4 @@ export function prefixUsageWindowsWithAccount(
     id: `${slug}:${window.id}`,
     label: `${accountLabel} · ${window.label}`,
   }));
-}
-
-// -------------------------------------------------------------- OpenCode ----
-
-const OpenCodeUsageWindow = Schema.Struct({
-  percent: Schema.optional(Schema.Number),
-  resetsAt: Schema.optional(NullableDateValue),
-});
-const OpenCodeUsagePayload = Schema.Struct({
-  usage: Schema.Struct({
-    rolling: Schema.optional(OpenCodeUsageWindow),
-    weekly: Schema.optional(OpenCodeUsageWindow),
-    monthly: Schema.optional(OpenCodeUsageWindow),
-  }),
-});
-const decodeOpenCodeUsagePayload = Schema.decodeUnknownOption(OpenCodeUsagePayload);
-
-const OPEN_CODE_WINDOWS = {
-  rolling: { kind: "session", label: "Rolling" },
-  weekly: { kind: "weekly", label: "Weekly" },
-  monthly: { kind: "monthly", label: "Monthly" },
-} as const satisfies Record<string, { kind: ServerProviderUsageWindow["kind"]; label: string }>;
-
-export function parseOpenCodeUsageWindows(
-  input: unknown,
-): ReadonlyArray<ServerProviderUsageWindow> {
-  const decoded = decodeOpenCodeUsagePayload(input);
-  if (Option.isNone(decoded)) return [];
-  const usage = decoded.value.usage;
-  return Object.entries(OPEN_CODE_WINDOWS).flatMap(([id, shape]) => {
-    const window = usage[id as keyof typeof usage];
-    if (!window) return [];
-    const parsed = usageWindow({
-      id,
-      kind: shape.kind,
-      label: shape.label,
-      usedPercent: window.percent,
-      resetsAt: window.resetsAt,
-    });
-    return parsed ? [parsed] : [];
-  });
 }

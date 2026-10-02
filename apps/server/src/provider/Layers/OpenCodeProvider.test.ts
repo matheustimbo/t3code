@@ -98,13 +98,67 @@ it.effect("reads Go limits with the instance's XDG credentials and preserves res
   }),
 );
 
+it.effect(
+  "uses the explicit Go alias before stored credentials and fingerprints the selected key",
+  () =>
+    Effect.gen(function* () {
+      for (const auth of [
+        "{}",
+        '{"opencode-go":{"type":"api","key":"stored-key"}}',
+        "invalid json",
+        "",
+      ]) {
+        const limits = yield* readOpenCodeGoUsageLimits({
+          enabled: true,
+          serverUrl: "",
+          environment: {
+            OPENCODE_GO_API_KEY: " explicit-key ",
+            OPENCODE_API_KEY: "ordinary-key",
+            OPENCODE_AUTH_CONTENT: auth,
+          },
+        }).pipe(
+          Effect.provideService(
+            FileSystem.FileSystem,
+            FileSystem.makeNoop({
+              readFileString: () => Effect.die("inline credentials must bypass disk"),
+            }),
+          ),
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make((request) => {
+              NodeAssert.equal(request.headers.authorization, "Bearer explicit-key");
+              const window = { percent: 20, resetsAt: "2026-10-10T00:00:00Z" };
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  Response.json({
+                    usage: { rolling: window, weekly: window, monthly: window },
+                  }),
+                ),
+              );
+            }),
+          ),
+          Effect.provide(NodeServices.layer),
+        );
+        NodeAssert.equal(limits.windows.length, 3);
+        NodeAssert.equal(
+          limits.credentialFingerprint,
+          NodeCrypto.createHash("sha256").update("opencode-go\0explicit-key").digest("hex"),
+        );
+      }
+    }),
+);
+
 it.effect("does not read local credentials for external or disabled OpenCode instances", () =>
   Effect.gen(function* () {
     for (const settings of [
       { enabled: true, serverUrl: "https://remote.example" },
       { enabled: false, serverUrl: "" },
     ]) {
-      const limits = yield* readOpenCodeGoUsageLimits({ ...settings, environment: {} }).pipe(
+      const limits = yield* readOpenCodeGoUsageLimits({
+        ...settings,
+        environment: { OPENCODE_GO_API_KEY: "host-key" },
+      }).pipe(
         Effect.provideService(
           FileSystem.FileSystem,
           FileSystem.makeNoop({

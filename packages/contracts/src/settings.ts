@@ -762,8 +762,8 @@ export const GrokSettings = makeProviderSettingsSchema(
     ),
     usageLimitsEnabled: Schema.optionalKey(Schema.Boolean).pipe(
       Schema.annotateKey({
-        title: "Experimental plan limits",
-        description: "Read Grok subscription limits through the optional x.ai billing capability.",
+        title: "Experimental proxy plan limits",
+        description: "Read Grok subscription limits from accounts managed by CLIProxyAPI.",
         providerSettingsForm: { control: "switch", clearWhenEmpty: "omit" },
       }),
     ),
@@ -985,9 +985,9 @@ export const OpenCodeSettings = makeProviderSettingsSchema(
     ),
     usageLimitsEnabled: Schema.optionalKey(Schema.Boolean).pipe(
       Schema.annotateKey({
-        title: "Experimental OpenCode Go limits",
+        title: "Automatically refresh OpenCode Go limits",
         description:
-          "Read rolling, weekly, and monthly limits when this instance uses an OpenCode Go subscription.",
+          "Refresh subscription limits every 45 seconds while provider status is visible. Limits are also read during status checks.",
         providerSettingsForm: { control: "switch", clearWhenEmpty: "omit" },
       }),
     ),

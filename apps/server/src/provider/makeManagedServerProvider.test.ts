@@ -192,6 +192,69 @@ describe("makeManagedServerProvider", () => {
       ).pipe(Effect.provide(AlwaysRunTestLayer)),
   );
 
+  it.effect(
+    "publishes complete polled limits and ignores usage from an obsolete enrichment generation",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const callbacks = yield* Ref.make<
+            Array<(limits: NonNullable<ServerProvider["usageLimits"]>) => Effect.Effect<void>>
+          >([]);
+          const enriched = yield* PubSub.unbounded<void>();
+          const provider = yield* makeManagedServerProvider<TestSettings>({
+            resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+            getSettings: Effect.succeed({ enabled: true }),
+            streamSettings: Stream.empty,
+            haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+            initialSnapshot: () => Effect.succeed(initialSnapshot),
+            checkProvider: Effect.succeed(refreshedSnapshot),
+            enrichSnapshot: ({ publishUsageLimits }) =>
+              Ref.update(callbacks, (values) => [...values, publishUsageLimits]).pipe(
+                Effect.andThen(PubSub.publish(enriched, undefined)),
+              ),
+            refreshOnInterval: false,
+          });
+          yield* Stream.take(Stream.fromPubSub(enriched), 1).pipe(Stream.runDrain);
+          const first = (yield* Ref.get(callbacks))[0]!;
+          const limits = {
+            checkedAt: "2026-04-10T00:00:02.000Z",
+            credentialFingerprint: "first-account",
+            windows: [{ id: "monthly", kind: "monthly", label: "Monthly", usedPercent: 40 }],
+          } as const;
+          yield* first(limits);
+          assert.deepStrictEqual((yield* provider.getSnapshot).usageLimits, limits);
+          yield* first({
+            checkedAt: limits.checkedAt,
+            windows: [],
+            unavailable: { reason: "probeFailed" },
+          });
+          assert.deepStrictEqual((yield* provider.getSnapshot).usageLimits, limits);
+
+          const nextEnrichment = yield* Stream.take(Stream.fromPubSub(enriched), 1).pipe(
+            Stream.runDrain,
+            Effect.forkChild,
+          );
+          yield* Effect.yieldNow;
+          yield* provider.refresh;
+          yield* Fiber.join(nextEnrichment);
+          const second = (yield* Ref.get(callbacks))[1]!;
+          const replacement = { ...limits, credentialFingerprint: "second-account", windows: [] };
+          yield* second(replacement);
+          yield* first(limits);
+          assert.deepStrictEqual((yield* provider.getSnapshot).usageLimits, replacement);
+          yield* second({
+            checkedAt: limits.checkedAt,
+            windows: [],
+            unavailable: { reason: "unsupported" },
+          });
+          assert.strictEqual(
+            (yield* provider.getSnapshot).usageLimits?.unavailable?.reason,
+            "unsupported",
+          );
+        }),
+      ).pipe(Effect.provide(AlwaysRunTestLayer)),
+  );
+
   it.effect("skips periodic provider refreshes without foreground provider-status demand", () =>
     Effect.scoped(
       Effect.gen(function* () {

@@ -1,20 +1,5 @@
-/**
- * OpenCodeDriver — `ProviderDriver` for the OpenCode runtime.
- *
- * Mirrors the Codex / Claude drivers: a plain value whose `create()`
- * bundles `snapshot` / `adapter` / `textGeneration` closures over the
- * per-instance `OpenCodeSettings`.
- *
- * Two instances with different `serverUrl`s therefore talk to independent
- * OpenCode servers; when no `serverUrl` is set, the adapter + text-generation
- * shares spin up their own scoped child processes, and those child
- * processes are released when the registry scope closes.
- *
- * @module provider/Drivers/OpenCodeDriver
- */
 import { OpenCodeSettings, ProviderDriverKind } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
-import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -62,9 +47,8 @@ import {
 } from "../ProviderDriver.ts";
 import { withInstanceIdentity } from "./instanceIdentity.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
-import { readOpenCodeGoUsageLimits } from "../providerUsageLimitReaders.ts";
+import { readOpenCodeGoUsageLimits } from "../Layers/openCodeUsageLimits.ts";
 import { pollProviderUsageLimits } from "../providerUsageLimitPolling.ts";
-import { makeUnavailableUsageLimits } from "../providerUsageLimits.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
   makeCachedProviderMaintenanceResolution,
@@ -370,12 +354,28 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
         ),
       );
 
-      const checkProvider = checkOpenCodeProviderStatus(
-        effectiveConfig,
-        serverConfig.cwd,
-        runtimeProbe.refresh,
-        loadOpenCode2Models,
+      const readUsageLimits = readOpenCodeGoUsageLimits({
+        enabled: effectiveConfig.enabled,
+        serverUrl: effectiveConfig.serverUrl,
+        environment: processEnv,
+      }).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, pathService),
+        Effect.provideService(HttpClient.HttpClient, httpClient),
+      );
+      const checkProvider = Effect.all(
+        {
+          provider: checkOpenCodeProviderStatus(
+            effectiveConfig,
+            serverConfig.cwd,
+            runtimeProbe.refresh,
+            loadOpenCode2Models,
+          ),
+          usageLimits: readUsageLimits,
+        },
+        { concurrency: "unbounded" },
       ).pipe(
+        Effect.map(({ provider, usageLimits }) => ({ ...provider, usageLimits })),
         Effect.map(stampIdentity),
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, pathService),
@@ -454,7 +454,7 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
           enrichSnapshot: ({
             settings,
             snapshot,
-            getSnapshot,
+            publishUsageLimits,
             publishSnapshot,
             backgroundPolicy,
           }) =>
@@ -466,26 +466,17 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
                 { enableProviderUpdateChecks: settings.enableProviderUpdateChecks },
               ).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
               yield* publishSnapshot(enrichedSnapshot);
-              if (!settings.provider.usageLimitsEnabled) {
-                const current = yield* getSnapshot;
-                yield* publishSnapshot({
-                  ...current,
-                  usageLimits: makeUnavailableUsageLimits({
-                    checkedAt: DateTime.formatIso(yield* DateTime.now),
-                    reason: "unsupported",
-                    message:
-                      "Experimental OpenCode Go plan limits are disabled in provider settings.",
-                  }),
-                });
+              if (
+                !settings.provider.enabled ||
+                !settings.provider.usageLimitsEnabled ||
+                settings.provider.serverUrl.trim()
+              )
                 return;
-              }
               return yield* pollProviderUsageLimits({
                 instanceId,
-                getSnapshot,
-                publishSnapshot,
-                read: readOpenCodeGoUsageLimits(settings.provider, processEnv).pipe(
-                  Effect.provideService(HttpClient.HttpClient, httpClient),
-                ),
+                publishUsageLimits,
+                read: readUsageLimits,
+                pollImmediately: false,
                 backgroundPolicy,
               });
             }),

@@ -1,6 +1,5 @@
 import { GrokSettings, ProviderDriverKind } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -33,8 +32,6 @@ import {
 import { withInstanceIdentity } from "./instanceIdentity.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import { discoverGrokSkills } from "./GrokSkills.ts";
-import { makeGrokAcpRuntime } from "../acp/GrokAcpSupport.ts";
-import { parseGrokUsageWindows } from "../Layers/polledUsageLimits.ts";
 import {
   makeCachedProviderMaintenanceResolution,
   makeManualOnlyProviderMaintenanceCapabilities,
@@ -42,11 +39,7 @@ import {
   type ProviderMaintenanceCapabilitiesResolver,
   resolveProviderMaintenanceCapabilitiesEffect,
 } from "../providerMaintenance.ts";
-import {
-  pollProviderUsageLimits,
-  ProviderUsageLimitsReadError,
-} from "../providerUsageLimitPolling.ts";
-import { makeUnavailableUsageLimits, makeUsageLimits } from "../providerUsageLimits.ts";
+import { pollProviderUsageLimits } from "../providerUsageLimitPolling.ts";
 import { readCliProxyGrokUsageLimits } from "../providerUsageLimitReaders.ts";
 import {
   haveProviderSnapshotSettingsChanged,
@@ -187,9 +180,9 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
         enrichSnapshot: ({
           settings,
           snapshot: currentSnapshot,
-          getSnapshot,
           publishSnapshot,
           backgroundPolicy,
+          publishUsageLimits,
         }) =>
           Effect.gen(function* () {
             const maintenanceCapabilities = yield* resolveMaintenance();
@@ -200,71 +193,18 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
               publishSnapshot,
               httpClient,
             });
-            if (!settings.provider.usageLimitsEnabled) {
-              const current = yield* getSnapshot;
-              yield* publishSnapshot({
-                ...current,
-                usageLimits: makeUnavailableUsageLimits({
-                  checkedAt: DateTime.formatIso(yield* DateTime.now),
-                  reason: "unsupported",
-                  message: "Experimental Grok plan limits are disabled in provider settings.",
-                }),
-              });
+            if (
+              !settings.provider.enabled ||
+              !settings.provider.usageLimitsEnabled ||
+              !processEnv.CLIPROXYAPI_MANAGEMENT_KEY?.trim()
+            )
               return;
-            }
-            const read = processEnv.CLIPROXYAPI_MANAGEMENT_KEY?.trim()
-              ? readCliProxyGrokUsageLimits(processEnv).pipe(
-                  Effect.provideService(HttpClient.HttpClient, httpClient),
-                )
-              : Effect.scoped(
-                  Effect.gen(function* () {
-                    const runtime = yield* makeGrokAcpRuntime({
-                      grokSettings: settings.provider,
-                      environment: processEnv,
-                      childProcessSpawner: spawner,
-                      cwd,
-                      clientInfo: { name: "t3-code-usage-limits", version: "0.0.0" },
-                    }).pipe(
-                      Effect.provideService(Crypto.Crypto, crypto),
-                      Effect.mapError(
-                        () =>
-                          new ProviderUsageLimitsReadError({
-                            message: "Grok billing capability could not be started.",
-                          }),
-                      ),
-                    );
-                    yield* runtime.start().pipe(
-                      Effect.mapError(
-                        () =>
-                          new ProviderUsageLimitsReadError({
-                            message: "Grok billing capability could not be started.",
-                          }),
-                      ),
-                    );
-                    const payload = yield* runtime.request("x.ai/billing", {}).pipe(
-                      Effect.mapError(
-                        () =>
-                          new ProviderUsageLimitsReadError({
-                            message: "This Grok CLI does not expose the x.ai billing capability.",
-                          }),
-                      ),
-                    );
-                    const windows = parseGrokUsageWindows(payload);
-                    if (windows.length === 0) {
-                      return yield* new ProviderUsageLimitsReadError({
-                        message: "Grok returned no subscription billing window.",
-                      });
-                    }
-                    return makeUsageLimits({
-                      checkedAt: DateTime.formatIso(yield* DateTime.now),
-                      windows,
-                    });
-                  }),
-                );
+            const read = readCliProxyGrokUsageLimits(processEnv).pipe(
+              Effect.provideService(HttpClient.HttpClient, httpClient),
+            );
             return yield* pollProviderUsageLimits({
               instanceId,
-              getSnapshot,
-              publishSnapshot,
+              publishUsageLimits,
               read,
               backgroundPolicy,
             });

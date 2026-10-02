@@ -10,8 +10,9 @@ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import { HttpClient } from "effect/unstable/http";
+import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
@@ -71,6 +72,44 @@ const create = (config: Partial<OpenCodeSettings>, http: HttpClient.HttpClient) 
 const noHttp = HttpClient.make(() => Effect.die("A local binary must not be probed over HTTP"));
 
 it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
+  it.effect("includes Go limits in status checks when automatic polling is disabled", () =>
+    Effect.gen(function* () {
+      let requests = 0;
+      const http = HttpClient.make((request) => {
+        assert.strictEqual(request.url, "https://opencode.ai/zen/go/v1/usage");
+        assert.strictEqual(request.headers.authorization, "Bearer go-key");
+        requests += 1;
+        const window = { percent: 30, resetsAt: "2026-10-10T00:00:00Z" };
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            Response.json({
+              usage: { rolling: window, weekly: window, monthly: window },
+            }),
+          ),
+        );
+      });
+      const instance = yield* OpenCodeDriver.create({
+        instanceId: ProviderInstanceId.make("opencode-go-test"),
+        displayName: undefined,
+        environment: [
+          { name: "OPENCODE_GO_API_KEY", value: "go-key", sensitive: true },
+          { name: "OPENCODE_AUTH_CONTENT", value: "{}", sensitive: false },
+        ],
+        enabled: true,
+        config: { ...OpenCodeDriver.defaultConfig(), usageLimitsEnabled: false },
+      }).pipe(Effect.provideService(HttpClient.HttpClient, http));
+      yield* Stream.take(instance.snapshot.streamChanges, 1).pipe(Stream.runDrain);
+      const snapshot = yield* instance.snapshot.refresh;
+      assert.deepStrictEqual(
+        snapshot.usageLimits?.windows.map((window) => window.usedPercent),
+        [30, 30, 30],
+      );
+      assert.isString(snapshot.usageLimits?.credentialFingerprint);
+      assert.strictEqual(requests, 2);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("never starts a 1.x server for an OpenCode 2 instance", () =>
     Effect.gen(function* () {
       serverStarts.length = 0;

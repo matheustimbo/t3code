@@ -1,6 +1,7 @@
 import {
   DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL,
   type ServerProvider,
+  type ServerProviderUsageLimits,
   ServerSettingsError,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
@@ -51,6 +52,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     readonly snapshot: ServerProvider;
     readonly getSnapshot: Effect.Effect<ServerProvider>;
     readonly publishSnapshot: (snapshot: ServerProvider) => Effect.Effect<void>;
+    readonly publishUsageLimits: (limits: ServerProviderUsageLimits) => Effect.Effect<void>;
     readonly backgroundPolicy: Context.Service.Shape<typeof BackgroundPolicy.BackgroundPolicy>;
   }) => Effect.Effect<void>;
   readonly refreshInterval?: Duration.Input;
@@ -86,8 +88,6 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
       if (state.enrichmentGeneration !== generation) {
         return [null, state] as const;
       }
-      // Enrichment derives from the snapshot it was handed; a runtime usage
-      // update that landed since must not be reverted by it.
       const merged = withUsageLimits(nextSnapshot, state.snapshot.usageLimits);
       if (Equal.equals(state.snapshot, merged)) {
         return [null, state] as const;
@@ -98,6 +98,23 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
       return;
     }
     yield* PubSub.publish(changesPubSub, snapshotToPublish);
+  });
+
+  const publishPolledUsageLimits = Effect.fn("publishPolledUsageLimits")(function* (
+    generation: number,
+    probed: ServerProviderUsageLimits,
+  ) {
+    const snapshotToPublish = yield* Ref.modify(snapshotStateRef, (state) => {
+      if (state.enrichmentGeneration !== generation) return [null, state] as const;
+      const usageLimits = resolveUsageLimitsAfterProbe({
+        published: state.snapshot.usageLimits,
+        probed,
+      });
+      const snapshot = withUsageLimits(state.snapshot, usageLimits);
+      if (Equal.equals(state.snapshot, snapshot)) return [null, state] as const;
+      return [snapshot, { ...state, snapshot }] as const;
+    });
+    if (snapshotToPublish !== null) yield* PubSub.publish(changesPubSub, snapshotToPublish);
   });
 
   const restartSnapshotEnrichment = Effect.fn("restartSnapshotEnrichment")(function* (
@@ -120,6 +137,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         snapshot,
         getSnapshot: Ref.get(snapshotStateRef).pipe(Effect.map((state) => state.snapshot)),
         publishSnapshot: (nextSnapshot) => publishEnrichedSnapshot(generation, nextSnapshot),
+        publishUsageLimits: (limits) => publishPolledUsageLimits(generation, limits),
         backgroundPolicy,
       })
       .pipe(Effect.ignoreCause({ log: true }), Effect.forkIn(scope));
