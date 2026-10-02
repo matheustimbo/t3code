@@ -8,6 +8,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  AuthAdministrativeScopes,
   CommandId,
   EnvironmentOrchestrationHttpApi,
   ProviderInstanceId,
@@ -633,7 +634,15 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
       );
 
       const issuedOutput = yield* captureStdout(
-        runCli(["auth", "session", "issue", "--base-dir", baseDir, "--json"]),
+        runCli([
+          "auth",
+          "session",
+          "issue",
+          "--base-dir",
+          baseDir,
+          "--json",
+          ...AuthAdministrativeScopes.flatMap((scope) => ["--scope", scope]),
+        ]),
       );
       // @effect-diagnostics-next-line preferSchemaOverJson:off
       const issued = JSON.parse(issuedOutput.output) as {

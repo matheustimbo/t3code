@@ -14,6 +14,7 @@
  * `packages/ssh/src/tunnel.ts` already pairs with a discovered remote server
  * the same way, through `t3 auth pairing create --json`.
  */
+import { AuthAdministrativeScopes } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -82,6 +83,7 @@ export const issueAttachedBearerToken = Effect.fn("desktop.attachedCredential.is
         "--label",
         input.label ?? "T3 Code Desktop",
         "--token-only",
+        ...AuthAdministrativeScopes.flatMap((scope) => ["--scope", scope]),
       ],
       {
         // The bundled entry is plain Node, not an Electron renderer.
