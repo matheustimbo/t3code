@@ -1,8 +1,4 @@
-import {
-  AuthAdministrativeScopes,
-  AuthSessionId,
-  AuthStandardClientScopes,
-} from "@t3tools/contracts";
+import { AuthEnvironmentScope, AuthSessionId, AuthStandardClientScopes } from "@t3tools/contracts";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -161,6 +157,13 @@ const pairingCommand = Command.make("pairing").pipe(
 
 const sessionIssueCommand = Command.make("issue", {
   ...authLocationFlags,
+  scope: Flag.Literals("scope", AuthEnvironmentScope.literals).pipe(
+    Flag.atLeast(1),
+    Flag.map((scopes) => [...new Set(scopes)]),
+    Flag.withDescription(
+      "Required scope to grant. Repeat for each scope; no other scopes are added.",
+    ),
+  ),
   ttl: ttlFlag,
   label: labelFlag,
   subject: subjectFlag,
@@ -174,7 +177,7 @@ const sessionIssueCommand = Command.make("issue", {
       (environmentAuth) =>
         Effect.gen(function* () {
           const issued = yield* environmentAuth.issueSession({
-            scopes: AuthAdministrativeScopes,
+            scopes: flags.scope,
             ...(Option.isSome(flags.ttl) ? { ttl: flags.ttl.value } : {}),
             ...(Option.isSome(flags.label) ? { label: flags.label.value } : {}),
             ...(Option.isSome(flags.subject) ? { subject: flags.subject.value } : {}),

@@ -87,6 +87,10 @@ export const ServerSelfUpdateCapability = Schema.Literals([
 export type ServerSelfUpdateCapability = typeof ServerSelfUpdateCapability.Type;
 
 export const ExecutionEnvironmentCapabilities = Schema.Struct({
+  /** Thread create/start can reject a stale expectedSnapshotSequence inside the command queue. */
+  threadCommandPreconditions: Schema.optionalKey(Schema.Boolean),
+  /** Latest turn snapshots identify the user message that started the provider turn. */
+  threadTurnMessageCorrelation: Schema.optionalKey(Schema.Boolean),
   repositoryIdentity: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   connectionProbe: Schema.optionalKey(Schema.Boolean),
   /** Missing on older servers, which still accept inline image attachments. */

@@ -221,6 +221,17 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
   OrchestrationCommandRejection | PlatformError.PlatformError,
   Crypto.Crypto
 > {
+  if (
+    (command.type === "thread.create" || command.type === "thread.turn.start") &&
+    command.expectedSnapshotSequence !== undefined &&
+    command.expectedSnapshotSequence !== readModel.snapshotSequence
+  ) {
+    return yield* new OrchestrationCommandInvariantError({
+      commandType: command.type,
+      detail:
+        "The environment changed after the command preview. Read its state again before submitting a new command.",
+    });
+  }
   switch (command.type) {
     case "project.create": {
       yield* requireProjectAbsent({

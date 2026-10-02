@@ -104,8 +104,12 @@ async function createOrchestrationSystem(
   );
   const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
   const snapshotQuery = await runtime.runPromise(Effect.service(ProjectionSnapshotQuery));
+  const backgroundLiveness = await runtime.runPromise(
+    Effect.service(ThreadBackgroundLiveness.ThreadBackgroundLivenessService),
+  );
   return {
     engine,
+    backgroundLiveness,
     readModel: () => runtime.runPromise(snapshotQuery.getSnapshot()),
     readThread: (threadId: ThreadId) =>
       runtime.runPromise(snapshotQuery.getThreadDetailById(threadId)),
@@ -130,6 +134,125 @@ const hasMetricSnapshot = (
   );
 
 describe("OrchestrationEngine", () => {
+  it("rejects changed destinations and competing sends inside the command queue", async () => {
+    const system = await createOrchestrationSystem();
+    const projectId = asProjectId("guarded-project");
+    const threadId = ThreadId.make("guarded-thread");
+    try {
+      const projectReceipt = await system.run(
+        system.engine.dispatch({
+          type: "project.create",
+          commandId: CommandId.make("guarded-project"),
+          projectId,
+          title: "Fixture project",
+          workspaceRoot: "/fixture/project",
+          createdAt: now(),
+        }),
+      );
+      const create = {
+        type: "thread.create",
+        commandId: CommandId.make("guarded-thread"),
+        threadId,
+        projectId,
+        title: "Fixture thread",
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "fixture-model" },
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdAt: now(),
+        expectedSnapshotSequence: projectReceipt.sequence,
+      } satisfies OrchestrationCommand;
+      await system.run(
+        system.engine.dispatch({
+          type: "project.meta.update",
+          commandId: CommandId.make("changed-workspace"),
+          projectId,
+          workspaceRoot: "/fixture/different",
+        }),
+      );
+      await expect(system.run(system.engine.dispatch(create))).rejects.toThrow(
+        "environment changed",
+      );
+      expect((await system.readModel()).threads).toHaveLength(0);
+      const created = await system.run(
+        system.engine.dispatch({
+          ...create,
+          commandId: CommandId.make("new-guarded-thread"),
+          expectedSnapshotSequence: await system.run(system.engine.latestSequence),
+        }),
+      );
+      const send = {
+        type: "thread.turn.start",
+        commandId: CommandId.make("guarded-send"),
+        threadId,
+        message: {
+          messageId: asMessageId("guarded-user"),
+          role: "user",
+          text: "Synthetic fixture",
+          attachments: [],
+        },
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        createdAt: now(),
+        expectedSnapshotSequence: created.sequence,
+      } satisfies OrchestrationCommand;
+      await system.run(
+        system.engine.dispatch({
+          type: "thread.runtime-mode.set",
+          commandId: CommandId.make("changed-runtime"),
+          threadId,
+          runtimeMode: "full-access",
+          createdAt: now(),
+        }),
+      );
+      await expect(system.run(system.engine.dispatch(send))).rejects.toThrow("environment changed");
+      expect((await system.readModel()).threads[0]?.messages).toHaveLength(0);
+      const sequence = await system.run(system.engine.latestSequence);
+      system.backgroundLiveness.recordTaskLiveness({
+        threadId,
+        taskId: "fixture-background",
+        taskType: "agent",
+        status: "running",
+        kind: "started",
+      });
+      expect(await system.run(system.engine.latestSequence)).toBe(sequence);
+      await expect(
+        system.run(
+          system.engine.dispatch({
+            ...send,
+            commandId: CommandId.make("background-send"),
+            expectedSnapshotSequence: sequence,
+          }),
+        ),
+      ).rejects.toThrow("live background work");
+      expect((await system.readModel()).threads[0]?.messages).toHaveLength(0);
+      system.backgroundLiveness.clearThreadLiveness(threadId);
+      const attempts = await Promise.allSettled([
+        system.run(
+          system.engine.dispatch({
+            ...send,
+            commandId: CommandId.make("send-first"),
+            expectedSnapshotSequence: sequence,
+          }),
+        ),
+        system.run(
+          system.engine.dispatch({
+            ...send,
+            commandId: CommandId.make("send-second"),
+            message: { ...send.message, messageId: asMessageId("second-user") },
+            expectedSnapshotSequence: sequence,
+          }),
+        ),
+      ]);
+      expect(attempts.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+      expect(attempts.filter((result) => result.status === "rejected")).toHaveLength(1);
+      expect((await system.readModel()).threads[0]?.messages).toHaveLength(1);
+    } finally {
+      await system.dispose();
+    }
+  });
+
   it.each(["running", "stopped"] as const)(
     "sends async answers with a %s session and rejects old duplicate replies",
     async (status) => {
