@@ -1,6 +1,13 @@
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { CommandId, type Project, ProjectId, ProviderInstanceId } from "@t3tools/contracts";
+import {
+  CommandId,
+  type Project,
+  ProjectId,
+  ProviderInstanceId,
+  TicketProviderDriverKind,
+  TicketProviderInstanceId,
+} from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -202,6 +209,56 @@ it.layer(TestLayer)("ProjectService", (it) => {
         changes.map((change) => change.event_type),
         ["project.created", "project.meta-updated", "project.meta-updated", "project.deleted"],
       );
+    }),
+  );
+
+  it.effect("persists ticket overrides through updates and project snapshots", () =>
+    Effect.gen(function* () {
+      const service = yield* ProjectService.ProjectService;
+      const projectId = ProjectId.make("project:ticket-settings");
+      yield* service.create({
+        commandId: CommandId.make("command:ticket-settings:create"),
+        projectId,
+        title: "Tickets",
+        workspaceRoot: "/work/tickets",
+      });
+      const ticketTitlePolicy = { mode: "title", customTemplate: "{title}" } as const;
+      const ticketProviderBindings = [
+        {
+          driver: TicketProviderDriverKind.make("github"),
+          host: "github.com",
+          instanceId: TicketProviderInstanceId.make("github_work"),
+        },
+      ];
+      yield* service.update({
+        commandId: CommandId.make("command:ticket-settings:update"),
+        projectId,
+        ticketTitlePolicy,
+        ticketProviderBindings,
+      });
+      yield* service.update({
+        commandId: CommandId.make("command:ticket-settings:rename"),
+        projectId,
+        title: "Renamed",
+      });
+      const stored = Option.getOrThrow(yield* service.getById(projectId));
+      assert.deepEqual(stored.ticketTitlePolicy, ticketTitlePolicy);
+      assert.deepEqual(stored.ticketProviderBindings, ticketProviderBindings);
+      const byWorkspace = Option.getOrThrow(yield* service.getByWorkspaceRoot("/work/tickets"));
+      assert.deepEqual(byWorkspace.ticketTitlePolicy, ticketTitlePolicy);
+      const directShell = Option.getOrThrow(yield* service.getShell(projectId));
+      assert.deepEqual(directShell.ticketProviderBindings, ticketProviderBindings);
+      const shell = (yield* service.snapshot).projects.find((project) => project.id === projectId);
+      assert.deepEqual(shell?.ticketTitlePolicy, ticketTitlePolicy);
+      assert.deepEqual(shell?.ticketProviderBindings, ticketProviderBindings);
+      const reset = yield* service.update({
+        commandId: CommandId.make("command:ticket-settings:reset"),
+        projectId,
+        ticketTitlePolicy: null,
+        ticketProviderBindings: [],
+      });
+      assert.isNull(reset.ticketTitlePolicy);
+      assert.deepEqual(reset.ticketProviderBindings, []);
     }),
   );
 

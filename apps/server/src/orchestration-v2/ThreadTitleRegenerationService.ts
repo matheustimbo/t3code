@@ -1,3 +1,7 @@
+import {
+  extractUniqueTicketReference,
+  renderTicketThreadTitle,
+} from "@t3tools/shared/ticketTitles";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommandId,
@@ -9,11 +13,13 @@ import {
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Equal from "effect/Equal";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 
 import * as ServerSettings from "../serverSettings.ts";
+import * as TicketProviderRegistry from "../ticket/TicketProviderRegistry.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import type { OrchestratorV2Error } from "./Orchestrator.ts";
 import * as ProjectStore from "./ProjectStore.ts";
@@ -43,6 +49,7 @@ const make = Effect.gen(function* () {
   const projects = yield* ProjectStore.ProjectStoreV2;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const textGeneration = yield* TextGeneration.TextGeneration;
+  const tickets = yield* TicketProviderRegistry.TicketProviderRegistry;
 
   const complete = (input: {
     readonly threadId: ThreadId;
@@ -103,12 +110,64 @@ const make = Effect.gen(function* () {
         return { type: "complete" as const };
       }
 
+      const initialSettings = yield* serverSettings.getSettings;
+      const cwd = projection.thread.worktreePath ?? project.value.workspaceRoot;
+      const policy = project.value.ticketTitlePolicy ?? initialSettings.ticketTitlePolicy;
+      if (input.kind.type === "initial" && policy.mode !== "disabled") {
+        const reference = extractUniqueTicketReference(
+          context.message,
+          Object.values(initialSettings.ticketProviderInstances),
+        );
+        if (reference !== undefined) {
+          const metadata = yield* tickets
+            .resolve({
+              cwd,
+              reference,
+              instances: initialSettings.ticketProviderInstances,
+              bindings: project.value.ticketProviderBindings ?? [],
+            })
+            .pipe(
+              Effect.catch((error) =>
+                Effect.logWarning("Ticket title lookup failed", {
+                  threadId: input.threadId,
+                  error,
+                }).pipe(Effect.as(undefined)),
+              ),
+            );
+          if (metadata !== undefined) {
+            const currentSettings = yield* serverSettings.getSettings;
+            const currentProject = yield* projects.get(projection.thread.projectId);
+            if (
+              Option.isSome(currentProject) &&
+              Equal.equals(
+                policy,
+                currentProject.value.ticketTitlePolicy ?? currentSettings.ticketTitlePolicy,
+              ) &&
+              Equal.equals(
+                initialSettings.ticketProviderInstances,
+                currentSettings.ticketProviderInstances,
+              ) &&
+              Equal.equals(
+                project.value.ticketProviderBindings ?? [],
+                currentProject.value.ticketProviderBindings ?? [],
+              )
+            ) {
+              const title = renderTicketThreadTitle(policy, metadata);
+              if (title !== undefined) return { type: "complete" as const, title };
+            }
+          }
+          const current = yield* threads.getThreadProjection(input.threadId);
+          if (current.thread.titleRegeneration?.requestId !== input.requestId) {
+            return { type: "stale" as const };
+          }
+        }
+      }
       const settings = resolveProjectSettings(
-        yield* serverSettings.getSettings,
+        initialSettings,
         projection.thread.projectId,
       ).settings;
       const result = yield* textGeneration.generateThreadTitle({
-        cwd: projection.thread.worktreePath ?? project.value.workspaceRoot,
+        cwd,
         message: context.message,
         attachments: context.attachments,
         ...(input.kind.type === "regenerate" ? { previousTitle: projection.thread.title } : {}),

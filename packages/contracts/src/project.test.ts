@@ -286,3 +286,23 @@ effectIt.effect("encodes compatible icons inside snapshots and project updates",
     assert.deepEqual(yield* decodeNightlyIcon(update.projectIcon), fallback);
   }),
 );
+
+effectIt.effect("round-trips ticket overrides and explicit resets in project updates", () =>
+  Effect.gen(function* () {
+    const update = yield* decodeProjectUpdateEffect({
+      ticketTitlePolicy: { mode: "title", customTemplate: "{title}" },
+      ticketProviderBindings: [{ driver: "github", host: "github.com", instanceId: "github_work" }],
+    });
+    assert.deepEqual(yield* decodeProjectUpdateEffect(yield* encodeProjectUpdate(update)), update);
+    assert.deepEqual(
+      yield* decodeProjectUpdateEffect({ ticketTitlePolicy: null, ticketProviderBindings: [] }),
+      {
+        ticketTitlePolicy: null,
+        ticketProviderBindings: [],
+      },
+    );
+    const unrelated = yield* decodeProjectUpdateEffect({ title: "Renamed" });
+    assert.isFalse("ticketTitlePolicy" in unrelated);
+    assert.isFalse("ticketProviderBindings" in unrelated);
+  }),
+);

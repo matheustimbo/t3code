@@ -4,6 +4,8 @@ import {
   EventId,
   ProjectId,
   ProviderInstanceId,
+  TicketProviderDriverKind,
+  TicketProviderInstanceId,
   type ModelSelection,
   type ProjectScript,
 } from "@t3tools/contracts";
@@ -163,6 +165,28 @@ describe("planProjectCommand", () => {
       failureOf(withLegacy([legacy, script("another.invalid.id")]))._tag,
       "ProjectCommandInvariantError",
     );
+  });
+
+  it("preserves ticket overrides, explicit resets, and omitted metadata", () => {
+    const ticketTitlePolicy = { mode: "title", customTemplate: "{title}" } as const;
+    const ticketProviderBindings = [
+      {
+        driver: TicketProviderDriverKind.make("github"),
+        host: "github.com",
+        instanceId: TicketProviderInstanceId.make("github_work"),
+      },
+    ];
+    assert.deepInclude(payloadOf(update({ ticketTitlePolicy, ticketProviderBindings })), {
+      ticketTitlePolicy,
+      ticketProviderBindings,
+    });
+    assert.deepInclude(payloadOf(update({ ticketTitlePolicy: null, ticketProviderBindings: [] })), {
+      ticketTitlePolicy: null,
+      ticketProviderBindings: [],
+    });
+    const renamed = payloadOf(update({ title: "Renamed" }));
+    assert.isFalse("ticketTitlePolicy" in renamed);
+    assert.isFalse("ticketProviderBindings" in renamed);
   });
 
   it("limits monograms to two graphemes", () => {

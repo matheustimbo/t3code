@@ -1,8 +1,16 @@
 import { assert, it } from "@effect/vitest";
-import { EventId, ProjectId, ProviderInstanceId } from "@t3tools/contracts";
+import {
+  ApplicationProjectEvent,
+  EventId,
+  ProjectId,
+  ProviderInstanceId,
+  TicketProviderDriverKind,
+  TicketProviderInstanceId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
@@ -11,6 +19,93 @@ import * as ProjectStore from "./ProjectStore.ts";
 it.layer(ProjectStore.layer.pipe(Layer.provideMerge(SqlitePersistenceMemory)))(
   "ProjectStoreV2",
   (it) => {
+    it.effect("replays ticket settings, preserves them on unrelated updates, and resets them", () =>
+      Effect.gen(function* () {
+        const projects = yield* ProjectStore.ProjectStoreV2;
+        const sql = yield* SqlClient.SqlClient;
+        const projectId = ProjectId.make("project-ticket-replay");
+        const timestamp = "2026-03-24T00:00:00.000Z";
+        const ticketTitlePolicy = { mode: "title", customTemplate: "{title}" } as const;
+        const ticketProviderBindings = [
+          {
+            driver: TicketProviderDriverKind.make("github"),
+            host: "github.com",
+            instanceId: TicketProviderInstanceId.make("github_work"),
+          },
+        ];
+        const base = {
+          aggregateKind: "project" as const,
+          aggregateId: projectId,
+          occurredAt: timestamp,
+          commandId: null,
+          causationEventId: null,
+          correlationId: null,
+          metadata: {},
+        };
+        const events: ReadonlyArray<ApplicationProjectEvent> = [
+          {
+            ...base,
+            sequence: 1,
+            eventId: EventId.make("event-ticket-create"),
+            type: "project.created",
+            payload: {
+              projectId,
+              title: "Tickets",
+              workspaceRoot: "/tmp/tickets",
+              defaultModelSelection: null,
+              scripts: [],
+              createdAt: timestamp,
+              updatedAt: timestamp,
+            },
+          },
+          {
+            ...base,
+            sequence: 2,
+            eventId: EventId.make("event-ticket-update"),
+            type: "project.meta-updated",
+            payload: { projectId, ticketTitlePolicy, ticketProviderBindings, updatedAt: timestamp },
+          },
+          {
+            ...base,
+            sequence: 3,
+            eventId: EventId.make("event-ticket-rename"),
+            type: "project.meta-updated",
+            payload: { projectId, title: "Renamed", updatedAt: timestamp },
+          },
+        ];
+        const codec = Schema.fromJsonString(ApplicationProjectEvent);
+        const persistedEvents = events.map(Schema.encodeSync(codec));
+        for (const persisted of persistedEvents)
+          yield* projects.apply(Schema.decodeSync(codec)(persisted));
+        const beforeReplay = Option.getOrThrow(yield* projects.getShell(projectId));
+        assert.deepEqual(beforeReplay.ticketTitlePolicy, ticketTitlePolicy);
+        assert.deepEqual(beforeReplay.ticketProviderBindings, ticketProviderBindings);
+        yield* sql`DELETE FROM projection_projects WHERE project_id = ${projectId}`;
+        for (const persisted of persistedEvents)
+          yield* projects.apply(Schema.decodeSync(codec)(persisted));
+        assert.deepEqual(Option.getOrThrow(yield* projects.getShell(projectId)), beforeReplay);
+        assert.deepEqual(
+          (yield* projects.listShells({ projectIds: [projectId] }))[0],
+          beforeReplay,
+        );
+        yield* projects.apply({
+          ...base,
+          sequence: 4,
+          eventId: EventId.make("event-ticket-reset"),
+          type: "project.meta-updated",
+          payload: {
+            projectId,
+            ticketTitlePolicy: null,
+            ticketProviderBindings: [],
+            updatedAt: timestamp,
+          },
+        });
+        const reset = Option.getOrThrow(yield* projects.getShell(projectId));
+        assert.isNull(reset.ticketTitlePolicy);
+        assert.deepEqual(reset.ticketProviderBindings, []);
+      }),
+    );
+
     it.effect("stores a model selection without options as JSON without an options key", () =>
       Effect.gen(function* () {
         const projects = yield* ProjectStore.ProjectStoreV2;

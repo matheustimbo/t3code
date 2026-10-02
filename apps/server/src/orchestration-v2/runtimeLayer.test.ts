@@ -1,3 +1,4 @@
+import * as TicketProviderRegistry from "../ticket/TicketProviderRegistry.ts";
 import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -220,6 +221,11 @@ const TestLayer = Layer.mergeAll(
   Layer.provide(CheckpointStoreTestLayer),
   Layer.provide(ServerConfigLayer),
   Layer.provide(ServerSettings.layerTest()),
+  Layer.provide(
+    Layer.mock(TicketProviderRegistry.TicketProviderRegistry)({
+      resolve: () => Effect.die("unexpected ticket lookup"),
+    }),
+  ),
   Layer.provide(TestProviderInstanceRegistry),
   Layer.provide(GitWorkflowTestLayer),
   Layer.provide(ProjectServiceTestLayer),
@@ -232,6 +238,11 @@ const LegacyImportTestLayer = OrchestrationV2LayerLive.pipe(
   Layer.provide(CheckpointStoreTestLayer),
   Layer.provide(ServerConfigLayer),
   Layer.provide(ServerSettings.layerTest()),
+  Layer.provide(
+    Layer.mock(TicketProviderRegistry.TicketProviderRegistry)({
+      resolve: () => Effect.die("unexpected ticket lookup"),
+    }),
+  ),
   Layer.provide(TestProviderInstanceRegistry),
   Layer.provide(GitWorkflowTestLayer),
   Layer.provide(ProjectServiceTestLayer),
@@ -271,6 +282,11 @@ const ProjectDeletionTestLayer = Layer.mergeAll(
   Layer.provide(CheckpointStoreTestLayer),
   Layer.provide(ServerConfigLayer),
   Layer.provide(ServerSettings.layerTest()),
+  Layer.provide(
+    Layer.mock(TicketProviderRegistry.TicketProviderRegistry)({
+      resolve: () => Effect.die("unexpected ticket lookup"),
+    }),
+  ),
   Layer.provide(TestProviderInstanceRegistry),
   Layer.provide(GitWorkflowTestLayer),
   Layer.provide(PlatformTestLayer),
@@ -415,6 +431,11 @@ const SharedApplicationDataPlaneTestLayer = Layer.mergeAll(
   Layer.provide(CheckpointStoreTestLayer),
   Layer.provide(ServerConfigLayer),
   Layer.provide(ServerSettings.layerTest()),
+  Layer.provide(
+    Layer.mock(TicketProviderRegistry.TicketProviderRegistry)({
+      resolve: () => Effect.die("unexpected ticket lookup"),
+    }),
+  ),
   Layer.provide(TestProviderInstanceRegistry),
   Layer.provide(GitWorkflowTestLayer),
   Layer.provide(PlatformTestLayer),

@@ -1,3 +1,4 @@
+import * as TicketProviderRegistry from "../ticket/TicketProviderRegistry.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { ProjectId } from "@t3tools/contracts";
@@ -155,6 +156,11 @@ const makeRuntimeLayer = (dbPath: string) => {
     Layer.provide(checkpointStore),
     Layer.provide(serverConfig),
     Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(
+      Layer.mock(TicketProviderRegistry.TicketProviderRegistry)({
+        resolve: () => Effect.die("unexpected ticket lookup"),
+      }),
+    ),
     Layer.provide(
       Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
         getInstance: () => Effect.succeed(undefined),

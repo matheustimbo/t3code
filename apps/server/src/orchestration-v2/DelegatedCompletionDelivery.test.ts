@@ -1,3 +1,4 @@
+import * as TicketProviderRegistry from "../ticket/TicketProviderRegistry.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -135,6 +136,11 @@ const TestLayer = Layer.mergeAll(OrchestrationV2LayerLive, OrchestrationV2EventS
   Layer.provide(CheckpointStoreTestLayer),
   Layer.provide(ServerConfigLayer),
   Layer.provide(ServerSettings.layerTest()),
+  Layer.provide(
+    Layer.mock(TicketProviderRegistry.TicketProviderRegistry)({
+      resolve: () => Effect.die("unexpected ticket lookup"),
+    }),
+  ),
   Layer.provide(TestProviderInstanceRegistry),
   Layer.provide(PlatformTestLayer),
 );

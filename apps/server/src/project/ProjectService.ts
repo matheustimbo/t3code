@@ -171,6 +171,8 @@ export const make = Effect.gen(function* () {
     defaultThreadEnvMode: row.defaultThreadEnvMode,
     autoPull: row.autoPull,
     projectIcon: row.projectIcon,
+    ticketTitlePolicy: row.ticketTitlePolicy ?? null,
+    ticketProviderBindings: row.ticketProviderBindings ?? [],
     scripts: row.scripts,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,

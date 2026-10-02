@@ -1,3 +1,4 @@
+import * as TicketProviderRegistry from "../ticket/TicketProviderRegistry.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -112,6 +113,11 @@ const liveLayer = OrchestrationV2LayerLive.pipe(
   Layer.provide(checkpointStoreLayer),
   Layer.provide(serverConfigLayer),
   Layer.provide(serverSettingsLayer),
+  Layer.provide(
+    Layer.mock(TicketProviderRegistry.TicketProviderRegistry)({
+      resolve: () => Effect.die("unexpected ticket lookup"),
+    }),
+  ),
   Layer.provide(providerInstanceRegistryLayer),
   Layer.provide(ResetCreditCoordinator.layer),
   Layer.provide(backgroundPolicyLayer),

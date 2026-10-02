@@ -1,3 +1,4 @@
+import * as TicketProviderRegistry from "../ticket/TicketProviderRegistry.ts";
 /**
  * Runs OpenCode 2 through the whole orchestrator with the real driver: the
  * driver probes the binary, spawns `opencode serve`, and routes to the 2.x
@@ -210,6 +211,11 @@ const orchestrationLayer = OrchestrationV2LayerLive.pipe(
   Layer.provide(CheckpointStore.layer.pipe(Layer.provide(vcsDriverRegistryLayer))),
   Layer.provide(serverConfigLayer),
   Layer.provide(serverSettingsLayer),
+  Layer.provide(
+    Layer.mock(TicketProviderRegistry.TicketProviderRegistry)({
+      resolve: () => Effect.die("unexpected ticket lookup"),
+    }),
+  ),
   // Merged, not only provided: the test reads the same instance the orchestrator uses.
   Layer.provideMerge(providerInstanceRegistryLayer),
   Layer.provide(ResetCreditCoordinator.layer),
