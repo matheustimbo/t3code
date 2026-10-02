@@ -76,7 +76,7 @@ const verifyIssued = (issued, baseDir, ttlMs) => {
   NodeAssert.deepEqual(claims.scopes, ["orchestration:read"]);
   NodeAssert.equal(claims.exp - claims.iat, ttlMs);
   NodeAssert.equal(Date.parse(issued.expiresAt), claims.exp);
-  const db = new NodeSqlite.DatabaseSync(NodePath.join(baseDir, "userdata", "state.sqlite"), {
+  const db = new NodeSqlite.DatabaseSync(NodePath.join(baseDir, "userdata", "statev2.sqlite"), {
     readOnly: true,
   });
   try {
@@ -185,7 +185,7 @@ try {
   console.log("CHECK revoke_exact_session (exit 0)");
   NodeAssert.deepEqual(run("revoked_session_absent", ["list"], baseDir), []);
   NodeAssert.equal(NodeFS.existsSync(pending), true, "Auth revocation cleaned unrelated uploads");
-  const db = new NodeSqlite.DatabaseSync(NodePath.join(baseDir, "userdata", "state.sqlite"), {
+  const db = new NodeSqlite.DatabaseSync(NodePath.join(baseDir, "userdata", "statev2.sqlite"), {
     readOnly: true,
   });
   try {
