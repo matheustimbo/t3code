@@ -144,6 +144,8 @@ export const Project = Schema.Struct({
   projectIcon: Schema.optional(Schema.NullOr(ProjectIconOverride)),
   defaultModelSelection: Schema.NullOr(ModelSelection),
   defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
+  ticketTitlePolicy: Schema.optional(Schema.NullOr(TicketTitlePolicy)),
+  ticketProviderBindings: Schema.optional(TicketProviderBindings),
   // Opt-in because background sync performs network I/O and may move the checkout.
   autoPull: Schema.optional(Schema.Boolean),
   scripts: Schema.Array(ProjectScript),

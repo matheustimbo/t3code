@@ -16,6 +16,10 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 
+const projectEventCodec = Schema.fromJsonString(ApplicationProjectEvent);
+const encodeProjectEvent = Schema.encodeEffect(projectEventCodec);
+const decodeProjectEvent = Schema.decodeEffect(projectEventCodec);
+
 it.layer(ProjectStore.layer.pipe(Layer.provideMerge(SqlitePersistenceMemory)))(
   "ProjectStoreV2",
   (it) => {
@@ -73,16 +77,15 @@ it.layer(ProjectStore.layer.pipe(Layer.provideMerge(SqlitePersistenceMemory)))(
             payload: { projectId, title: "Renamed", updatedAt: timestamp },
           },
         ];
-        const codec = Schema.fromJsonString(ApplicationProjectEvent);
-        const persistedEvents = events.map(Schema.encodeSync(codec));
+        const persistedEvents = yield* Effect.forEach(events, (event) => encodeProjectEvent(event));
         for (const persisted of persistedEvents)
-          yield* projects.apply(Schema.decodeSync(codec)(persisted));
+          yield* projects.apply(yield* decodeProjectEvent(persisted));
         const beforeReplay = Option.getOrThrow(yield* projects.getShell(projectId));
         assert.deepEqual(beforeReplay.ticketTitlePolicy, ticketTitlePolicy);
         assert.deepEqual(beforeReplay.ticketProviderBindings, ticketProviderBindings);
         yield* sql`DELETE FROM projection_projects WHERE project_id = ${projectId}`;
         for (const persisted of persistedEvents)
-          yield* projects.apply(Schema.decodeSync(codec)(persisted));
+          yield* projects.apply(yield* decodeProjectEvent(persisted));
         assert.deepEqual(Option.getOrThrow(yield* projects.getShell(projectId)), beforeReplay);
         assert.deepEqual(
           (yield* projects.listShells({ projectIds: [projectId] }))[0],

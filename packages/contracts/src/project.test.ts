@@ -7,6 +7,8 @@ import { ProjectId } from "./baseSchemas.ts";
 import { OrchestrationProjectShell } from "./orchestrationProject.ts";
 
 import {
+  Project,
+  ProjectSnapshot,
   ProjectFaviconPath,
   ProjectIconOverride,
   ProjectReadFileError,
@@ -305,4 +307,59 @@ effectIt.effect("round-trips ticket overrides and explicit resets in project upd
     assert.isFalse("ticketTitlePolicy" in unrelated);
     assert.isFalse("ticketProviderBindings" in unrelated);
   }),
+);
+
+const decodeProject = Schema.decodeEffect(Project);
+const encodeProjectSnapshot = Schema.encodeEffect(ProjectSnapshot);
+const decodeProjectSnapshot = Schema.decodeEffect(ProjectSnapshot);
+
+effectIt.effect(
+  "preserves ticket fields in public project snapshots while accepting older projects",
+  () =>
+    Effect.gen(function* () {
+      const timestamp = "2026-01-01T00:00:00.000Z";
+      const baseline = {
+        id: ProjectId.make("tickets"),
+        title: "Tickets",
+        workspaceRoot: "/work/tickets",
+        defaultModelSelection: null,
+        scripts: [],
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        deletedAt: null,
+      };
+      const legacyProject = yield* decodeProject(baseline);
+      assert.isFalse("ticketTitlePolicy" in legacyProject);
+      assert.isFalse("ticketProviderBindings" in legacyProject);
+      const overrides = yield* decodeProjectUpdateEffect({
+        ticketTitlePolicy: { mode: "title", customTemplate: "{title}" },
+        ticketProviderBindings: [
+          { driver: "github", host: "github.com", instanceId: "github_work" },
+        ],
+      });
+      const reset = yield* decodeProject({
+        ...baseline,
+        ticketTitlePolicy: null,
+        ticketProviderBindings: [],
+      });
+      const encoded = yield* encodeProjectSnapshot({
+        projects: [
+          {
+            ...legacyProject,
+            ticketTitlePolicy: overrides.ticketTitlePolicy,
+            ticketProviderBindings: overrides.ticketProviderBindings,
+          },
+          reset,
+        ],
+        updatedAt: timestamp,
+      });
+      const snapshot = yield* decodeProjectSnapshot(encoded);
+      assert.deepEqual(snapshot.projects[0]?.ticketTitlePolicy, overrides.ticketTitlePolicy);
+      assert.deepEqual(
+        snapshot.projects[0]?.ticketProviderBindings,
+        overrides.ticketProviderBindings,
+      );
+      assert.isNull(snapshot.projects[1]?.ticketTitlePolicy);
+      assert.deepEqual(snapshot.projects[1]?.ticketProviderBindings, []);
+    }),
 );
