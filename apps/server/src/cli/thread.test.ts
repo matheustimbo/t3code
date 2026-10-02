@@ -37,6 +37,7 @@ const decodeDetail = Schema.decodeUnknownSync(OrchestrationThreadDetailSnapshot)
 const decodeCommandJson = Schema.decodeUnknownSync(
   Schema.fromJsonString(ClientOrchestrationCommand),
 );
+const encodeTestJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 const stamp = "2026-10-02T10:00:00.000Z";
 const environmentId = EnvironmentId.make("environment-fixture");
@@ -414,7 +415,7 @@ describe("remote thread CLI", () => {
           fd,
         ).pipe(Effect.flip);
         assert.equal(server.commands.length, 1);
-        assert.notInclude(JSON.stringify(error), "synthetic-fixture-credential");
+        assert.notInclude(encodeTestJson(error), "synthetic-fixture-credential");
         assert.notInclude(String(yield* TestConsole.logLines), "synthetic-fixture-credential");
       }).pipe(Effect.provide(TestConsole.layer)),
     ),
@@ -644,7 +645,7 @@ describe("remote credential boundary", () => {
       Effect.gen(function* () {
         const error = yield* validateServerOrigin(input).pipe(Effect.flip);
         assert.equal(error.code, "invalid_server");
-        assert.notInclude(JSON.stringify(error), "secret");
+        assert.notInclude(encodeTestJson(error), "secret");
       }),
     );
   }
