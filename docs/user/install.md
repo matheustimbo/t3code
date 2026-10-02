@@ -38,6 +38,98 @@ line to add. Set `T3CODE_CHANNEL=nightly` to install the nightly train, or
 
 Run `t3 --help` for the full reference.
 
+### Use a server from scripts
+
+`t3 project list` and `t3 thread list/create/send/status/wait` connect to an
+explicit server without opening an app or reading desktop credentials. Supply a
+dedicated, short-lived bearer credential through an inherited regular-file descriptor; there
+is no token argument, environment-variable fallback, automatic pairing or saved
+session. HTTPS is required except on loopback. Redirects are rejected.
+With `--json`, command data and remote errors stay on stdout as JSON; text errors
+go to stderr. Failures return a nonzero exit code.
+
+Have the environment owner supply the credential through an approved secret
+manager or a protected file. Reads need `orchestration:read`. Executing a
+mutation also needs `orchestration:operate`; neither terminal nor access
+administration scopes are needed; credentials with other scopes are rejected.
+Do not use an administrative desktop session. Cookie and DPoP sessions are not
+supported by this CLI.
+Local session issuance requires an explicit `--scope` for each permission, for
+example `t3 auth session issue --scope orchestration:read --ttl 10m`. It does not
+add administrative permissions. Capture the credential privately; never paste it
+into a chat or command argument. Session issuance writes access state on the host.
+
+These are environment-wide scopes. Selecting a project or thread in the CLI is
+a client check, not a server-enforced allowlist or filesystem sandbox. Provider
+permissions and the server machine's actual isolation still apply.
+
+Use an already supplied credential file in these examples; the commands do not
+issue credentials. Each invocation opens its descriptor afresh:
+
+```bash
+t3 project list --server https://your-host.example --token-fd 3 --json 3<"$CREDENTIAL_FILE"
+t3 thread list --server https://your-host.example --token-fd 3 --project PROJECT_ID --json 3<"$CREDENTIAL_FILE"
+```
+
+Copy the environment ID and exact workspace directory from the returned data.
+Creation previews an empty conversation in the project's current checkout,
+using its default model and `approval-required` permissions. It does not create
+a worktree or start a provider. If the project has no default model, add both
+`--instance` and `--model`. Append `--execute` only after reviewing the preview:
+
+```bash
+t3 thread create --server https://your-host.example --token-fd 3 \
+  --environment-id ENVIRONMENT_ID --project PROJECT_ID --workspace /server/project \
+  --title "Review the change" --json 3<"$CREDENTIAL_FILE"
+```
+
+`send` reads the prompt from a UTF-8 file, previews without exposing its contents,
+and requires the exact thread permissions and working directory. Add `--execute`
+to start provider work. It refuses busy or archived threads and pending decisions;
+it does not steer work, approve requests or change permissions.
+
+```bash
+t3 thread send THREAD_ID --server https://your-host.example --token-fd 3 \
+  --environment-id ENVIRONMENT_ID --project PROJECT_ID --workspace /server/project \
+  --runtime-mode approval-required --prompt-file ./prompt.txt --json 3<"$CREDENTIAL_FILE"
+t3 thread status THREAD_ID --server https://your-host.example --token-fd 3 \
+  --project PROJECT_ID --json 3<"$CREDENTIAL_FILE"
+```
+
+A dispatch receipt confirms acceptance, not provider success. Copy the `messageId`
+returned by an executed `send` and follow that message, including the interval
+before the provider starts a turn:
+
+```bash
+t3 thread wait THREAD_ID --server https://your-host.example --token-fd 3 \
+  --project PROJECT_ID --message-id MESSAGE_ID --timeout-seconds 300 --json \
+  3<"$CREDENTIAL_FILE" >result.json &
+```
+
+Use `status --message-id MESSAGE_ID` to read that request's status and output.
+An earlier completed turn is never used as its result. `wait --turn-id TURN_ID`
+also follows an exact latest turn ID obtained separately from `status`.
+
+Execution requires a server that advertises atomic thread command preconditions.
+If any environment event occurs after the CLI's checks, the server rejects the
+mutation. Read and review the new state before submitting again; the CLI does not
+retry mutations. Guarded creation is supported in project checkouts, and refuses
+automatic Scratch folder creation and worktree bootstrap.
+
+Wait polls once per second, stops for completion, interruption, error or a pending
+decision, and keeps waiting while native background work is reported. Older
+servers may omit background liveness; their turn completion does not establish
+that all background agents stopped. Its JSON
+`waitState` distinguishes those outcomes. A timeout or killing the local wait
+process does not cancel server work. If an exact turn ceases to be latest, wait
+fails. A message that never becomes the latest correlated turn times out instead
+of returning another turn's result. Message correlation requires an updated
+server. `status` reads a one-turn window when
+the server supports it; older servers may return more history. The CLI displays
+only assistant messages for the selected turn. Changed snapshot versions are
+rejected by `status` and read again by `wait`. After an uncertain transport
+failure, inspect status before deciding whether to send again.
+
 ### Intel Macs
 
 There is no `t3` executable for Intel Macs (the desktop app is available). To

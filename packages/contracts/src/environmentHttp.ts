@@ -37,6 +37,7 @@ import {
 } from "./baseSchemas.ts";
 import {
   OrchestrationV2ShellSnapshot,
+  OrchestrationV2Command,
   OrchestrationV2ThreadBoundedSnapshot,
   OrchestrationV2ThreadDetailSnapshot,
   OrchestrationV2ThreadHistoryPage,
@@ -524,6 +525,14 @@ const EnvironmentOrchestrationThreadHistoryErrors = [
 ] as const;
 
 class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestration")
+  .add(
+    HttpApiEndpoint.post("dispatch", "/api/orchestration/dispatch", {
+      headers: OrchestrationProtocolHeaders,
+      payload: OrchestrationV2Command,
+      success: Schema.Struct({ sequence: Schema.Number }),
+      error: [EnvironmentRequestInvalidError, ...EnvironmentScopedOperationErrors],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
   .add(
     HttpApiEndpoint.get("shellSnapshot", "/api/orchestration/shell", {
       headers: OrchestrationProtocolHeaders,

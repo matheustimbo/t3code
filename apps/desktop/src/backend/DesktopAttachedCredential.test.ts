@@ -83,6 +83,19 @@ describe("issueAttachedBearerToken", () => {
         "/home/u/.t3",
       ]);
       assert.include(observed.current ?? [], "--token-only");
+      const scopes = observed.current?.flatMap((argument, index, args) =>
+        argument === "--scope" ? [args[index + 1]] : [],
+      );
+      assert.deepEqual(scopes, [
+        "orchestration:read",
+        "orchestration:operate",
+        "terminal:operate",
+        "review:write",
+        "relay:read",
+        "access:read",
+        "access:write",
+        "relay:write",
+      ]);
     }),
   );
 

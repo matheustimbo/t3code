@@ -9414,6 +9414,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         threadId: commandThreadId(command),
         commandType: command.type,
         acceptedAt,
+        ...((command.type === "thread.create" || command.type === "message.dispatch") &&
+        command.preconditions !== undefined
+          ? { guardedCommand: command }
+          : {}),
         events: plan.events,
         effects: plan.effects,
         ...(plan.cancelUnsettledEffects === undefined

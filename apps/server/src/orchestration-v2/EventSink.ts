@@ -1,5 +1,6 @@
 import {
   CommandId,
+  type OrchestrationV2Command,
   type OrchestrationV2Run,
   OrchestrationV2DomainEvent,
   OrchestrationV2StoredEvent,
@@ -25,6 +26,7 @@ import { replayAndBufferProjectedLiveEvents } from "./LiveStreamBudget.ts";
 import type { UnsequencedProjectEvent } from "../persistence/Services/OrchestrationEventStore.ts";
 import { projectDomainEventForWire } from "./WireProjection.ts";
 
+import { threadCommandPreconditionFailure } from "./ThreadCommandPreconditions.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventStore from "./EventStore.ts";
@@ -122,6 +124,10 @@ export interface EventSinkV2Shape {
     readonly threadId: ThreadId;
     readonly commandType: string;
     readonly acceptedAt: DateTime.Utc;
+    readonly guardedCommand?: Extract<
+      OrchestrationV2Command,
+      { type: "thread.create" | "message.dispatch" }
+    >;
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
     readonly effects: ReadonlyArray<EffectOutbox.PendingOrchestrationEffectV2>;
     readonly cancelUnsettledEffects?: {
@@ -504,6 +510,30 @@ const baseLayer: Layer.Layer<
           if (!reserved) {
             const existing = yield* existingCommandResult(input.commandId);
             return { ...existing, committed: false as const, cancelledEffectIds: [] };
+          }
+
+          if (input.guardedCommand?.preconditions) {
+            const command = input.guardedCommand;
+            const expected = input.guardedCommand.preconditions;
+            const project = yield* projectStore.get(expected.projectId);
+            const thread = yield* projectionStore.getThreadShell(command.threadId);
+            const runs =
+              command.type === "thread.create"
+                ? []
+                : (yield* projectionStore.getThreadRecords(command.threadId, ["runs"])).runs;
+            const failure = threadCommandPreconditionFailure(command, {
+              sequence: yield* eventStore.latestApplicationSequence,
+              project: Option.getOrNull(project),
+              thread,
+              runs,
+            });
+            if (failure !== null) {
+              return yield* new EventSinkWriteError({
+                commandId: command.commandId,
+                eventCount: input.events.length,
+                cause: failure,
+              });
+            }
           }
 
           const normalized = yield* normalizeEvents(input.events);

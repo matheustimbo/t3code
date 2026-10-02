@@ -1,5 +1,6 @@
 import {
   AuthOrchestrationReadScope,
+  AuthOrchestrationOperateScope,
   EnvironmentHttpApi,
   ThreadId,
   TurnItemId,
@@ -168,6 +169,34 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
     );
 
     return handlers
+      .handle(
+        "dispatch",
+        Effect.fn("environment.orchestration.dispatch")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
+          const command = args.payload;
+          if (
+            (command.type !== "thread.create" && command.type !== "message.dispatch") ||
+            command.preconditions === undefined ||
+            (command.type === "message.dispatch" && command.attachments.length > 0)
+          ) {
+            return yield* failEnvironmentInvalidRequest("invalid_command");
+          }
+          const result = yield* threadManagement
+            .dispatch(
+              ThreadManagementService.withCreationProvenance(command, {
+                createdBy: "user",
+                creationSource: "server",
+              }),
+            )
+            .pipe(
+              Effect.catch((cause) =>
+                failEnvironmentInternal("orchestration_snapshot_failed", cause),
+              ),
+            );
+          return { sequence: result.sequence };
+        }),
+      )
       .handle(
         "shellSnapshot",
         Effect.fn("environment.orchestration.shellSnapshot")(function* (args) {
