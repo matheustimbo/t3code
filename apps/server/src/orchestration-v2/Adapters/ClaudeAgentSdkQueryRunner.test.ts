@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
-import { vi } from "vitest";
+import { vi } from "vite-plus/test";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { Query, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import {

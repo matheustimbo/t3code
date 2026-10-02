@@ -1885,6 +1885,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               providerThread: harness.providerThread,
               attemptId: RunAttemptId.make(`termination-${completed}`),
               text: "Run",
+              now: yield* DateTime.now,
             }),
           );
           const exit = yield* harness.streamExit;

@@ -88,7 +88,7 @@ describe("scoped agent process claims", () => {
       const threadId = "registry-interrupted";
       const fiber = yield* Effect.gen(function* () {
         yield* claimAgentProcessScoped({ scope: yield* Effect.scope, threadId, pid: 105 });
-        yield* Effect.never;
+        return yield* Effect.never;
       }).pipe(Effect.scoped, Effect.forkScoped({ startImmediately: true }));
       assert.equal(claimsFor(threadId)[0]?.pid, 105);
       yield* Fiber.interrupt(fiber);
