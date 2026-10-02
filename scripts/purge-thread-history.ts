@@ -73,8 +73,47 @@ export const THREAD_TABLES = [
 ] as const;
 
 function assertSafeDatabasePath(databasePath: string): void {
-  if (!NodePath.isAbsolute(databasePath) || NodePath.basename(databasePath) !== "state.sqlite") {
+  if (!NodePath.isAbsolute(databasePath)) {
     throw new Error(`Refusing unexpected database path: ${databasePath}`);
+  }
+  const resolvedPath = pathEntryExists(databasePath)
+    ? NodeFS.realpathSync(databasePath)
+    : databasePath;
+  if (
+    NodePath.basename(databasePath) === "statev2.sqlite" ||
+    NodePath.basename(resolvedPath) === "statev2.sqlite"
+  ) {
+    throw new Error(
+      "Offline thread purge does not support statev2.sqlite. V2 history, shared provider sessions, cross-thread references, and recovery require a separate purge policy.",
+    );
+  }
+  if (NodePath.basename(databasePath) !== "state.sqlite") {
+    throw new Error(`Refusing unexpected database path: ${databasePath}`);
+  }
+  const activeV2Path = [...new Set([databasePath, resolvedPath])]
+    .map((filePath) => NodePath.join(NodePath.dirname(filePath), "statev2.sqlite"))
+    .find(pathEntryExists);
+  if (activeV2Path) {
+    throw new Error(
+      `Refusing legacy state.sqlite maintenance while ${activeV2Path} exists. The legacy database is a frozen import source, and its thread files may still be used by V2. Offline thread purge does not support statev2.sqlite.`,
+    );
+  }
+  const database = new NodeSqlite.DatabaseSync(databasePath, { readOnly: true });
+  try {
+    if (
+      database
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name GLOB 'orchestration_v2_*' LIMIT 1",
+        )
+        .get() ||
+      tableHasColumn(database, "orchestration_events", "application_event_version")
+    ) {
+      throw new Error(
+        "Offline thread purge does not support an orchestration V2 database, even when named state.sqlite. V2 history, shared provider sessions, cross-thread references, and recovery require a separate purge policy.",
+      );
+    }
+  } finally {
+    database.close();
   }
 }
 
@@ -1839,7 +1878,7 @@ function runCli(): void {
   const backupPath = argument("--backup");
   if (!databasePath) {
     throw new Error(
-      "Usage: node scripts/purge-thread-history.ts --database /absolute/state.sqlite (--backup /absolute/backup.sqlite [--inactive-days 30] [--apply] | --restore | --finalize) [--report file.json]",
+      "Usage: node scripts/purge-thread-history.ts --database /absolute/state.sqlite (--backup /absolute/backup.sqlite [--inactive-days 30] [--apply] | --restore | --finalize) [--report file.json]\nOnly legacy V1 databases are supported. statev2.sqlite and its frozen state.sqlite import source are unsupported.",
     );
   }
   if (process.argv.includes("--restore")) {

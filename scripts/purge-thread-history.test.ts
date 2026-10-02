@@ -80,8 +80,119 @@ function seed(databasePath: string) {
   database.close();
 }
 
+function snapshotDirectory(directory: string) {
+  return Object.fromEntries(
+    NodeFS.readdirSync(directory, { recursive: true, encoding: "utf8" })
+      .toSorted()
+      .map((name) => {
+        const filePath = NodePath.join(directory, name);
+        const stat = NodeFS.lstatSync(filePath);
+        return [
+          name,
+          stat.isSymbolicLink()
+            ? NodeFS.readlinkSync(filePath)
+            : stat.isDirectory()
+              ? "directory"
+              : NodeFS.readFileSync(filePath).toString("hex"),
+        ];
+      }),
+  );
+}
+
+describe.each(["inventory", "purge", "restore", "finalize"] as const)(
+  "%s V2 compatibility",
+  (operation) => {
+    function run(databasePath: string, backupPath: string) {
+      if (operation === "restore") return restoreThreadPurge(databasePath);
+      if (operation === "finalize") return finalizeThreadPurge(databasePath);
+      return purgeThreadHistory({
+        databasePath,
+        backupPath,
+        inactiveDays: 30,
+        apply: operation === "purge",
+      });
+    }
+
+    it("refuses statev2.sqlite before creating or modifying maintenance artifacts", () => {
+      const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-purge-v2-test-"));
+      const databasePath = NodePath.join(root, "statev2.sqlite");
+      seed(databasePath);
+      const before = snapshotDirectory(root);
+
+      expect(() => run(databasePath, NodePath.join(root, "backups", "backup.sqlite"))).toThrow(
+        /Offline thread purge does not support statev2.sqlite/,
+      );
+      expect(snapshotDirectory(root)).toEqual(before);
+    });
+
+    it("refuses the frozen V1 import source when its V2 database exists", () => {
+      const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-purge-frozen-test-"));
+      const databasePath = NodePath.join(root, "state.sqlite");
+      seed(databasePath);
+      seed(NodePath.join(root, "statev2.sqlite"));
+      NodeFS.writeFileSync(NodePath.join(root, "server-instance.lock"), "existing lock\n");
+      const before = snapshotDirectory(root);
+
+      expect(() => run(databasePath, NodePath.join(root, "backups", "backup.sqlite"))).toThrow(
+        /Refusing legacy state.sqlite maintenance.*statev2.sqlite exists/,
+      );
+      expect(snapshotDirectory(root)).toEqual(before);
+    });
+
+    it("refuses a symlink to the frozen V1 source in another directory", () => {
+      const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-purge-v1-link-test-"));
+      const source = NodePath.join(root, "source");
+      NodeFS.mkdirSync(source);
+      seed(NodePath.join(source, "state.sqlite"));
+      seed(NodePath.join(source, "statev2.sqlite"));
+      const databasePath = NodePath.join(root, "state.sqlite");
+      NodeFS.symlinkSync(NodePath.join(source, "state.sqlite"), databasePath);
+      const before = snapshotDirectory(root);
+
+      expect(() => run(databasePath, NodePath.join(root, "backup.sqlite"))).toThrow(
+        /Refusing legacy state.sqlite maintenance/,
+      );
+      expect(snapshotDirectory(root)).toEqual(before);
+    });
+
+    it("refuses a V2 database symlinked as state.sqlite", () => {
+      const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-purge-v2-link-test-"));
+      const source = NodePath.join(root, "source");
+      NodeFS.mkdirSync(source);
+      const sourcePath = NodePath.join(source, "statev2.sqlite");
+      seed(sourcePath);
+      const databasePath = NodePath.join(root, "state.sqlite");
+      NodeFS.symlinkSync(sourcePath, databasePath);
+      const before = snapshotDirectory(root);
+
+      expect(() => run(databasePath, NodePath.join(root, "backup.sqlite"))).toThrow(
+        /Offline thread purge does not support statev2.sqlite/,
+      );
+      expect(snapshotDirectory(root)).toEqual(before);
+    });
+
+    it.each([
+      "CREATE TABLE orchestration_v2_projection_context_transfers (source_thread_id TEXT, target_thread_id TEXT)",
+      "ALTER TABLE orchestration_events ADD COLUMN application_event_version INTEGER NOT NULL DEFAULT 1",
+    ])("refuses renamed V2 schema without touching files for %s", (schema) => {
+      const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-purge-v2-schema-test-"));
+      const databasePath = NodePath.join(root, "state.sqlite");
+      seed(databasePath);
+      const database = new NodeSqlite.DatabaseSync(databasePath);
+      database.exec(schema);
+      database.close();
+      const before = snapshotDirectory(root);
+
+      expect(() => run(databasePath, NodePath.join(root, "backups", "backup.sqlite"))).toThrow(
+        /Offline thread purge does not support an orchestration V2 database/,
+      );
+      expect(snapshotDirectory(root)).toEqual(before);
+    });
+  },
+);
+
 describe("purgeThreadHistory", () => {
-  it("keeps every migration thread table covered by the purge", () => {
+  it("keeps every legacy V1 migration thread table covered by the purge", () => {
     const coveredTables = new Set([...THREAD_TABLES, ...migrationThreadTableExclusions]);
     const uncoveredTables = [
       ...new Set(migrationThreadTables().filter((table) => !coveredTables.has(table))),
@@ -249,6 +360,28 @@ describe("purgeThreadHistory", () => {
     });
     database.close();
   });
+
+  it.each([restoreThreadPurge, finalizeThreadPurge])(
+    "preserves a completed V1 purge and its recovery artifacts when V2 appears before %s",
+    (operation) => {
+      const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-purge-v2-recovery-test-"));
+      const databasePath = NodePath.join(root, "state.sqlite");
+      const backupPath = NodePath.join(root, "backup.sqlite");
+      seed(databasePath);
+      purgeThreadHistory({
+        databasePath,
+        backupPath,
+        inactiveDays: 30,
+        apply: true,
+        cleanupFiles: false,
+      });
+      seed(NodePath.join(root, "statev2.sqlite"));
+      const before = snapshotDirectory(root);
+
+      expect(() => operation(databasePath)).toThrow(/Refusing legacy state.sqlite maintenance/);
+      expect(snapshotDirectory(root)).toEqual(before);
+    },
+  );
 
   it("refuses restoration when the recorded backup hash has changed", () => {
     const root = NodeFS.mkdtempSync(
