@@ -27,6 +27,7 @@ import type { UnsequencedProjectEvent } from "../persistence/Services/Orchestrat
 import { projectDomainEventForWire } from "./WireProjection.ts";
 
 import { threadCommandPreconditionFailure } from "./ThreadCommandPreconditions.ts";
+import { CommandCommitAuthorization } from "./CommandCommitAuthorization.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventStore from "./EventStore.ts";
@@ -537,6 +538,19 @@ const baseLayer: Layer.Layer<
           }
 
           const normalized = yield* normalizeEvents(input.events);
+          const authorization = yield* CommandCommitAuthorization;
+          if (authorization?.commandId === input.commandId) {
+            yield* authorization.check.pipe(
+              Effect.mapError(
+                (cause) =>
+                  new EventSinkWriteError({
+                    commandId: input.commandId,
+                    eventCount: input.events.length,
+                    cause,
+                  }),
+              ),
+            );
+          }
           const storedEvents = yield* eventStore.append({
             commandId: input.commandId,
             events: normalized,

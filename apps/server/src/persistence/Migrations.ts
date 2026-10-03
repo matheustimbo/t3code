@@ -77,6 +77,8 @@ import Migration0057 from "./Migrations/057_PullRequestFilesViewed.ts";
 import Migration0058 from "./Migrations/058_ProjectionThreadsAutoSettleDisabledAt.ts";
 import Migration0059 from "./Migrations/059_OrchestrationV2.ts";
 import Migration0060 from "./Migrations/060_RemoveRedundantProjectionIndexes.ts";
+import Migration0061 from "./Migrations/061_ExternalReadGrants.ts";
+import Migration0062 from "./Migrations/062_ExternalControlRequests.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -149,6 +151,8 @@ export const migrationEntries = [
   [58, "ProjectionThreadsAutoSettleDisabledAt", Migration0058],
   [59, "OrchestrationV2", Migration0059],
   [60, "RemoveRedundantProjectionIndexes", Migration0060],
+  [61, "ExternalReadGrants", Migration0061],
+  [62, "ExternalControlRequests", Migration0062],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
