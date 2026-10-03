@@ -170,6 +170,81 @@ const BITBUCKET_SECRET_FIELDS = ["accessToken", "apiToken"] as const;
 
 const redactSecret = (value: string) => (value.length > 0 ? SECRET_REDACTED : "");
 
+const providerConfigSecretField = (driver: ProviderDriverKind): string | undefined =>
+  driver === "antigravity" ? "apiKey" : driver === "opencode" ? "serverPassword" : undefined;
+
+const mapProviderConfigSecret = (
+  driver: ProviderDriverKind,
+  config: unknown,
+  map: (value: string, field: string) => string,
+): unknown => {
+  const secretField = providerConfigSecretField(driver);
+  if (
+    secretField === undefined ||
+    config === null ||
+    typeof config !== "object" ||
+    Array.isArray(config)
+  ) {
+    return config;
+  }
+  return Object.fromEntries(
+    Object.entries(config).map(([field, value]) => [
+      field,
+      field === secretField && typeof value === "string" ? map(value, field) : value,
+    ]),
+  );
+};
+
+/** A client returning a password marker keeps the last confirmed server value. */
+const restoreRedactedProviderConfigSecrets = (
+  current: ServerSettings,
+  next: ServerSettings,
+): ServerSettings => ({
+  ...next,
+  providers: {
+    ...next.providers,
+    antigravity: {
+      ...next.providers.antigravity,
+      apiKey:
+        next.providers.antigravity.apiKey === SECRET_REDACTED
+          ? current.providers.antigravity.apiKey
+          : next.providers.antigravity.apiKey,
+    },
+    opencode: {
+      ...next.providers.opencode,
+      serverPassword:
+        next.providers.opencode.serverPassword === SECRET_REDACTED
+          ? current.providers.opencode.serverPassword
+          : next.providers.opencode.serverPassword,
+    },
+  },
+  providerInstances: Object.fromEntries(
+    Object.entries(next.providerInstances).map(([id, instance]) => {
+      const previous = current.providerInstances[ProviderInstanceId.make(id)];
+      const previousConfig = previous?.driver === instance.driver ? previous.config : undefined;
+      const previousEntries =
+        previousConfig !== null &&
+        typeof previousConfig === "object" &&
+        !Array.isArray(previousConfig)
+          ? Object.fromEntries(Object.entries(previousConfig))
+          : {};
+      return [
+        id,
+        {
+          ...instance,
+          config: mapProviderConfigSecret(instance.driver, instance.config, (value, field) =>
+            value === SECRET_REDACTED
+              ? typeof previousEntries[field] === "string"
+                ? previousEntries[field]
+                : ""
+              : value,
+          ),
+        },
+      ];
+    }),
+  ),
+});
+
 function redactProviderEnvironmentVariable(
   variable: ProviderInstanceEnvironmentVariable,
 ): ProviderInstanceEnvironmentVariable {
@@ -188,12 +263,13 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
   const providerInstances = Object.fromEntries(
     Object.entries(settings.providerInstances).map(([instanceId, instance]) => [
       instanceId,
-      instance.environment
-        ? {
-            ...instance,
-            environment: instance.environment.map(redactProviderEnvironmentVariable),
-          }
-        : instance,
+      {
+        ...instance,
+        config: mapProviderConfigSecret(instance.driver, instance.config, redactSecret),
+        ...(instance.environment
+          ? { environment: instance.environment.map(redactProviderEnvironmentVariable) }
+          : {}),
+      },
     ]),
   );
   const ticketProviderInstances = Object.fromEntries(
@@ -222,7 +298,25 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
     accessToken: redactSecret(settings.bitbucket.accessToken),
     apiToken: redactSecret(settings.bitbucket.apiToken),
   };
-  return { ...settings, providerInstances, ticketProviderInstances, usageLimitSources, bitbucket };
+  const providers = {
+    ...settings.providers,
+    antigravity: {
+      ...settings.providers.antigravity,
+      apiKey: redactSecret(settings.providers.antigravity.apiKey),
+    },
+    opencode: {
+      ...settings.providers.opencode,
+      serverPassword: redactSecret(settings.providers.opencode.serverPassword),
+    },
+  };
+  return {
+    ...settings,
+    providers,
+    providerInstances,
+    ticketProviderInstances,
+    usageLimitSources,
+    bitbucket,
+  };
 }
 
 export interface ServerSettingsUpdateOptions {
@@ -294,6 +388,9 @@ export class ServerSettingsService extends Context.Service<
     /** Read the current settings. */
     readonly getSettings: Effect.Effect<ServerSettings, ServerSettingsError>;
 
+    /** Read the resident, validated public snapshot without disk or secret-store access. */
+    readonly getClientSettings: Effect.Effect<ServerSettings>;
+
     /** Patch settings and persist. Returns the new full settings object. */
     readonly updateSettings: (
       patch: ServerSettingsPatch,
@@ -320,6 +417,16 @@ export class ServerSettingsService extends Context.Service<
      * snapshot and a lazily started stream must not be lost.
      */
     readonly subscribeChanges: Effect.Effect<Stream.Stream<ServerSettings>, never, Scope.Scope>;
+
+    /** Stream the same redacted projection used by getClientSettings. */
+    readonly clientChanges: Stream.Stream<ServerSettings>;
+
+    /** Acquire a public change subscription before reading its resident snapshot. */
+    readonly subscribeClientChanges: Effect.Effect<
+      Stream.Stream<ServerSettings>,
+      never,
+      Scope.Scope
+    >;
   }
 >()("t3/serverSettings/ServerSettingsService") {
   /** @deprecated Import and use `layerTest` from this module. */
@@ -341,6 +448,7 @@ const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
         : {}),
     });
     const currentSettingsRef = yield* Ref.make<ServerSettings>(initialSettings);
+    const clientSettingsRef = yield* Ref.make(yield* toClientSettings(initialSettings));
     const writeSemaphore = yield* Semaphore.make(1);
     const getSettings = Ref.get(currentSettingsRef).pipe(Effect.map(resolveTextGenerationProvider));
 
@@ -349,8 +457,17 @@ const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
     ): Effect.Effect<ServerSettings, ServerSettingsError> =>
       writeSemaphore.withPermits(1)(
         Ref.get(currentSettingsRef).pipe(
-          Effect.flatMap(update),
+          Effect.flatMap((current) =>
+            update(current).pipe(
+              Effect.map((next) => restoreRedactedProviderConfigSecrets(current, next)),
+            ),
+          ),
           Effect.flatMap(normalizeServerSettings),
+          Effect.tap((nextSettings) =>
+            toClientSettings(nextSettings).pipe(
+              Effect.flatMap((next) => Ref.set(clientSettingsRef, next)),
+            ),
+          ),
           Effect.tap((nextSettings) => Ref.set(currentSettingsRef, nextSettings)),
           Effect.map(resolveTextGenerationProvider),
         ),
@@ -360,6 +477,7 @@ const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
       start: Effect.void,
       ready: Effect.void,
       getSettings,
+      getClientSettings: Ref.get(clientSettingsRef),
       updateSettings: (patch, options) =>
         updateTestSettings((currentSettings) =>
           checkTicketProviderInstancesRevision(currentSettings, patch, options, "<memory>").pipe(
@@ -382,6 +500,8 @@ const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
         writeSemaphore.withPermits(1)(getSettings.pipe(Effect.flatMap(use))),
       streamChanges: Stream.empty,
       subscribeChanges: Effect.succeed(Stream.empty),
+      clientChanges: Stream.empty,
+      subscribeClientChanges: Effect.succeed(Stream.empty),
     } satisfies ServerSettingsService["Service"];
   });
 
@@ -495,6 +615,9 @@ function resolveTextGenerationProvider(settings: ServerSettings): ServerSettings
     ? settings
     : fallbackTextGenerationProvider(settings);
 }
+
+const toClientSettings = (settings: ServerSettings) =>
+  normalizeServerSettings(redactServerSettingsForClient(resolveTextGenerationProvider(settings)));
 
 function fallbackTextGenerationProvider(settings: ServerSettings): ServerSettings {
   // Same precedence as isModelSelectionProviderEnabled: an explicit provider
@@ -672,13 +795,22 @@ const make = Effect.gen(function* () {
   const writeSemaphore = yield* Semaphore.make(1);
   const cacheKey = "settings" as const;
   const changesPubSub = yield* PubSub.unbounded<ServerSettings>();
+  const clientChangesPubSub = yield* PubSub.unbounded<ServerSettings>();
+  const clientSettingsRef = yield* Ref.make(yield* toClientSettings(DEFAULT_SERVER_SETTINGS));
   const startedRef = yield* Ref.make(false);
   const startedDeferred = yield* Deferred.make<void, ServerSettingsError>();
   const watcherScope = yield* Scope.make("sequential");
   yield* Effect.addFinalizer(() => Scope.close(watcherScope, Exit.void));
 
+  const publishClientSettings = (settings: ServerSettings) =>
+    toClientSettings(settings).pipe(Effect.tap((next) => Ref.set(clientSettingsRef, next)));
+
   const emitChange = (settings: ServerSettings) =>
-    PubSub.publish(changesPubSub, settings).pipe(Effect.asVoid);
+    Effect.gen(function* () {
+      const clientSettings = yield* publishClientSettings(settings);
+      yield* PubSub.publish(clientChangesPubSub, clientSettings);
+      yield* PubSub.publish(changesPubSub, settings);
+    });
 
   const readConfigExists = fs.exists(settingsPath).pipe(
     Effect.mapError(
@@ -849,7 +981,7 @@ const make = Effect.gen(function* () {
 
   const settingsCache = yield* Cache.make<typeof cacheKey, ServerSettings, ServerSettingsError>({
     capacity: 1,
-    lookup: () => loadSettingsFromDisk,
+    lookup: () => loadSettingsFromDisk.pipe(Effect.tap(publishClientSettings)),
   });
 
   const getSettingsFromCache = Cache.get(settingsCache, cacheKey);
@@ -1295,7 +1427,7 @@ const make = Effect.gen(function* () {
     writeSemaphore.withPermits(1)(
       Effect.gen(function* () {
         const current = yield* getSettingsFromCache;
-        const updated = yield* update(current);
+        const updated = restoreRedactedProviderConfigSecrets(current, yield* update(current));
         const persisted = yield* persistProviderEnvironmentSecrets(current, updated);
         const next = yield* normalizeServerSettings(persisted.settings);
         const materialized = yield* Effect.uninterruptibleMask(() =>
@@ -1315,11 +1447,11 @@ const make = Effect.gen(function* () {
               yield* rollbackSecretChanges;
               return yield* Effect.failCause(writeExit.cause);
             }
+            yield* Cache.set(settingsCache, cacheKey, next);
+            yield* emitChange(next);
             return materializedExit.value;
           }),
         );
-        yield* Cache.set(settingsCache, cacheKey, next);
-        yield* emitChange(next);
         return resolveTextGenerationProvider(materialized);
       }),
     );
@@ -1404,6 +1536,7 @@ const make = Effect.gen(function* () {
   return {
     start,
     ready: Deferred.await(startedDeferred),
+    getClientSettings: Ref.get(clientSettingsRef),
     getSettings: getSettingsFromCache.pipe(
       Effect.flatMap(materializeProviderEnvironmentSecrets),
       Effect.map(resolveTextGenerationProvider),
@@ -1431,6 +1564,10 @@ const make = Effect.gen(function* () {
         Effect.map((subscription) => materializeChanges(Stream.fromSubscription(subscription))),
       );
     },
+    clientChanges: Stream.fromPubSub(clientChangesPubSub),
+    subscribeClientChanges: PubSub.subscribe(clientChangesPubSub).pipe(
+      Effect.map(Stream.fromSubscription),
+    ),
   } satisfies ServerSettingsService["Service"];
 });
 

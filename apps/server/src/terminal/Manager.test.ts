@@ -2196,11 +2196,14 @@ it.layer(
         start: Effect.void,
         ready: Effect.void,
         getSettings: Effect.fail(settingsError),
+        getClientSettings: Effect.die(settingsError),
         updateSettings: () => Effect.fail(settingsError),
         updateProviderInstance: () => Effect.fail(settingsError),
         withSettingsSnapshot: () => Effect.fail(settingsError),
         streamChanges: Stream.empty,
         subscribeChanges: Effect.succeed(Stream.empty),
+        clientChanges: Stream.empty,
+        subscribeClientChanges: Effect.succeed(Stream.empty),
       });
 
       const error = yield* TerminalManager.resolveProviderInstanceTerminalEnvironment({

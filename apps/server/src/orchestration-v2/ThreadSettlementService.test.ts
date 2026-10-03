@@ -517,12 +517,25 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     start: Effect.void,
     ready: Effect.void,
     getSettings: Ref.get(settings),
+    getClientSettings: Ref.get(settings).pipe(
+      Effect.map(ServerSettings.redactServerSettingsForClient),
+    ),
     updateSettings,
     updateProviderInstance: () => Effect.die("Unexpected provider mutation"),
     withSettingsSnapshot: (use) => Ref.get(settings).pipe(Effect.flatMap(use)),
     streamChanges: Stream.fromPubSub(settingsChanges),
     subscribeChanges: PubSub.subscribe(settingsChanges).pipe(
       Effect.map((subscription) => Stream.fromSubscription(subscription)),
+    ),
+    clientChanges: Stream.fromPubSub(settingsChanges).pipe(
+      Stream.map(ServerSettings.redactServerSettingsForClient),
+    ),
+    subscribeClientChanges: PubSub.subscribe(settingsChanges).pipe(
+      Effect.map((subscription) =>
+        Stream.fromSubscription(subscription).pipe(
+          Stream.map(ServerSettings.redactServerSettingsForClient),
+        ),
+      ),
     ),
   });
 

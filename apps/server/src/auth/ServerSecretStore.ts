@@ -10,6 +10,12 @@ import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
+import { PUBLISHING_SECRET_NAMES } from "../environment/publishingObserverProtocol.ts";
+
+export interface PublishingMutationState {
+  readonly generation: number;
+  readonly activeMutations: number;
+}
 
 const secretStoreErrorContext = {
   resource: Schema.String,
@@ -140,6 +146,9 @@ export class ServerSecretStore extends Context.Service<
   {
     /** File-backed stores expose their directory for cross-process credential leases. */
     readonly directory?: string;
+    readonly subscribePublishingMutations?: (
+      listener: (state: PublishingMutationState) => void,
+    ) => () => void;
     readonly get: (name: string) => Effect.Effect<Option.Option<Uint8Array>, SecretStoreError>;
     readonly set: (name: string, value: Uint8Array) => Effect.Effect<void, SecretStoreError>;
     readonly create: (name: string, value: Uint8Array) => Effect.Effect<void, SecretStoreError>;
@@ -168,6 +177,33 @@ export const make = Effect.gen(function* () {
         }),
     ),
   );
+
+  let publishingGeneration = 0;
+  let activePublishingMutations = 0;
+  const publishingListeners = new Set<(state: PublishingMutationState) => void>();
+  const publishingState = (): PublishingMutationState => ({
+    generation: publishingGeneration,
+    activeMutations: activePublishingMutations,
+  });
+  const notifyPublishingMutation = () => {
+    publishingGeneration += 1;
+    for (const listener of publishingListeners) listener(publishingState());
+  };
+  const publishingMutation = <A, E>(name: string, operation: Effect.Effect<A, E>) =>
+    PUBLISHING_SECRET_NAMES.some((secret) => secret === name)
+      ? Effect.acquireUseRelease(
+          Effect.sync(() => {
+            activePublishingMutations += 1;
+            notifyPublishingMutation();
+          }),
+          () => operation,
+          () =>
+            Effect.sync(() => {
+              activePublishingMutations -= 1;
+              notifyPublishingMutation();
+            }),
+        )
+      : operation;
 
   const resolveSecretPath = (name: string) => path.join(serverConfig.secretsDir, `${name}.bin`);
 
@@ -307,10 +343,17 @@ export const make = Effect.gen(function* () {
   return ServerSecretStore.of({
     directory: serverConfig.secretsDir,
     get,
-    set,
-    create,
-    getOrCreateRandom,
-    remove,
+    subscribePublishingMutations: (listener) => {
+      publishingListeners.add(listener);
+      listener(publishingState());
+      return () => {
+        publishingListeners.delete(listener);
+      };
+    },
+    set: (name, value) => publishingMutation(name, set(name, value)),
+    create: (name, value) => publishingMutation(name, create(name, value)),
+    getOrCreateRandom: (name, bytes) => publishingMutation(name, getOrCreateRandom(name, bytes)),
+    remove: (name) => publishingMutation(name, remove(name)),
   });
 });
 

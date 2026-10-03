@@ -83,6 +83,50 @@ describe("browser API CORS", () => {
 
 const fileResponseLayer = Layer.mergeAll(NodeHttpPlatform.layer, NodeServices.layer);
 
+describe("environment discovery compression", () => {
+  it.effect(
+    "keeps repeated descriptor requests uncompressed while other routes negotiate compression",
+    () =>
+      Effect.gen(function* () {
+        const descriptor = { environmentId: "test-environment", label: "environment-".repeat(200) };
+        const response = HttpServerResponse.jsonUnsafe(descriptor);
+        const appLayer = Layer.mergeAll(
+          HttpRouter.add("GET", "/.well-known/t3/environment", response),
+          HttpRouter.add("GET", "/api/compression-test", response),
+          httpCompressionLayer,
+        ).pipe(Layer.provideMerge(fileResponseLayer));
+        const services = yield* Layer.build(
+          HttpRouter.serve(appLayer, { disableListenLog: true }).pipe(
+            Layer.provideMerge(NodeHttpServer.layerTest),
+          ),
+        );
+        const client = Context.get(services, HttpClient.HttpClient);
+
+        for (const path of ["/.well-known/t3/environment", "/.well-known/t3/environment?probe=1"]) {
+          for (const encoding of ["identity", "gzip", "br", "deflate", "gzip, br, deflate"]) {
+            const result = yield* client.execute(
+              HttpClientRequest.get(path, { headers: { "accept-encoding": encoding } }),
+            );
+            expect(result.status).toBe(200);
+            expect(result.headers["content-encoding"]).toBeUndefined();
+            expect(yield* result.json).toEqual(descriptor);
+          }
+        }
+
+        for (const encoding of ["gzip", "br", "deflate"]) {
+          const result = yield* client.execute(
+            HttpClientRequest.get("/api/compression-test", {
+              headers: { "accept-encoding": encoding },
+            }),
+          );
+          expect(result.status).toBe(200);
+          expect(result.headers["content-encoding"]).toBe(encoding);
+          expect(yield* result.json).toEqual(descriptor);
+        }
+      }),
+  );
+});
+
 const makeStaticRequest = Effect.fn("HttpTest.makeStaticRequest")(function* (staticDir: string) {
   const config = yield* ServerConfig.ServerConfig;
   const fileSystem = yield* FileSystem.FileSystem;
