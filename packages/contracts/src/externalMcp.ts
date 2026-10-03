@@ -1,7 +1,29 @@
 import * as Schema from "effect/Schema";
 
-import { IsoDateTime, NonNegativeInt, ProjectId, ThreadId } from "./baseSchemas.ts";
+import { EnvironmentId, IsoDateTime, NonNegativeInt, ProjectId, ThreadId } from "./baseSchemas.ts";
 import { OrchestrationV2ShellThreadStatus } from "./orchestrationV2.ts";
+
+export const ExternalMcpTool = Schema.Literals([
+  "external_project_list",
+  "external_thread_list",
+  "external_thread_status",
+  "external_thread_messages",
+  "external_thread_create",
+  "external_thread_send",
+  "external_thread_interrupt",
+]);
+export type ExternalMcpTool = typeof ExternalMcpTool.Type;
+export const ExternalMcpDescriptor = Schema.Struct({
+  environmentId: EnvironmentId,
+  version: Schema.String,
+  protocol: Schema.Literal("2025-06-18"),
+  tools: Schema.Array(ExternalMcpTool),
+});
+export const ExternalMcpClientCall = Schema.Struct({
+  tool: ExternalMcpTool,
+  arguments: Schema.Record(Schema.String, Schema.Unknown),
+});
+export type ExternalMcpClientCall = typeof ExternalMcpClientCall.Type;
 
 export const ExternalReadPageInput = Schema.Struct({
   cursor: Schema.optional(NonNegativeInt),

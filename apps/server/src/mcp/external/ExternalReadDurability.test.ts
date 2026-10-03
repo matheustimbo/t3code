@@ -240,3 +240,58 @@ it.effect("persists revoke/revokeAll across closed and reopened fixture database
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
 );
+
+it.effect(
+  "keeps persisted grants denied locally after failed individual and revoke-all writes",
+  () =>
+    Effect.gen(function* () {
+      const store = yield* GrantStore.ExternalReadGrantStore;
+      yield* store.register(Access.grantBinding(grant));
+      yield* store.register(Access.grantBinding(nextGrant));
+      const failedWrites = GrantStore.ExternalReadGrantStore.of({
+        ...store,
+        revoke: () =>
+          Effect.fail(
+            new GrantStore.ExternalReadGrantStoreError({
+              operation: "revoke",
+              cause: "synthetic write failure",
+            }),
+          ),
+        revokeAll: () =>
+          Effect.fail(
+            new GrantStore.ExternalReadGrantStoreError({
+              operation: "revoke_all",
+              cause: "synthetic write failure",
+            }),
+          ),
+      });
+      yield* Effect.gen(function* () {
+        const access = yield* Access.ExternalReadAccess;
+        expect(yield* access.authenticate(token)).toEqual(identity);
+        yield* access.revoke(grant.id).pipe(Effect.flip);
+        expect(yield* access.authenticate(token)).toBeUndefined();
+        expect(yield* access.authenticate(nextToken)).toMatchObject({ credentialId: nextGrant.id });
+        yield* access.revokeAll.pipe(Effect.flip);
+        expect(yield* store.isActive(Access.grantBinding(nextGrant))).toBe(true);
+        expect(yield* access.authenticate(nextToken)).toBeUndefined();
+        expect(
+          yield* access.authorize(identity, "threads.list", allowed).pipe(Effect.flip),
+        ).toMatchObject({ code: "access_denied" });
+      }).pipe(
+        Effect.provide(
+          Access.layer.pipe(
+            Layer.fresh,
+            Layer.provide(Layer.succeed(GrantStore.ExternalReadGrantStore, failedWrites)),
+            Layer.provide(NodePlatformCrypto.layer),
+            Layer.provide(
+              Layer.succeed(Access.ExternalReadSettings, {
+                enabled: true,
+                grants: [],
+                persistedGrants: true,
+              }),
+            ),
+          ),
+        ),
+      );
+    }).pipe(Effect.provide(accessLayer([], true))),
+);

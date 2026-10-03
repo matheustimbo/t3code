@@ -30,6 +30,59 @@ connection. Pull request diffs and provider settings keep working after the
 previous credential expires. A failed renewal affects that request; it does not
 disconnect an otherwise healthy conversation.
 
+## Temporary external assistant access
+
+On macOS or Linux, the local owner can opt in to a separate external MCP listener:
+
+```bash
+t3 external-mcp enable --base-dir /absolute/path/to/t3-home --port 3774
+```
+
+Restart T3 after enabling or disabling it. The listener binds only `127.0.0.1`,
+with a separate catalog and credentials from the normal app and provider MCP.
+Run the client on that same machine; Tailscale alone does not reach this listener.
+The CLI requires an existing, owned T3 home and never initializes or migrates it.
+
+Choose the environment ID, one project ID, a stable principal name and an explicit
+list of tools. For example, to read project and thread metadata for ten minutes:
+
+```bash
+t3 external-mcp run --base-dir /absolute/path/to/t3-home \
+  --environment-id <environment-id> --project <project-id> --principal my-assistant \
+  --ttl-seconds 600 --tools external_project_list,external_thread_list,external_thread_status
+```
+
+The client verifies the running environment and isolated catalog. It prints a
+JSON `ready` record, then accepts one JSON call per line on stdin, such as
+`{"tool":"external_thread_list","arguments":{"projectId":"<project-id>"}}`.
+Each result is JSON on stdout. It generates a fresh bearer in memory, persists
+only its hash and policy, and revokes the grant on EOF, failure or normal signals.
+Forced termination relies on absolute expiry; expiry never renews automatically.
+The maximum lifetime is 30 minutes.
+
+The other tools are `external_thread_messages`, `external_thread_create`,
+`external_thread_send` and `external_thread_interrupt`. Creation and sending default
+to `approval-required` and `plan` ceilings. Creation must select explicit modes
+within those ceilings. Raising `--runtime-ceiling` or `--interaction-ceiling`
+authorizes more provider behavior. New sends require an idle thread. The API
+accepts local text, not attachments, context references or filesystem paths.
+Messages are paginated and bounded, with truncation flags.
+
+Mutations require a `requestKey`. Retry identical arguments with the same key and
+principal, including after restarting this client; changing input conflicts.
+Interrupt retries retain the first selected run. Legacy manually registered
+requests from before this CLI remain preserved in their earlier namespace.
+
+Use `t3 external-mcp list --base-dir ...` to inspect grant metadata and
+`t3 external-mcp revoke --base-dir ... --id <credential-id>` to revoke immediately.
+Use `t3 external-mcp disable --base-dir ...`, then restart T3, to remove the listener.
+No command changes VPN settings or publishes the port.
+
+Project scope limits these API operations. It does not sandbox the provider's
+filesystem, network or credentials; those follow the selected provider's real
+runtime policy. Local owner access and deliberate port forwarding remain separate
+trust boundaries.
+
 ## Pair over a LAN or private network
 
 Use direct pairing when the other device can reach the host's network address.
