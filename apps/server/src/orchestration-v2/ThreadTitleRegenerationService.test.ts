@@ -460,8 +460,9 @@ describe("ThreadTitleRegenerationService", () => {
   );
 });
 
-for (const outcome of ["success", "exhausted", "stale", "interrupted"] as const) {
-  it.effect(`initial title retry: ${outcome}`, () =>
+it.effect.each(["success", "exhausted", "stale", "interrupted"] as const)(
+  "initial title retry: %s",
+  (outcome) =>
     Effect.gen(function* () {
       const attempted = yield* Deferred.make<void>();
       let attempts = 0;
@@ -524,8 +525,7 @@ for (const outcome of ["success", "exhausted", "stale", "interrupted"] as const)
         else assert.isNotOk(projection.thread.titleRegeneration);
       }).pipe(Effect.provide(harness.layer));
     }),
-  );
-}
+);
 
 const ticketBindings: TicketProviderBindings = [
   {
@@ -545,7 +545,7 @@ const ticketSettings = {
 };
 const ticketMessage = "Fix https://github.com/t3tools/t3code/issues/42";
 
-for (const scenario of [
+it.effect.each([
   "project-policy",
   "global-policy",
   "disabled",
@@ -553,91 +553,89 @@ for (const scenario of [
   "failed",
   "invalid-template",
   "regenerate",
-] as const) {
-  it.effect(`ticket title: ${scenario}`, () =>
-    Effect.gen(function* () {
-      const policy: TicketTitlePolicy | null =
-        scenario === "global-policy"
-          ? null
-          : {
-              mode: scenario === "disabled" ? "disabled" : "custom",
-              customTemplate:
-                scenario === "invalid-template" ? "{unsupported}" : "{provider}: {title}",
-            };
-      const harness = makeHarness({
-        settings: ticketSettings,
-        projectFields: () => ({
-          ticketTitlePolicy: policy,
-          ticketProviderBindings: ticketBindings,
-        }),
-        ...(scenario === "failed"
-          ? {
-              resolveTicket: () =>
-                Effect.fail(
-                  new TicketProviderRegistry.TicketProviderResolveError({
-                    driver: "github",
-                    reason: "request-failed",
-                  }),
-                ),
-            }
-          : {}),
+] as const)("ticket title: %s", (scenario) =>
+  Effect.gen(function* () {
+    const policy: TicketTitlePolicy | null =
+      scenario === "global-policy"
+        ? null
+        : {
+            mode: scenario === "disabled" ? "disabled" : "custom",
+            customTemplate:
+              scenario === "invalid-template" ? "{unsupported}" : "{provider}: {title}",
+          };
+    const harness = makeHarness({
+      settings: ticketSettings,
+      projectFields: () => ({
+        ticketTitlePolicy: policy,
+        ticketProviderBindings: ticketBindings,
+      }),
+      ...(scenario === "failed"
+        ? {
+            resolveTicket: () =>
+              Effect.fail(
+                new TicketProviderRegistry.TicketProviderResolveError({
+                  driver: "github",
+                  reason: "request-failed",
+                }),
+              ),
+          }
+        : {}),
+    });
+    yield* Effect.gen(function* () {
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const service = yield* ThreadTitleRegeneration.ThreadTitleRegenerationService;
+      const threadId = yield* createThread({
+        command: `create:ticket:${scenario}`,
+        thread: `thread:ticket:${scenario}`,
       });
-      yield* Effect.gen(function* () {
-        const threads = yield* ThreadManagement.ThreadManagementService;
-        const service = yield* ThreadTitleRegeneration.ThreadTitleRegenerationService;
-        const threadId = yield* createThread({
-          command: `create:ticket:${scenario}`,
-          thread: `thread:ticket:${scenario}`,
-        });
-        const messageCommand = `message:ticket:${scenario}`;
-        yield* dispatchUserMessage({
-          command: messageCommand,
-          threadId,
-          text:
-            scenario === "ambiguous"
-              ? `${ticketMessage} and https://github.com/t3tools/t3code/issues/43`
-              : ticketMessage,
-        });
-        const requestId = yield* armRegeneration({ command: `title:ticket:${scenario}`, threadId });
-        yield* service.execute({
-          threadId,
-          requestId,
-          kind:
-            scenario === "regenerate"
-              ? { type: "regenerate" }
-              : { type: "initial", messageId: MessageId.make(`${messageCommand}:message`) },
-        });
-        const successfulTicket = scenario === "project-policy" || scenario === "global-policy";
-        const projection = yield* threads.getThreadProjection(threadId);
+      const messageCommand = `message:ticket:${scenario}`;
+      yield* dispatchUserMessage({
+        command: messageCommand,
+        threadId,
+        text:
+          scenario === "ambiguous"
+            ? `${ticketMessage} and https://github.com/t3tools/t3code/issues/43`
+            : ticketMessage,
+      });
+      const requestId = yield* armRegeneration({ command: `title:ticket:${scenario}`, threadId });
+      yield* service.execute({
+        threadId,
+        requestId,
+        kind:
+          scenario === "regenerate"
+            ? { type: "regenerate" }
+            : { type: "initial", messageId: MessageId.make(`${messageCommand}:message`) },
+      });
+      const successfulTicket = scenario === "project-policy" || scenario === "global-policy";
+      const projection = yield* threads.getThreadProjection(threadId);
+      assert.equal(
+        projection.thread.title,
+        successfulTicket
+          ? scenario === "project-policy"
+            ? "GitHub: Fix login"
+            : "Fix login"
+          : "Generated title",
+      );
+      assert.isNotOk(projection.thread.titleRegeneration);
+      assert.equal(harness.generateThreadTitle.mock.calls.length, successfulTicket ? 0 : 1);
+      const attemptedTicket =
+        successfulTicket || scenario === "failed" || scenario === "invalid-template";
+      assert.equal(harness.resolveTicket.mock.calls.length, attemptedTicket ? 1 : 0);
+      if (attemptedTicket) {
+        const input = harness.resolveTicket.mock.calls[0]?.[0];
+        assert.equal(input?.cwd, "/repo");
+        assert.deepEqual(input?.bindings, ticketBindings);
         assert.equal(
-          projection.thread.title,
-          successfulTicket
-            ? scenario === "project-policy"
-              ? "GitHub: Fix login"
-              : "Fix login"
-            : "Generated title",
+          input?.instances[TicketProviderInstanceId.make("github_work")]?.baseUrl,
+          "https://github.com",
         );
-        assert.isNotOk(projection.thread.titleRegeneration);
-        assert.equal(harness.generateThreadTitle.mock.calls.length, successfulTicket ? 0 : 1);
-        const attemptedTicket =
-          successfulTicket || scenario === "failed" || scenario === "invalid-template";
-        assert.equal(harness.resolveTicket.mock.calls.length, attemptedTicket ? 1 : 0);
-        if (attemptedTicket) {
-          const input = harness.resolveTicket.mock.calls[0]?.[0];
-          assert.equal(input?.cwd, "/repo");
-          assert.deepEqual(input?.bindings, ticketBindings);
-          assert.equal(
-            input?.instances[TicketProviderInstanceId.make("github_work")]?.baseUrl,
-            "https://github.com",
-          );
-          assert.equal(input?.reference.resourceId, "42");
-        }
-      }).pipe(Effect.provide(harness.layer));
-    }),
-  );
-}
+        assert.equal(input?.reference.resourceId, "42");
+      }
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
 
-for (const scenario of [
+it.effect.each([
   "manual-title",
   "failed-manual-title",
   "new-request",
@@ -647,100 +645,98 @@ for (const scenario of [
   "changed-instances",
   "stale-before-lookup",
   "interrupted",
-] as const) {
-  it.effect(`ticket title race: ${scenario}`, () =>
-    Effect.gen(function* () {
-      const lookupStarted = yield* Deferred.make<void>();
-      const lookupReady = yield* Deferred.make<void>();
-      let policy: TicketTitlePolicy = { mode: "title", customTemplate: "{title}" };
-      let bindings = ticketBindings;
-      const harness = makeHarness({
-        settings: ticketSettings,
-        projectFields: () => ({ ticketTitlePolicy: policy, ticketProviderBindings: bindings }),
-        resolveTicket: () =>
-          Effect.gen(function* () {
-            yield* Deferred.succeed(lookupStarted, undefined);
-            yield* Deferred.await(lookupReady);
-            if (scenario === "failed-manual-title" || scenario === "failed-new-request") {
-              return yield* new TicketProviderRegistry.TicketProviderResolveError({
-                driver: "github",
-                reason: "request-failed",
-              });
-            }
-            return {
-              title: "Fix login",
-              identifier: "#42",
-              provider: "GitHub",
-              project: "T3 Code",
-            };
-          }),
-      });
-      yield* Effect.gen(function* () {
-        const threads = yield* ThreadManagement.ThreadManagementService;
-        const service = yield* ThreadTitleRegeneration.ThreadTitleRegenerationService;
-        const threadId = yield* createThread({
-          command: `create:ticket-race:${scenario}`,
-          thread: `thread:ticket-race:${scenario}`,
-        });
-        const messageCommand = `message:ticket-race:${scenario}`;
-        yield* dispatchUserMessage({ command: messageCommand, threadId, text: ticketMessage });
-        const requestId = yield* armRegeneration({
-          command: `title:ticket-race:${scenario}`,
-          threadId,
-        });
-        const rename = () =>
-          threads.dispatch({
-            type: "thread.metadata.update",
-            commandId: CommandId.make(`manual:ticket-race:${scenario}`),
-            threadId,
-            title: "Seed title",
-          });
-        if (scenario === "stale-before-lookup") yield* rename();
-        const fiber = yield* service
-          .execute({
-            threadId,
-            requestId,
-            kind: { type: "initial", messageId: MessageId.make(`${messageCommand}:message`) },
-          })
-          .pipe(Effect.forkChild);
-        let currentRequest = requestId;
-        if (scenario !== "stale-before-lookup") {
-          yield* Deferred.await(lookupStarted);
-          if (scenario === "manual-title" || scenario === "failed-manual-title") yield* rename();
-          if (scenario === "new-request" || scenario === "failed-new-request")
-            currentRequest = yield* armRegeneration({
-              command: "title:ticket-race:newer",
-              threadId,
+] as const)("ticket title race: %s", (scenario) =>
+  Effect.gen(function* () {
+    const lookupStarted = yield* Deferred.make<void>();
+    const lookupReady = yield* Deferred.make<void>();
+    let policy: TicketTitlePolicy = { mode: "title", customTemplate: "{title}" };
+    let bindings = ticketBindings;
+    const harness = makeHarness({
+      settings: ticketSettings,
+      projectFields: () => ({ ticketTitlePolicy: policy, ticketProviderBindings: bindings }),
+      resolveTicket: () =>
+        Effect.gen(function* () {
+          yield* Deferred.succeed(lookupStarted, undefined);
+          yield* Deferred.await(lookupReady);
+          if (scenario === "failed-manual-title" || scenario === "failed-new-request") {
+            return yield* new TicketProviderRegistry.TicketProviderResolveError({
+              driver: "github",
+              reason: "request-failed",
             });
-          if (scenario === "disabled-policy") policy = { ...policy, mode: "disabled" };
-          if (scenario === "changed-bindings") bindings = [];
-          if (scenario === "changed-instances") {
-            const settings = yield* ServerSettings.ServerSettingsService;
-            yield* settings.updateSettings({ ticketProviderInstances: {} });
           }
-          if (scenario === "interrupted") yield* Fiber.interrupt(fiber);
-          else yield* Deferred.succeed(lookupReady, undefined);
+          return {
+            title: "Fix login",
+            identifier: "#42",
+            provider: "GitHub",
+            project: "T3 Code",
+          };
+        }),
+    });
+    yield* Effect.gen(function* () {
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const service = yield* ThreadTitleRegeneration.ThreadTitleRegenerationService;
+      const threadId = yield* createThread({
+        command: `create:ticket-race:${scenario}`,
+        thread: `thread:ticket-race:${scenario}`,
+      });
+      const messageCommand = `message:ticket-race:${scenario}`;
+      yield* dispatchUserMessage({ command: messageCommand, threadId, text: ticketMessage });
+      const requestId = yield* armRegeneration({
+        command: `title:ticket-race:${scenario}`,
+        threadId,
+      });
+      const rename = () =>
+        threads.dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make(`manual:ticket-race:${scenario}`),
+          threadId,
+          title: "Seed title",
+        });
+      if (scenario === "stale-before-lookup") yield* rename();
+      const fiber = yield* service
+        .execute({
+          threadId,
+          requestId,
+          kind: { type: "initial", messageId: MessageId.make(`${messageCommand}:message`) },
+        })
+        .pipe(Effect.forkChild);
+      let currentRequest = requestId;
+      if (scenario !== "stale-before-lookup") {
+        yield* Deferred.await(lookupStarted);
+        if (scenario === "manual-title" || scenario === "failed-manual-title") yield* rename();
+        if (scenario === "new-request" || scenario === "failed-new-request")
+          currentRequest = yield* armRegeneration({
+            command: "title:ticket-race:newer",
+            threadId,
+          });
+        if (scenario === "disabled-policy") policy = { ...policy, mode: "disabled" };
+        if (scenario === "changed-bindings") bindings = [];
+        if (scenario === "changed-instances") {
+          const settings = yield* ServerSettings.ServerSettingsService;
+          yield* settings.updateSettings({ ticketProviderInstances: {} });
         }
-        if (scenario !== "interrupted") yield* Fiber.join(fiber);
-        const shouldGenerate =
-          scenario === "disabled-policy" ||
-          scenario === "changed-bindings" ||
-          scenario === "changed-instances";
-        const projection = yield* threads.getThreadProjection(threadId);
-        assert.equal(projection.thread.title, shouldGenerate ? "Generated title" : "Seed title");
-        assert.equal(harness.generateThreadTitle.mock.calls.length, shouldGenerate ? 1 : 0);
-        assert.equal(
-          harness.resolveTicket.mock.calls.length,
-          scenario === "stale-before-lookup" ? 0 : 1,
-        );
-        if (
-          scenario === "new-request" ||
-          scenario === "failed-new-request" ||
-          scenario === "interrupted"
-        )
-          assert.equal(projection.thread.titleRegeneration?.requestId, currentRequest);
-        else assert.isNotOk(projection.thread.titleRegeneration);
-      }).pipe(Effect.provide(harness.layer));
-    }),
-  );
-}
+        if (scenario === "interrupted") yield* Fiber.interrupt(fiber);
+        else yield* Deferred.succeed(lookupReady, undefined);
+      }
+      if (scenario !== "interrupted") yield* Fiber.join(fiber);
+      const shouldGenerate =
+        scenario === "disabled-policy" ||
+        scenario === "changed-bindings" ||
+        scenario === "changed-instances";
+      const projection = yield* threads.getThreadProjection(threadId);
+      assert.equal(projection.thread.title, shouldGenerate ? "Generated title" : "Seed title");
+      assert.equal(harness.generateThreadTitle.mock.calls.length, shouldGenerate ? 1 : 0);
+      assert.equal(
+        harness.resolveTicket.mock.calls.length,
+        scenario === "stale-before-lookup" ? 0 : 1,
+      );
+      if (
+        scenario === "new-request" ||
+        scenario === "failed-new-request" ||
+        scenario === "interrupted"
+      )
+        assert.equal(projection.thread.titleRegeneration?.requestId, currentRequest);
+      else assert.isNotOk(projection.thread.titleRegeneration);
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);

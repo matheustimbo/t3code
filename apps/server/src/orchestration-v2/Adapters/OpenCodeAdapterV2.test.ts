@@ -240,37 +240,39 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
 });
 
 describe("OpenCodeAdapterV2", () => {
-  for (const local of [false, true]) {
-    it.effect(`tracks process ownership for ${local ? "local" : "external"} connections`, () =>
-      Effect.gen(function* () {
-        const scope = yield* Scope.make();
-        const nativeEvents = asyncEventStream();
-        const harness = yield* makeOpenCodeRuntimeHarness(
-          `ownership-${local}`,
-          "root",
-          {
-            event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
-            session: {
-              create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
-              children: async () => ({ data: [] }),
-            },
+  it.effect.each([
+    { local: false, connection: "external" },
+    { local: true, connection: "local" },
+  ])("tracks process ownership for $connection connections", ({ local }) =>
+    Effect.gen(function* () {
+      const scope = yield* Scope.make();
+      const nativeEvents = asyncEventStream();
+      const harness = yield* makeOpenCodeRuntimeHarness(
+        `ownership-${local}`,
+        "root",
+        {
+          event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+          session: {
+            create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+            children: async () => ({ data: [] }),
           },
-          { external: !local, ...(local ? { pid: 8123 } : {}) },
-        ).pipe(Effect.provideService(Scope.Scope, scope));
-        const claims = () =>
-          readThreadProcessClaims().filter((claim) => claim.threadId === harness.threadId);
-        assert.deepEqual(
-          claims(),
-          local ? [{ threadId: harness.threadId, kind: "agent", pid: 8123 }] : [],
-        );
-        yield* Scope.close(scope, Exit.void);
-        assert.deepEqual(claims(), []);
-      }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
-    );
-  }
+        },
+        { external: !local, ...(local ? { pid: 8123 } : {}) },
+      ).pipe(Effect.provideService(Scope.Scope, scope));
+      const claims = () =>
+        readThreadProcessClaims().filter((claim) => claim.threadId === harness.threadId);
+      assert.deepEqual(
+        claims(),
+        local ? [{ threadId: harness.threadId, kind: "agent", pid: 8123 }] : [],
+      );
+      yield* Scope.close(scope, Exit.void);
+      assert.deepEqual(claims(), []);
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
 
-  for (const ending of ["completed", "failed", "unresolved", "unavailable", "reconnect"] as const) {
-    it.effect(`normalizes OpenCode step usage for ${ending} turns`, () =>
+  it.effect.each(["completed", "failed", "unresolved", "unavailable", "reconnect"] as const)(
+    "normalizes OpenCode step usage for %s turns",
+    (ending) =>
       Effect.gen(function* () {
         const nativeEvents = asyncEventStream();
         let promptId = "";
@@ -407,11 +409,11 @@ describe("OpenCodeAdapterV2", () => {
               },
         );
       }).pipe(Effect.provide(IdAllocator.layer), Effect.scoped),
-    );
-  }
+  );
 
-  for (const kind of ["permission", "question"] as const) {
-    it.effect(`cancels an undelivered ${kind} reply at its deadline`, () =>
+  it.effect.each(["permission", "question"] as const)(
+    "cancels an undelivered %s reply at its deadline",
+    (kind) =>
       Effect.gen(function* () {
         const nativeEvents = asyncEventStream();
         const called = promiseGate<void>();
@@ -485,8 +487,7 @@ describe("OpenCodeAdapterV2", () => {
         // Failed delivery leaves the request available for an explicit retry.
         yield* harness.runtime.respondToRuntimeRequest(response);
       }).pipe(Effect.provide(IdAllocator.layer), Effect.scoped),
-    );
-  }
+  );
 
   it.effect("aborts external root and descendants before closing the event stream", () =>
     Effect.gen(function* () {
@@ -526,8 +527,9 @@ describe("OpenCodeAdapterV2", () => {
     }).pipe(Effect.provide(IdAllocator.layer), Effect.scoped),
   );
 
-  for (const failure of ["enumeration", "abort", "not-found", "timeout"] as const) {
-    it.effect(`reports descendant cleanup ${failure}`, () =>
+  it.effect.each(["enumeration", "abort", "not-found", "timeout"] as const)(
+    "reports descendant cleanup %s",
+    (failure) =>
       Effect.gen(function* () {
         const nativeEvents = asyncEventStream();
         const called = promiseGate<void>();
@@ -577,8 +579,7 @@ describe("OpenCodeAdapterV2", () => {
         assert.equal(Exit.isSuccess(result), failure === "not-found");
         if (failure === "timeout") assert.isTrue(childSignal?.aborted);
       }).pipe(Effect.provide(IdAllocator.layer), Effect.scoped),
-    );
-  }
+  );
 
   it.effect(
     "preserves tool lifecycle, approval kinds, and late assistant text without cached tool payloads",

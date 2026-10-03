@@ -96,50 +96,48 @@ describe("ACP runtime process claims", () => {
     ),
   );
 
-  for (const owned of [false, true]) {
-    it.effect(
-      `registers captured process ownership for ${owned ? "a thread runtime" : "an unowned probe"}`,
-      () =>
-        Effect.gen(function* () {
-          const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-          const captured = yield* Deferred.make<ChildProcessSpawner.ChildProcessHandle>();
-          const captureSpawner = ChildProcessSpawner.make((command) =>
-            spawner.spawn(command).pipe(Effect.tap((handle) => Deferred.succeed(captured, handle))),
-          );
-          const scope = yield* Scope.make();
-          yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
-          const threadId = `acp-captured-${owned}`;
-          const runtime = yield* AcpSessionRuntime.make({
-            ...(owned ? { owner: { threadId } } : {}),
-            cwd: process.cwd(),
-            clientInfo: { name: "ownership-test", version: "0.0.0" },
-            authMethodId: "test",
-            spawn: {
-              command: process.execPath,
-              args: [
-                new URL(
-                  "../../../../../packages/effect-acp/test/fixtures/acp-mock-peer.ts",
-                  import.meta.url,
-                ).pathname,
-              ],
-              cwd: process.cwd(),
-            },
-          }).pipe(
-            Effect.provideService(Scope.Scope, scope),
-            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, captureSpawner),
-          );
-          const handle = yield* Deferred.await(captured);
-          const claims = () =>
-            readThreadProcessClaims().filter((claim) => claim.threadId === threadId);
-          assert.deepEqual(
-            claims(),
-            owned ? [{ threadId, kind: "agent", pid: Number(handle.pid) }] : [],
-          );
-          yield* runtime.start();
-          yield* Scope.close(scope, Exit.void);
-          assert.isFalse(yield* handle.isRunning);
-          assert.deepEqual(claims(), []);
-        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-    );
-  }
+  it.effect.each([
+    { owned: false, kind: "an unowned probe" },
+    { owned: true, kind: "a thread runtime" },
+  ])("registers captured process ownership for $kind", ({ owned }) =>
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const captured = yield* Deferred.make<ChildProcessSpawner.ChildProcessHandle>();
+      const captureSpawner = ChildProcessSpawner.make((command) =>
+        spawner.spawn(command).pipe(Effect.tap((handle) => Deferred.succeed(captured, handle))),
+      );
+      const scope = yield* Scope.make();
+      yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+      const threadId = `acp-captured-${owned}`;
+      const runtime = yield* AcpSessionRuntime.make({
+        ...(owned ? { owner: { threadId } } : {}),
+        cwd: process.cwd(),
+        clientInfo: { name: "ownership-test", version: "0.0.0" },
+        authMethodId: "test",
+        spawn: {
+          command: process.execPath,
+          args: [
+            new URL(
+              "../../../../../packages/effect-acp/test/fixtures/acp-mock-peer.ts",
+              import.meta.url,
+            ).pathname,
+          ],
+          cwd: process.cwd(),
+        },
+      }).pipe(
+        Effect.provideService(Scope.Scope, scope),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, captureSpawner),
+      );
+      const handle = yield* Deferred.await(captured);
+      const claims = () => readThreadProcessClaims().filter((claim) => claim.threadId === threadId);
+      assert.deepEqual(
+        claims(),
+        owned ? [{ threadId, kind: "agent", pid: Number(handle.pid) }] : [],
+      );
+      yield* runtime.start();
+      yield* Scope.close(scope, Exit.void);
+      assert.isFalse(yield* handle.isRunning);
+      assert.deepEqual(claims(), []);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
 });

@@ -461,35 +461,33 @@ describe("remote thread CLI", () => {
     { name: "pending decision", changes: { hasActionableProposedPlan: true } },
     { name: "archived", changes: { archivedAt: DateTime.makeUnsafe(stamp) } },
   ];
-  for (const { name, changes } of refusals) {
-    it.effect(`refuses ${name} threads without dispatching`, () =>
-      withFiles(({ fd, prompt }) =>
-        Effect.gen(function* () {
-          const snapshot = decodeShell({
-            ...shell,
-            threads: shell.threads.map((thread) => ({ ...thread, ...changes })),
-          });
-          const server = fixture({ snapshot });
-          yield* runCli(
-            [
-              "thread",
-              "send",
-              threadId,
-              ...mutationFlags,
-              "--runtime-mode",
-              "approval-required",
-              "--prompt-file",
-              prompt,
-              "--execute",
-            ],
-            server,
-            fd,
-          ).pipe(Effect.flip);
-          assert.deepEqual(server.commands, []);
-        }).pipe(Effect.provide(TestConsole.layer)),
-      ),
-    );
-  }
+  it.effect.each(refusals)("refuses $name threads without dispatching", ({ changes }) =>
+    withFiles(({ fd, prompt }) =>
+      Effect.gen(function* () {
+        const snapshot = decodeShell({
+          ...shell,
+          threads: shell.threads.map((thread) => ({ ...thread, ...changes })),
+        });
+        const server = fixture({ snapshot });
+        yield* runCli(
+          [
+            "thread",
+            "send",
+            threadId,
+            ...mutationFlags,
+            "--runtime-mode",
+            "approval-required",
+            "--prompt-file",
+            prompt,
+            "--execute",
+          ],
+          server,
+          fd,
+        ).pipe(Effect.flip);
+        assert.deepEqual(server.commands, []);
+      }).pipe(Effect.provide(TestConsole.layer)),
+    ),
+  );
 
   it.effect("refuses a thread in a different project before reading its content", () =>
     withFiles(({ fd }) =>
@@ -576,7 +574,7 @@ describe("remote thread CLI", () => {
     ),
   );
 
-  for (const options of [
+  it.effect.each([
     { sessionMethod: "browser-session-cookie" as const },
     { sessionMethod: "dpop-access-token" as const },
     { policy: "unsafe-no-auth" as const },
@@ -586,18 +584,16 @@ describe("remote thread CLI", () => {
         "terminal:operate",
       ] satisfies ReadonlyArray<AuthEnvironmentScope>,
     },
-  ]) {
-    it.effect(`refuses unsupported authentication ${JSON.stringify(options)}`, () =>
-      withFiles(({ fd }) =>
-        Effect.gen(function* () {
-          const server = fixture(options);
-          yield* runCli(["project", "list"], server, fd).pipe(Effect.flip);
-          assert.equal(server.requests.length, 2);
-          assert.deepEqual(server.commands, []);
-        }).pipe(Effect.provide(TestConsole.layer)),
-      ),
-    );
-  }
+  ])("refuses unsupported authentication %j", (options) =>
+    withFiles(({ fd }) =>
+      Effect.gen(function* () {
+        const server = fixture(options);
+        yield* runCli(["project", "list"], server, fd).pipe(Effect.flip);
+        assert.equal(server.requests.length, 2);
+        assert.deepEqual(server.commands, []);
+      }).pipe(Effect.provide(TestConsole.layer)),
+    ),
+  );
 
   it.effect("refuses runtime mismatch even with a matching workspace", () =>
     withFiles(({ fd, prompt }) =>
@@ -626,22 +622,20 @@ describe("remote thread CLI", () => {
 });
 
 describe("remote credential boundary", () => {
-  for (const input of [
+  it.effect.each([
     "https://user:password@fixture.invalid",
     "http://fixture.invalid",
     "https://fixture.invalid/path",
     "https://fixture.invalid/?token=secret",
     "https://fixture.invalid/#secret",
     "not a URL",
-  ]) {
-    it.effect(`rejects unsafe server input ${input}`, () =>
-      Effect.gen(function* () {
-        const error = yield* validateServerOrigin(input).pipe(Effect.flip);
-        assert.equal(error.code, "invalid_server");
-        assert.notInclude(encodeTestJson(error), "secret");
-      }),
-    );
-  }
+  ])("rejects unsafe server input %s", (input) =>
+    Effect.gen(function* () {
+      const error = yield* validateServerOrigin(input).pipe(Effect.flip);
+      assert.equal(error.code, "invalid_server");
+      assert.notInclude(encodeTestJson(error), "secret");
+    }),
+  );
   it.effect("accepts HTTPS and loopback origins", () =>
     Effect.gen(function* () {
       assert.equal(
@@ -661,20 +655,21 @@ describe("remote credential boundary", () => {
       (fd) => Effect.sync(() => NodeFS.closeSync(fd)),
     ),
   );
-  for (const credential of ["", "embedded whitespace", "x".repeat(9000)]) {
-    it.effect(
-      `rejects malformed credential of length ${credential.length} without exposing it`,
-      () =>
-        withFiles(
-          ({ fd }) =>
-            Effect.gen(function* () {
-              const error = yield* readCredential(fd).pipe(Effect.flip);
-              assert.equal(error.code, "credential_input");
-            }),
-          credential,
-        ),
-    );
-  }
+  it.effect.each(
+    ["", "embedded whitespace", "x".repeat(9000)].map((credential) => ({
+      credential,
+      length: credential.length,
+    })),
+  )("rejects malformed credential of length $length without exposing it", ({ credential }) =>
+    withFiles(
+      ({ fd }) =>
+        Effect.gen(function* () {
+          const error = yield* readCredential(fd).pipe(Effect.flip);
+          assert.equal(error.code, "credential_input");
+        }),
+      credential,
+    ),
+  );
   const completed = decodeBounded({
     snapshotSequence: 1,
     historyCursor: null,
@@ -757,8 +752,9 @@ describe("remote credential boundary", () => {
     })),
   });
   const detailJson = encodeBounded(completed);
-  for (const command of ["status", "wait"]) {
-    it.effect(`${command} returns only output correlated to the exact submitted message`, () =>
+  it.effect.each(["status", "wait"])(
+    "%s returns only output correlated to the exact submitted message",
+    (command) =>
       withFiles(({ fd }) =>
         Effect.gen(function* () {
           const server = fixture({ snapshot: completedShell, detail: detailJson });
@@ -782,8 +778,7 @@ describe("remote credential boundary", () => {
           if (command === "wait") assert.include(output, '"waitState":"completed"');
         }).pipe(Effect.provide(TestConsole.layer)),
       ),
-    );
-  }
+  );
   it.effect("refuses to equate an idle thread with completion of another run", () =>
     withFiles(({ fd }) =>
       Effect.gen(function* () {
