@@ -25,6 +25,7 @@ import {
   modelSelection,
 } from "./controlTestSupport.ts";
 
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const createInput = {
   projectId: allowed,
   requestKey: "create-fixture",
@@ -481,4 +482,50 @@ it.effect.each([
       const result = yield* Schema.decodeUnknownEffect(schema)(input).pipe(Effect.exit);
       expect(result._tag).toBe("Failure");
     }),
+);
+
+it.effect("bounds message pages across both MCP representations without skipping cursors", () =>
+  Effect.gen(function* () {
+    yield* seed;
+    const service = yield* Control.ExternalControlService;
+    const sql = yield* SqlClient.SqlClient;
+    const { threadId } = yield* service.create(controlIdentity, {
+      ...createInput,
+      requestKey: "bounded-page",
+    });
+    const text = "\u0001".repeat(45000);
+    const payload = encodeJson({ text });
+    for (let index = 0; index < 5; index++)
+      yield* sql`
+      INSERT INTO orchestration_v2_projection_messages
+        (message_id, thread_id, role, streaming, created_at, updated_at, payload_json)
+      VALUES (${`large-${index}`}, ${threadId}, 'assistant', 0,
+        '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', ${payload})
+    `;
+    const pages = [];
+    let cursor = 0;
+    do {
+      const page = yield* service.messages(controlIdentity, {
+        projectId: allowed,
+        threadId,
+        cursor,
+      });
+      expect(page.total).toBe(5);
+      expect(page.items.length).toBeLessThanOrEqual(2);
+      expect(page.items.every((message) => message.text === text && !message.truncated)).toBe(true);
+      const encoded = encodeJson(page);
+      expect(
+        Buffer.byteLength(
+          encodeJson({
+            structuredContent: page,
+            content: [{ type: "text", text: encoded }],
+          }),
+        ),
+      ).toBeLessThan(2 * 1024 * 1024);
+      pages.push(...page.items.map((message) => message.id));
+      if (page.nextCursor === null) break;
+      cursor = page.nextCursor;
+    } while (true);
+    expect(pages).toEqual(["large-0", "large-1", "large-2", "large-3", "large-4"]);
+  }).pipe(Effect.provide(controlLayer())),
 );

@@ -153,13 +153,18 @@ const make = Effect.gen(function* () {
     encoded: string,
   ) {
     const state = yield* check(identity, operation, input);
+    // The local owner can renew a temporary grant without changing the request's
+    // durable identity. This namespace is never used as an authentication ID.
+    // Pre-provisioning ledger entries remain intact in their legacy namespace.
+    const requestScope = `principal:${yield* hash(encodeStrings([identity.principalId]))}`;
     const keyHash = yield* hash(
-      encodeStrings([environmentId, identity.credentialId, identity.principalId, input.requestKey]),
+      encodeStrings([environmentId, requestScope, identity.principalId, input.requestKey]),
     );
     const requestHash = yield* hash(encodeStrings([operation, encoded]));
     const reserved = yield* store.reserve({
       environmentId,
-      ...identity,
+      requestNamespace: requestScope,
+      principalId: identity.principalId,
       requestKey: input.requestKey,
       requestHash,
       commandId: CommandId.make(`external:${keyHash}`),

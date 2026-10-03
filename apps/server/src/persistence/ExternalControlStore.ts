@@ -42,7 +42,7 @@ const State = Schema.Struct({
 export type ExternalControlThreadState = typeof State.Type;
 export interface ExternalControlRequest {
   readonly environmentId: EnvironmentId;
-  readonly credentialId: string;
+  readonly requestNamespace: string;
   readonly principalId: string;
   readonly requestKey: string;
   readonly requestHash: string;
@@ -144,14 +144,27 @@ const make = Effect.gen(function* () {
         ORDER BY m.created_at ASC, m.message_id ASC LIMIT ${limit} OFFSET ${cursor}
       `;
             const total = count[0]?.total ?? 0;
-            return yield* decodeMessages({
-              items: rows.map((row) => ({
+            // MCP carries both text and structuredContent. Bound the aggregate,
+            // including worst-case JSON escapes, below the local client's cap.
+            // Advance by returned rows so stopping early never skips a message.
+            let remaining = 131072;
+            const items = [];
+            for (const row of rows) {
+              if (remaining === 0) break;
+              if (row.text.length > remaining && items.length > 0) break;
+              const text = row.text.slice(0, remaining);
+              remaining -= text.length;
+              items.push({
                 ...row,
-                truncated: row.truncated === 1,
+                text,
+                truncated: row.truncated === 1 || text.length < row.text.length,
                 streaming: row.streaming === 1,
-              })),
+              });
+            }
+            return yield* decodeMessages({
+              items,
               total,
-              nextCursor: cursor + rows.length < total ? cursor + rows.length : null,
+              nextCursor: cursor + items.length < total ? cursor + items.length : null,
             });
           }),
         )
@@ -163,7 +176,7 @@ const make = Effect.gen(function* () {
             yield* sql`
         INSERT INTO external_control_requests
           (environment_id,credential_id,principal_id,request_key,request_hash,command_id,thread_id,run_id)
-        VALUES (${input.environmentId},${input.credentialId},${input.principalId},${input.requestKey},
+        VALUES (${input.environmentId},${input.requestNamespace},${input.principalId},${input.requestKey},
           ${input.requestHash},${input.commandId},${input.threadId},${input.runId})
         ON CONFLICT DO NOTHING
       `;
@@ -177,7 +190,7 @@ const make = Effect.gen(function* () {
             }>`
         SELECT request_hash,principal_id,command_id,thread_id,run_id,result_json
         FROM external_control_requests WHERE environment_id = ${input.environmentId}
-          AND credential_id = ${input.credentialId} AND request_key = ${input.requestKey}
+          AND credential_id = ${input.requestNamespace} AND request_key = ${input.requestKey}
       `;
             const row = rows[0];
             if (
@@ -206,7 +219,7 @@ const make = Effect.gen(function* () {
     complete: (input, result) =>
       sql`
       UPDATE external_control_requests SET result_json = COALESCE(result_json, ${encodeResult(result)})
-      WHERE environment_id = ${input.environmentId} AND credential_id = ${input.credentialId}
+      WHERE environment_id = ${input.environmentId} AND credential_id = ${input.requestNamespace}
         AND principal_id = ${input.principalId} AND request_key = ${input.requestKey}
         AND request_hash = ${input.requestHash} RETURNING command_id
     `.pipe(

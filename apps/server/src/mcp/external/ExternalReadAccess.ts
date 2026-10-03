@@ -51,6 +51,7 @@ export const ExternalReadGrant = Schema.Struct({
 });
 export type ExternalReadGrant = typeof ExternalReadGrant.Type;
 const decodeGrants = Schema.decodeEffect(Schema.Array(ExternalReadGrant));
+const decodeStoredGrant = Schema.decodeUnknownEffect(Schema.fromJsonString(ExternalReadGrant));
 const encodeGrant = Schema.encodeSync(Schema.fromJsonString(ExternalReadGrant));
 
 /** Canonical binding of all policy fields. Configuration alone never registers it. */
@@ -68,6 +69,8 @@ export const grantBinding = (grant: ExternalReadGrant): GrantStore.ExternalReadG
 export class ExternalReadSettings extends Context.Reference<{
   readonly enabled: boolean;
   readonly grants: ReadonlyArray<ExternalReadGrant>;
+  /** Production grants are explicitly registered by the local owner CLI. */
+  readonly persistedGrants?: boolean;
 }>("t3/mcp/external/ExternalReadSettings", {
   defaultValue: () => ({ enabled: false, grants: [] }),
 }) {}
@@ -149,11 +152,34 @@ const make = Effect.gen(function* () {
     return yield* new InvalidExternalReadPolicy({ reason: "duplicate_grants" });
   }
   const revoked = yield* Ref.make<ReadonlySet<string>>(new Set());
+  const denyAll = yield* Ref.make(false);
+  const persistedGrant = Effect.fn("ExternalReadAccess.persistedGrant")(function* (
+    field: "credential_id" | "token_hash",
+    value: string,
+  ) {
+    if (!settings.persistedGrants) return undefined;
+    const row = yield* store
+      .find(environmentId, field, value)
+      .pipe(Effect.mapError((cause) => new ExternalReadCredentialError({ cause })));
+    if (row === undefined) return undefined;
+    const grant = yield* decodeStoredGrant(row.policyJson).pipe(
+      Effect.orElseSucceed(() => undefined),
+    );
+    if (grant === undefined) return undefined;
+    const binding = grantBinding(grant);
+    return binding.environmentId === row.environmentId &&
+      binding.credentialId === row.credentialId &&
+      binding.tokenHash === row.tokenHash &&
+      binding.policyJson === row.policyJson
+      ? grant
+      : undefined;
+  });
   const validGrant = Effect.fn("ExternalReadAccess.validGrant")(function* (id: string) {
-    const grant = byId.get(id);
+    const grant = byId.get(id) ?? (yield* persistedGrant("credential_id", id));
     const timestamp = yield* Clock.currentTimeMillis;
     if (
       !enabled ||
+      (yield* Ref.get(denyAll)) ||
       grant === undefined ||
       (yield* Ref.get(revoked)).has(id) ||
       grant.environmentId !== environmentId ||
@@ -163,7 +189,7 @@ const make = Effect.gen(function* () {
     ) {
       return undefined;
     }
-    const binding = bindings.get(id);
+    const binding = bindings.get(id) ?? grantBinding(grant);
     const active =
       binding === undefined
         ? false
@@ -173,6 +199,7 @@ const make = Effect.gen(function* () {
     const afterRead = yield* Clock.currentTimeMillis;
     if (
       !active ||
+      (yield* Ref.get(denyAll)) ||
       (yield* Ref.get(revoked)).has(id) ||
       afterRead < grant.notBefore ||
       afterRead >= grant.expiresAt
@@ -190,7 +217,7 @@ const make = Effect.gen(function* () {
       .digest("SHA-256", new TextEncoder().encode(token))
       .pipe(Effect.mapError((cause) => new ExternalReadCredentialError({ cause })));
     const hash = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
-    const candidate = byHash.get(hash);
+    const candidate = byHash.get(hash) ?? (yield* persistedGrant("token_hash", hash));
     if (candidate === undefined) return undefined;
     const grant = yield* validGrant(candidate.id);
     return grant === undefined || grant.audience !== audience
@@ -229,7 +256,7 @@ const make = Effect.gen(function* () {
         yield* store.revoke(environmentId, id, yield* Clock.currentTimeMillis);
       }),
     revokeAll: Effect.gen(function* () {
-      yield* Ref.set(revoked, new Set(byId.keys()));
+      yield* Ref.set(denyAll, true);
       yield* store.revokeAll(environmentId, yield* Clock.currentTimeMillis);
     }),
   });

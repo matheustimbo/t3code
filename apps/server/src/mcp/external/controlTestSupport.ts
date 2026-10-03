@@ -53,7 +53,7 @@ const adapter = {
   planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" as const }),
   openSession: () => Effect.die("External controller fixtures never start providers"),
 } as ProviderAdapterV2Shape;
-const nativeLayerFor = (
+export const nativeLayerFor = (
   database: ReturnType<typeof makeSqlitePersistenceLive> = SqlitePersistenceMemory,
 ) =>
   makeOrchestratorV2ReplayLayerWithRegistry(

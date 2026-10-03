@@ -63,7 +63,6 @@ const enabledLayer = McpServer.toolkit(ExternalReadToolkit).pipe(
   Layer.provide(ExternalReadAccess.layer.pipe(Layer.provide(GrantStore.layer))),
 );
 
-// No production provisioning/configuration path exists in this first stage.
 // A distinct transport instance keeps native provider tools outside this catalog.
 export const layer = Layer.unwrap(
   Effect.map(ExternalReadAccess.ExternalReadSettings, (settings) =>

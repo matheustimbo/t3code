@@ -45,6 +45,17 @@ export class ExternalReadGrantStore extends Context.Service<
     readonly isActive: (
       binding: ExternalReadGrantBinding,
     ) => Effect.Effect<boolean, ExternalReadGrantStoreError>;
+    readonly find: (
+      environmentId: EnvironmentId,
+      field: "credential_id" | "token_hash",
+      value: string,
+    ) => Effect.Effect<ExternalReadGrantBinding | undefined, ExternalReadGrantStoreError>;
+    readonly list: (
+      environmentId: EnvironmentId,
+    ) => Effect.Effect<
+      ReadonlyArray<ExternalReadGrantBinding & { readonly revokedAt: number | null }>,
+      ExternalReadGrantStoreError
+    >;
     readonly revoke: (
       environmentId: EnvironmentId,
       credentialId: string,
@@ -61,6 +72,29 @@ const decodeTimestamp = Schema.decodeEffect(NonNegativeInt);
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   return ExternalReadGrantStore.of({
+    find: (environmentId, field, value) =>
+      sql<{
+        environmentId: EnvironmentId;
+        credentialId: string;
+        tokenHash: string;
+        policyJson: string;
+      }>`
+        SELECT environment_id AS "environmentId", credential_id AS "credentialId",
+          token_hash AS "tokenHash", policy_json AS "policyJson"
+        FROM external_read_grants
+        WHERE environment_id = ${environmentId} AND ${sql(field)} = ${value} AND revoked_at IS NULL
+      `.pipe(
+        Effect.map((rows) => rows[0]),
+        Effect.mapError((cause) => new ExternalReadGrantStoreError({ operation: "read", cause })),
+      ),
+    list: (environmentId) =>
+      sql<ExternalReadGrantBinding & { revokedAt: number | null }>`
+        SELECT environment_id AS "environmentId", credential_id AS "credentialId",
+          token_hash AS "tokenHash", policy_json AS "policyJson", revoked_at AS "revokedAt"
+        FROM external_read_grants WHERE environment_id = ${environmentId} ORDER BY credential_id
+      `.pipe(
+        Effect.mapError((cause) => new ExternalReadGrantStoreError({ operation: "read", cause })),
+      ),
     register: (binding) =>
       sql`
       INSERT INTO external_read_grants (environment_id, credential_id, token_hash, policy_json)
