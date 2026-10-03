@@ -239,6 +239,9 @@ export class Keybindings extends Context.Service<
      */
     readonly getSnapshot: Effect.Effect<KeybindingsConfigState, KeybindingsConfigError>;
 
+    /** Last successfully loaded state, safe for connection bootstrap during filesystem stalls. */
+    readonly getResidentConfigState: Effect.Effect<KeybindingsConfigState>;
+
     /**
      * Stream of keybindings config change events.
      */
@@ -270,12 +273,19 @@ const make = Effect.gen(function* () {
   const upsertSemaphore = yield* Semaphore.make(1);
   const resolvedConfigCacheKey = "resolved" as const;
   const changesPubSub = yield* PubSub.unbounded<KeybindingsChangeEvent>();
+  const residentConfigState = yield* Ref.make<KeybindingsConfigState>({
+    keybindings: mergeWithDefaultKeybindings(compileResolvedKeybindingsConfig([])),
+    issues: [],
+  });
   const startedRef = yield* Ref.make(false);
   const startedDeferred = yield* Deferred.make<void, KeybindingsConfigError>();
   const watcherScope = yield* Scope.make("sequential");
   yield* Effect.addFinalizer(() => Scope.close(watcherScope, Exit.void));
   const emitChange = (configState: KeybindingsConfigState) =>
-    PubSub.publish(changesPubSub, configState).pipe(Effect.asVoid);
+    Effect.gen(function* () {
+      yield* Ref.set(residentConfigState, configState);
+      yield* PubSub.publish(changesPubSub, configState);
+    });
 
   const readConfigExists = fs.exists(keybindingsConfigPath).pipe(
     Effect.mapError(
@@ -595,7 +605,8 @@ const make = Effect.gen(function* () {
       yield* startWatcher;
       yield* syncDefaultKeybindingsOnStartup;
       yield* Cache.invalidate(resolvedConfigCache, resolvedConfigCacheKey);
-      yield* loadConfigStateFromCacheOrDisk;
+      const configState = yield* loadConfigStateFromCacheOrDisk;
+      yield* Ref.set(residentConfigState, configState);
     });
 
     const startupExit = yield* Effect.exit(startup);
@@ -613,6 +624,7 @@ const make = Effect.gen(function* () {
     syncDefaultKeybindingsOnStartup,
     loadConfigState: loadConfigStateFromCacheOrDisk,
     getSnapshot: loadConfigStateFromCacheOrDisk,
+    getResidentConfigState: Ref.get(residentConfigState),
     get streamChanges() {
       return Stream.fromPubSub(changesPubSub);
     },

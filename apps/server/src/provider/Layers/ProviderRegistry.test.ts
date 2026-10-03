@@ -340,6 +340,9 @@ function makeMutableServerSettingsService(
       start: Effect.void,
       ready: Effect.void,
       getSettings: Ref.get(settingsRef),
+      getClientSettings: Ref.get(settingsRef).pipe(
+        Effect.map(ServerSettingsModule.redactServerSettingsForClient),
+      ),
       updateSettings: (patch) =>
         Effect.gen(function* () {
           const current = yield* Ref.get(settingsRef);
@@ -368,6 +371,20 @@ function makeMutableServerSettingsService(
       get subscribeChanges() {
         return PubSub.subscribe(changes).pipe(
           Effect.map((subscription) => Stream.fromSubscription(subscription)),
+        );
+      },
+      get clientChanges() {
+        return Stream.fromPubSub(changes).pipe(
+          Stream.map(ServerSettingsModule.redactServerSettingsForClient),
+        );
+      },
+      get subscribeClientChanges() {
+        return PubSub.subscribe(changes).pipe(
+          Effect.map((subscription) =>
+            Stream.fromSubscription(subscription).pipe(
+              Stream.map(ServerSettingsModule.redactServerSettingsForClient),
+            ),
+          ),
         );
       },
     } satisfies ServerSettingsModule.ServerSettingsService["Service"];

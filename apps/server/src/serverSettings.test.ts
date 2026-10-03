@@ -11,6 +11,7 @@ import {
   ServerSettingsPatch,
   TicketProviderDriverKind,
   TicketProviderInstanceId,
+  UsageLimitSourceId,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { assert, it } from "@effect/vitest";
@@ -23,8 +24,10 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as ServerConfig from "./config.ts";
@@ -35,6 +38,8 @@ import { resolveProviderInstanceTerminalEnvironment } from "./terminal/Manager.t
 const decodeSettingsPatch = Schema.decodeUnknownEffect(ServerSettingsPatch);
 const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
 const decodeServerSettingsJson = Schema.decodeUnknownEffect(Schema.fromJsonString(ServerSettings));
+const encodeServerSettings = Schema.encodeEffect(ServerSettings);
+const encodeServerSettingsJson = Schema.encodeEffect(Schema.fromJsonString(ServerSettings));
 
 const makeServerSettingsLayer = () =>
   ServerSettingsModule.layer.pipe(
@@ -97,6 +102,325 @@ const recordProviderUsage = (provider: string, instanceId: string | null = provi
   });
 
 it.layer(NodeServices.layer)("server settings", (it) => {
+  it.effect("serves normalized public defaults without starting any settings I/O", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      let reads = 0;
+      const blockedFs = FileSystem.FileSystem.of({
+        ...fs,
+        exists: () =>
+          Effect.suspend(() => {
+            reads++;
+            return Effect.never;
+          }),
+        readFileString: () =>
+          Effect.suspend(() => {
+            reads++;
+            return Effect.never;
+          }),
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        const settings = yield* service.getClientSettings;
+        assert.equal(settings.environmentLabel, "");
+        assert.deepEqual(
+          settings.textGenerationModelSelection,
+          DEFAULT_SERVER_SETTINGS.textGenerationModelSelection,
+        );
+        yield* decodeServerSettings(yield* encodeServerSettings(settings));
+        assert.equal(reads, 0);
+      }).pipe(
+        Effect.provide(
+          makeServerSettingsLayer().pipe(
+            Layer.provideMerge(Layer.succeed(FileSystem.FileSystem, blockedFs)),
+          ),
+        ),
+      );
+    }),
+  );
+
+  it.effect(
+    "public reads and buffered public events survive blocked credential materialization",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const blocked = yield* Deferred.make<void>();
+          let blockSecrets = false;
+          let reads = 0;
+          const secretLayer = Layer.effect(
+            ServerSecretStore.ServerSecretStore,
+            Effect.map(ServerSecretStore.ServerSecretStore, (store) => ({
+              ...store,
+              get: (name: string) =>
+                Effect.suspend(() => {
+                  reads++;
+                  return blockSecrets
+                    ? Deferred.succeed(blocked, undefined).pipe(Effect.andThen(Effect.never))
+                    : store.get(name);
+                }),
+            })),
+          ).pipe(Layer.provide(ServerSecretStore.layer));
+          const settingsLayer = ServerSettingsModule.layer.pipe(
+            Layer.provide(secretLayer),
+            Layer.provideMerge(Layer.fresh(SqlitePersistenceMemory)),
+            Layer.provideMerge(
+              Layer.fresh(
+                ServerConfig.layerTest(process.cwd(), {
+                  prefix: "t3code-resident-settings-test-",
+                }),
+              ),
+            ),
+          );
+          yield* Effect.gen(function* () {
+            const service = yield* ServerSettingsModule.ServerSettingsService;
+            const clientChanges = yield* service.subscribeClientChanges;
+            const instanceId = ProviderInstanceId.make("codex_resident");
+            yield* service.updateSettings({
+              environmentLabel: "Confirmed label",
+              providerInstances: {
+                [instanceId]: {
+                  driver: ProviderDriverKind.make("codex"),
+                  config: {},
+                  environment: [{ name: "API_TOKEN", value: "resident-secret", sensitive: true }],
+                },
+              },
+            });
+            blockSecrets = true;
+            const materialization = yield* service.getSettings.pipe(
+              Effect.forkChild({ startImmediately: true }),
+            );
+            yield* Deferred.await(blocked);
+            const readsBeforeClient = reads;
+            const settings = yield* service.getClientSettings;
+            const changed = Option.getOrThrow(yield* Stream.runHead(clientChanges));
+            assert.equal(settings.environmentLabel, "Confirmed label");
+            assert.deepEqual(changed, settings);
+            assert.deepEqual(settings.providerInstances[instanceId]?.environment, [
+              { name: "API_TOKEN", value: "", sensitive: true, valueRedacted: true },
+            ]);
+            assert.equal(reads, readsBeforeClient);
+            yield* Fiber.interrupt(materialization);
+          }).pipe(Effect.provide(settingsLayer));
+        }),
+      ),
+  );
+
+  it.effect(
+    "retains the confirmed public label on failed persistence and supports clearing it",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        let failRename = false;
+        let settingsPath: string | undefined;
+        const failingFs = FileSystem.FileSystem.of({
+          ...fs,
+          rename: (from, to) =>
+            failRename && to === settingsPath
+              ? Effect.fail(
+                  PlatformError.systemError({
+                    _tag: "PermissionDenied",
+                    module: "FileSystem",
+                    method: "rename",
+                  }),
+                )
+              : fs.rename(from, to),
+        });
+        yield* Effect.gen(function* () {
+          const service = yield* ServerSettingsModule.ServerSettingsService;
+          settingsPath = (yield* ServerConfig.ServerConfig).settingsPath;
+          yield* service.updateSettings({ environmentLabel: "Saved label" });
+          failRename = true;
+          assert.equal(
+            (yield* service
+              .updateSettings({ environmentLabel: "Failed label" })
+              .pipe(Effect.result))._tag,
+            "Failure",
+          );
+          assert.equal((yield* service.getClientSettings).environmentLabel, "Saved label");
+          failRename = false;
+          yield* service.updateSettings({ environmentLabel: "" });
+          assert.equal((yield* service.getClientSettings).environmentLabel, "");
+        }).pipe(
+          Effect.provide(
+            makeServerSettingsLayer().pipe(
+              Layer.provideMerge(Layer.succeed(FileSystem.FileSystem, failingFs)),
+            ),
+          ),
+        );
+      }),
+  );
+
+  it.effect(
+    "keeps the public snapshot during a watched reload and publishes the external label",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const events = yield* Queue.unbounded<FileSystem.WatchEvent>();
+          const accepted = yield* Deferred.make<void>();
+          const reading = yield* Deferred.make<void>();
+          const release = yield* Deferred.make<void>();
+          let blockReload = false;
+          let settingsPath: string | undefined;
+          const watchingFs = FileSystem.FileSystem.of({
+            ...fs,
+            watch: () =>
+              Stream.fromQueue(events).pipe(
+                Stream.tap(() => Deferred.succeed(accepted, undefined)),
+              ),
+            readFileString: (path, encoding) =>
+              Effect.suspend(() =>
+                blockReload && path === settingsPath
+                  ? Deferred.succeed(reading, undefined).pipe(
+                      Effect.andThen(Deferred.await(release)),
+                      Effect.andThen(fs.readFileString(path, encoding)),
+                    )
+                  : fs.readFileString(path, encoding),
+              ),
+          });
+          yield* Effect.gen(function* () {
+            const service = yield* ServerSettingsModule.ServerSettingsService;
+            settingsPath = (yield* ServerConfig.ServerConfig).settingsPath;
+            yield* fs.writeFileString(settingsPath, '{"environmentLabel":"Loaded label"}');
+            yield* service.start;
+            assert.equal((yield* service.getClientSettings).environmentLabel, "Loaded label");
+            const changes = yield* service.subscribeClientChanges;
+            const observed = yield* Stream.runHead(changes).pipe(
+              Effect.forkChild({ startImmediately: true }),
+            );
+            yield* fs.writeFileString(settingsPath, '{"environmentLabel":"External label"}');
+            blockReload = true;
+            yield* Queue.offer(events, { _tag: "Update", path: settingsPath });
+            yield* Deferred.await(accepted);
+            yield* TestClock.adjust(Duration.millis(100));
+            yield* Deferred.await(reading);
+            assert.equal((yield* service.getClientSettings).environmentLabel, "Loaded label");
+            yield* Deferred.succeed(release, undefined);
+            const changed = Option.getOrThrow(yield* Fiber.join(observed));
+            assert.equal(changed.environmentLabel, "External label");
+            assert.equal((yield* service.getClientSettings).environmentLabel, "External label");
+          }).pipe(
+            Effect.provide(
+              makeServerSettingsLayer().pipe(
+                Layer.provideMerge(Layer.succeed(FileSystem.FileSystem, watchingFs)),
+              ),
+            ),
+          );
+        }),
+      ),
+  );
+
+  it.effect(
+    "redacts every supported secret field and preserves credentials on a public roundtrip",
+    () =>
+      Effect.gen(function* () {
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        const antigravity = ProviderInstanceId.make("antigravity_private");
+        const opencode = ProviderInstanceId.make("opencode_private");
+        const ticket = TicketProviderInstanceId.make("jira_private");
+        yield* service.updateSettings({
+          providers: {
+            antigravity: { apiKey: "legacy-api-secret" },
+            opencode: { serverPassword: "legacy-password-secret" },
+          },
+          providerInstances: {
+            [antigravity]: {
+              driver: ProviderDriverKind.make("antigravity"),
+              config: { apiKey: "instance-api-secret", gcpProject: "project" },
+              environment: [
+                { name: "API_TOKEN", value: "provider-env-secret", sensitive: true },
+                { name: "PUBLIC", value: "public-value", sensitive: false },
+              ],
+            },
+            [opencode]: {
+              driver: ProviderDriverKind.make("opencode"),
+              config: { serverPassword: "instance-password-secret", binaryPath: "opencode" },
+            },
+          },
+          ticketProviderInstances: {
+            [ticket]: {
+              driver: TicketProviderDriverKind.make("jira"),
+              baseUrl: "https://work.atlassian.net",
+              environment: [
+                { name: "JIRA_API_TOKEN", value: "ticket-env-secret", sensitive: true },
+              ],
+            },
+          },
+          usageLimitSources: {
+            [UsageLimitSourceId.make("hub")]: {
+              kind: "cliproxy",
+              url: "https://hub.example.com",
+              managementKey: "management-secret",
+              enabled: true,
+            },
+          },
+          bitbucket: { accessToken: "bitbucket-access-secret", apiToken: "bitbucket-api-secret" },
+        });
+        const client = yield* service.getClientSettings;
+        const encoded = yield* encodeServerSettingsJson(client);
+        for (const secret of [
+          "legacy-api-secret",
+          "legacy-password-secret",
+          "instance-api-secret",
+          "instance-password-secret",
+          "provider-env-secret",
+          "ticket-env-secret",
+          "management-secret",
+          "bitbucket-access-secret",
+          "bitbucket-api-secret",
+        ]) {
+          assert.notInclude(encoded, secret);
+        }
+        assert.equal(client.providers.antigravity.apiKey, "••••••");
+        assert.equal(client.providers.opencode.serverPassword, "••••••");
+        assert.deepEqual(client.providerInstances[antigravity]?.config, {
+          apiKey: "••••••",
+          gcpProject: "project",
+        });
+        assert.deepEqual(client.providerInstances[opencode]?.config, {
+          serverPassword: "••••••",
+          binaryPath: "opencode",
+        });
+        assert.equal(
+          client.providerInstances[antigravity]?.environment?.[1]?.value,
+          "public-value",
+        );
+        assert.equal(
+          client.usageLimitSources[UsageLimitSourceId.make("hub")]?.managementKey,
+          "••••••",
+        );
+        assert.equal(client.bitbucket.accessToken, "••••••");
+        assert.equal(client.bitbucket.apiToken, "••••••");
+        const before = yield* service.getSettings;
+        const roundtrip = yield* service.updateSettings(
+          yield* decodeSettingsPatch(yield* encodeServerSettings(client)),
+        );
+        assert.deepEqual(roundtrip, {
+          ...before,
+          ticketProviderInstancesRevision: before.ticketProviderInstancesRevision + 1,
+        });
+        yield* service.updateProviderInstance(
+          {
+            operation: "upsert",
+            instanceId: antigravity,
+            instance: {
+              ...client.providerInstances[antigravity]!,
+              config: { apiKey: "••••••", gcpProject: "next-project" },
+            },
+          },
+          { providers: { opencode: { serverPassword: "••••••", binaryPath: "next-opencode" } } },
+        );
+        const updated = yield* service.getSettings;
+        assert.equal(updated.providers.opencode.serverPassword, "legacy-password-secret");
+        assert.deepEqual(updated.providerInstances[antigravity]?.config, {
+          apiKey: "instance-api-secret",
+          gcpProject: "next-project",
+        });
+        yield* service.updateSettings({ providers: { antigravity: { apiKey: "" } } });
+        assert.equal((yield* service.getSettings).providers.antigravity.apiKey, "");
+      }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("migrates saved token delivery to paragraph buffering without resetting settings", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;
@@ -804,6 +1128,10 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       const settings = yield* serverSettings.getSettings;
 
       assert.equal(settings.textGenerationModelSelection.instanceId, "claudeAgent");
+      assert.deepEqual(
+        (yield* serverSettings.getClientSettings).textGenerationModelSelection,
+        settings.textGenerationModelSelection,
+      );
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 

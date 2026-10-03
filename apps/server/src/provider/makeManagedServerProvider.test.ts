@@ -362,6 +362,9 @@ describe("makeManagedServerProvider", () => {
             start: Effect.void,
             ready: Effect.void,
             getSettings: Ref.get(serverSettingsRef),
+            getClientSettings: Ref.get(serverSettingsRef).pipe(
+              Effect.map(ServerSettings.redactServerSettingsForClient),
+            ),
             updateSettings: () => Effect.die(new Error("unused in this test")),
             updateProviderInstance: () => Effect.die(new Error("unused in this test")),
             withSettingsSnapshot: (use) => Ref.get(serverSettingsRef).pipe(Effect.flatMap(use)),
@@ -369,6 +372,8 @@ describe("makeManagedServerProvider", () => {
             subscribeChanges: PubSub.subscribe(serverSettingsChanges).pipe(
               Effect.map((subscription) => Stream.fromSubscription(subscription)),
             ),
+            clientChanges: Stream.empty,
+            subscribeClientChanges: Effect.succeed(Stream.empty),
           }),
         );
         const checkCalls = yield* Ref.make(0);

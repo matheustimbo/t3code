@@ -94,6 +94,12 @@ it("runs the pinned runtime's own executable as the launch agent", () => {
   expect(plist).not.toContain("node</string>");
 });
 
+it("keeps the macOS filesystem-pool containment across managed installs and repairs", () => {
+  expect(BootService.renderBootServicePlist(macPlan, macRenderOptions)).toContain(
+    "    <key>UV_THREADPOOL_SIZE</key>\n    <string>16</string>",
+  );
+});
+
 it("preserves the installer's provider search path in the launch agent", () => {
   const plist = BootService.renderBootServicePlist(macPlan, macRenderOptions);
 

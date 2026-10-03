@@ -12,15 +12,14 @@ import * as Schema from "effect/Schema";
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 
-import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
-import {
-  PUBLISH_AGENT_ACTIVITY_SECRET,
-  RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
-  RELAY_URL_SECRET,
-} from "../cloud/config.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { PublishingCapability } from "./PublishingCapability.ts";
 import * as ServerEnvironment from "./ServerEnvironment.ts";
+
+const inactivePublishingCapability = Layer.succeed(PublishingCapability, {
+  getActive: Effect.succeed(false),
+});
 
 const isServerEnvironmentIdPersistenceError = Schema.is(
   ServerEnvironment.ServerEnvironmentIdPersistenceError,
@@ -28,21 +27,10 @@ const isServerEnvironmentIdPersistenceError = Schema.is(
 
 const makeServerEnvironmentLayer = (baseDir: string, environmentLabel = "") =>
   ServerEnvironment.layer.pipe(
-    Layer.provide(ServerSecretStore.layer),
+    Layer.provide(inactivePublishingCapability),
     Layer.provide(ServerSettings.layerTest({ environmentLabel })),
     Layer.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
   );
-
-const emptySecretStoreLayer = Layer.succeed(
-  ServerSecretStore.ServerSecretStore,
-  ServerSecretStore.ServerSecretStore.of({
-    get: () => Effect.succeedNone,
-    set: () => Effect.void,
-    create: () => Effect.void,
-    getOrCreateRandom: () => Effect.succeed(new Uint8Array()),
-    remove: () => Effect.void,
-  }),
-);
 
 const makeServerConfig = Effect.fn(function* (baseDir: string) {
   const derivedPaths = yield* ServerConfig.deriveServerPaths(baseDir, undefined);
@@ -188,52 +176,39 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
     }),
   );
 
-  it.effect("reports agent activity publishing from the current secret state", () =>
+  it.effect("reads the resident descriptor while settings materialization is stalled", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const baseDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-server-environment-publish-test-",
+        prefix: "t3-resident-descriptor-test-",
       });
-      const testLayer = Layer.mergeAll(
-        ServerEnvironment.layer.pipe(Layer.provide(ServerSecretStore.layer)),
-        ServerSecretStore.layer,
-      ).pipe(
-        Layer.provide(ServerSettings.layerTest()),
-        Layer.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
+      const settings = yield* Effect.service(ServerSettings.ServerSettingsService).pipe(
+        Effect.provide(ServerSettings.layerTest({ environmentLabel: "Confirmed label" })),
       );
-
-      yield* Effect.gen(function* () {
-        const secrets = yield* ServerSecretStore.ServerSecretStore;
-        const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
-        const encode = (value: string) => new TextEncoder().encode(value);
-
-        const unlinked = yield* serverEnvironment.getDescriptor;
-        expect(unlinked.capabilities.agentActivityPublishing).toBe(false);
-
-        // The opt-in alone is not enough: without relay link credentials no
-        // publish would leave this environment.
-        yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, encode("true"));
-        const withoutLink = yield* serverEnvironment.getDescriptor;
-        expect(withoutLink.capabilities.agentActivityPublishing).toBe(false);
-
-        // Empty credentials are as unconfigured as missing ones: the
-        // publisher's truthiness gate skips them, so the capability must not
-        // advertise publishing.
-        yield* secrets.set(RELAY_URL_SECRET, encode(""));
-        yield* secrets.set(RELAY_ENVIRONMENT_CREDENTIAL_SECRET, encode("credential"));
-        const emptyUrl = yield* serverEnvironment.getDescriptor;
-        expect(emptyUrl.capabilities.agentActivityPublishing).toBe(false);
-
-        yield* secrets.set(RELAY_URL_SECRET, encode("https://relay.example"));
-        const linked = yield* serverEnvironment.getDescriptor;
-        expect(linked.capabilities.agentActivityPublishing).toBe(true);
-
-        // The toggle changes at runtime, so the same service instance must
-        // reflect a flip without a restart.
-        yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, encode("false"));
-        const disabled = yield* serverEnvironment.getDescriptor;
-        expect(disabled.capabilities.agentActivityPublishing).toBe(false);
-      }).pipe(Effect.provide(testLayer));
+      let active = false;
+      const environment = yield* Effect.service(ServerEnvironment.ServerEnvironment).pipe(
+        Effect.provide(
+          ServerEnvironment.layer.pipe(
+            Layer.provide(
+              Layer.succeed(PublishingCapability, { getActive: Effect.sync(() => active) }),
+            ),
+            Layer.provide(
+              Layer.succeed(ServerSettings.ServerSettingsService, {
+                ...settings,
+                getSettings: Effect.never,
+              }),
+            ),
+            Layer.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
+          ),
+        ),
+      );
+      expect((yield* environment.getDescriptor).label).toBe("Confirmed label");
+      expect((yield* environment.getDescriptor).capabilities.agentActivityPublishing).toBe(false);
+      active = true;
+      yield* settings.updateSettings({ environmentLabel: "Renamed" });
+      const renamed = yield* environment.getDescriptor;
+      expect(renamed.label).toBe("Renamed");
+      expect(renamed.capabilities.agentActivityPublishing).toBe(true);
     }),
   );
 
@@ -271,7 +246,7 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
         }).pipe(
           Effect.provide(
             ServerEnvironment.layer.pipe(
-              Layer.provide(ServerSecretStore.layer),
+              Layer.provide(inactivePublishingCapability),
               Layer.provide(ServerSettings.layerTest()),
               Layer.provide(ServerConfig.layer({ ...serverConfig, ...overrides })),
             ),
@@ -338,7 +313,7 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
         }).pipe(
           Effect.provide(
             ServerEnvironment.layer.pipe(
-              Layer.provide(emptySecretStoreLayer),
+              Layer.provide(inactivePublishingCapability),
               Layer.provide(ServerSettings.layerTest()),
               Layer.provide(Layer.merge(ServerConfig.layer(serverConfig), failingFileSystemLayer)),
             ),

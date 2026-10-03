@@ -227,9 +227,23 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
   return yield* HttpServerResponse.file(asset.path, { status, offset, bytesToRead, headers });
 });
 
-export const httpCompressionLayer = HttpRouter.middleware(HttpMiddleware.compression(), {
-  global: true,
-});
+const compressHttpResponse = HttpMiddleware.compression();
+
+export const httpCompressionLayer = HttpRouter.middleware(
+  HttpMiddleware.make((httpApp) =>
+    Effect.gen(function* () {
+      const request = yield* HttpServerRequest.HttpServerRequest;
+      const url = HttpServerRequest.toURL(request);
+      // Discovery must stay responsive when filesystem work exhausts Node's
+      // libuv pool: async zlib compression would queue behind the same work.
+      if (Option.isSome(url) && url.value.pathname === "/.well-known/t3/environment") {
+        return yield* httpApp;
+      }
+      return yield* compressHttpResponse(httpApp);
+    }),
+  ),
+  { global: true },
+);
 
 export const browserApiCorsLayer = Layer.unwrap(
   Effect.gen(function* () {

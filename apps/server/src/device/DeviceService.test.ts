@@ -144,6 +144,9 @@ const fixture = Effect.fn("fixture")(function* (
         start: Effect.void,
         ready: Effect.void,
         getSettings: Ref.get(settings),
+        getClientSettings: Ref.get(settings).pipe(
+          Effect.map(ServerSettings.redactServerSettingsForClient),
+        ),
         updateSettings: (patch) =>
           Ref.updateAndGet(settings, (current) => ({
             ...current,
@@ -155,6 +158,8 @@ const fixture = Effect.fn("fixture")(function* (
           })),
         streamChanges: Stream.empty,
         subscribeChanges: Effect.succeed(Stream.empty),
+        clientChanges: Stream.empty,
+        subscribeClientChanges: Effect.succeed(Stream.empty),
       }),
     ),
     Effect.provideService(

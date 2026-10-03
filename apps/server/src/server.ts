@@ -81,6 +81,7 @@ import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
 import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
 import { ProviderRegistryLive } from "./provider/Layers/ProviderRegistry.ts";
 import * as ServerSettings from "./serverSettings.ts";
+import * as PublishingCapability from "./environment/PublishingCapability.ts";
 import * as ProjectEnrichmentService from "./project/ProjectEnrichmentService.ts";
 import * as NativeAppIconResolver from "./assets/NativeAppIconResolver.ts";
 import * as AntigravityInstallation from "./provider/AntigravityInstallation.ts";
@@ -251,13 +252,9 @@ const HttpServerLive = Layer.unwrap(
       host: config.host ?? "127.0.0.1",
       port: config.port,
       gracefulShutdownTimeout: HTTP_PREEMPTIVE_SHUTDOWN_GRACE_MS,
-      // Negotiate permessage-deflate with clients that offer it; clients
-      // that don't still get uncompressed frames on their connection.
-      // Context takeover stays enabled (ws default) so the compression
-      // window is shared across frames — that also makes small frames cheap
-      // to compress, so no size threshold is set (ws only honors
-      // `threshold` when context takeover is disabled).
-      websocket: { perMessageDeflate: true },
+      // Compression uses libuv workers. Keep the control connection responsive
+      // when filesystem opens have exhausted that pool.
+      websocket: { perMessageDeflate: false },
     });
   }),
 );
@@ -432,8 +429,12 @@ const ProjectFaviconResolverLayerLive = ProjectFaviconResolver.layer.pipe(
   Layer.provide(T3ProjectFileLoader.layer),
 );
 
-const ServerEnvironmentLayerLive = ServerEnvironment.layer.pipe(
+const PublishingCapabilityLayerLive = PublishingCapability.layer.pipe(
   Layer.provide(ServerSecretStore.layer),
+);
+
+const ServerEnvironmentLayerLive = ServerEnvironment.layer.pipe(
+  Layer.provide(PublishingCapabilityLayerLive),
 );
 
 const AuthLayerLive = EnvironmentAuth.layer.pipe(
@@ -1027,7 +1028,7 @@ const makeServerLayer = Layer.unwrap(
         McpSessionRegistry.layer.pipe(
           Layer.provide(
             ServerEnvironment.layer.pipe(
-              Layer.provide(ServerSecretStore.layer),
+              Layer.provide(PublishingCapabilityLayerLive),
               Layer.provide(ServerSettingsLayerLive),
             ),
           ),

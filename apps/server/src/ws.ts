@@ -1616,14 +1616,12 @@ const makeWsRpcLayer = (
 
       const loadServerConfig = (options: { readonly usageLimitsCommand: boolean }) =>
         Effect.gen(function* () {
-          const keybindingsConfig = yield* keybindings.loadConfigState;
+          const keybindingsConfig = yield* keybindings.getResidentConfigState;
           const currentProviders = yield* providerRegistry.getProviders;
           const providers = options.usageLimitsCommand
             ? withUsageLimitsCommands(currentProviders, yield* usageLimitSources.current)
             : currentProviders;
-          const settings = ServerSettings.redactServerSettingsForClient(
-            yield* serverSettings.getSettings,
-          );
+          const settings = yield* serverSettings.getClientSettings;
           const environment = yield* serverEnvironment.getDescriptor;
           const auth = yield* serverAuth.getDescriptor();
           const scratchWorkspaceRoot = yield* managedFolders.scratchRoot;
@@ -2497,15 +2495,9 @@ const makeWsRpcLayer = (
             { "rpc.aggregate": "server" },
           ),
         [WS_METHODS.serverGetSettings]: (_input) =>
-          observeRpcEffect(
-            WS_METHODS.serverGetSettings,
-            serverSettings.getSettings.pipe(
-              Effect.map(ServerSettings.redactServerSettingsForClient),
-            ),
-            {
-              "rpc.aggregate": "server",
-            },
-          ),
+          observeRpcEffect(WS_METHODS.serverGetSettings, serverSettings.getClientSettings, {
+            "rpc.aggregate": "server",
+          }),
         [WS_METHODS.serverUpdateSettings]: ({
           patch,
           providerInstanceMutation,
@@ -3575,6 +3567,7 @@ const makeWsRpcLayer = (
             WS_METHODS.subscribeServerConfig,
             Effect.gen(function* () {
               const usageLimitsCommand = input.usageLimitsCommand === true;
+              const clientSettingsChanges = yield* serverSettings.subscribeClientChanges;
               const config = yield* loadServerConfig({ usageLimitsCommand });
               const keybindingsUpdates = keybindings.streamChanges.pipe(
                 Stream.map((event) => ({
@@ -3647,8 +3640,7 @@ const makeWsRpcLayer = (
                       })),
                     )
                   : Stream.empty;
-              const settingsUpdates = serverSettings.streamChanges.pipe(
-                Stream.map((settings) => ServerSettings.redactServerSettingsForClient(settings)),
+              const settingsUpdates = clientSettingsChanges.pipe(
                 Stream.map((settings) => ({
                   version: 1 as const,
                   type: "settingsUpdated" as const,

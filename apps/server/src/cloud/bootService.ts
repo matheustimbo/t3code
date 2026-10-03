@@ -162,6 +162,8 @@ export function renderBootServicePlist(
     `  </array>`,
     `  <key>EnvironmentVariables</key>`,
     `  <dict>`,
+    `    <key>UV_THREADPOOL_SIZE</key>`,
+    `    <string>16</string>`,
     `    <key>PATH</key>`,
     `    <string>${escapeXmlText(options.environmentPath)}</string>`,
     `    <key>T3CODE_HOME</key>`,

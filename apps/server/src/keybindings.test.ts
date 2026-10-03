@@ -188,6 +188,26 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
     }).pipe(Effect.provide(makeKeybindingsLayer())),
   );
 
+  it.effect("keeps a resident keybindings snapshot for connection bootstrap", () =>
+    Effect.gen(function* () {
+      const keybindings = yield* Keybindings.Keybindings;
+      yield* keybindings.start;
+      const initial = yield* keybindings.getResidentConfigState;
+      assert.deepEqual(
+        initial.keybindings,
+        Keybindings.compileResolvedKeybindingsConfig(Keybindings.DEFAULT_KEYBINDINGS),
+      );
+
+      const updated = yield* keybindings.upsertKeybindingRule({
+        key: "mod+shift+r",
+        command: "script.run-tests.run",
+      });
+      const resident = yield* keybindings.getResidentConfigState;
+      assert.deepEqual(resident.keybindings, updated);
+      assert.deepEqual(resident.issues, []);
+    }).pipe(Effect.provide(makeKeybindingsLayer())),
+  );
+
   it.effect("uses defaults in runtime when config is malformed without overriding file", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
