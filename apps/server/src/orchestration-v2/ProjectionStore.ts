@@ -33,6 +33,8 @@ import type {
 } from "@t3tools/contracts";
 import {
   OrchestrationV2AppThreadJson as OrchestrationV2AppThreadJsonSchema,
+  ExternalReadThread,
+  ProjectId,
   OrchestrationV2CheckpointJson as OrchestrationV2CheckpointJsonSchema,
   OrchestrationV2CheckpointScopeJson as OrchestrationV2CheckpointScopeJsonSchema,
   OrchestrationV2ContextHandoffJson as OrchestrationV2ContextHandoffJsonSchema,
@@ -74,6 +76,8 @@ import {
   isThreadHistoryTurnStart,
   THREAD_HISTORY_MAX_RAW_TURNS,
 } from "./threadHistoryPaging.ts";
+
+const decodeThreadReadSummaries = Schema.decodeUnknownEffect(Schema.Array(ExternalReadThread));
 
 export class ProjectionStoreApplyEventError extends Schema.TaggedError<ProjectionStoreApplyEventError>()(
   "ProjectionStoreApplyEventError",
@@ -121,11 +125,21 @@ export class ProjectionStoreReadError extends Schema.TaggedError<ProjectionStore
   }
 }
 
+class ProjectionStoreMetadataReadError extends Schema.TaggedError<ProjectionStoreMetadataReadError>()(
+  "ProjectionStoreMetadataReadError",
+  { projectId: ProjectId, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Failed to read project thread metadata.";
+  }
+}
+
 export const ProjectionStoreV2Error = Schema.Union([
   ProjectionStoreSetupError,
   ProjectionStoreApplyEventError,
   ProjectionStoreThreadNotFoundError,
   ProjectionStoreReadError,
+  ProjectionStoreMetadataReadError,
 ]);
 export type ProjectionStoreV2Error = typeof ProjectionStoreV2Error.Type;
 
@@ -334,6 +348,12 @@ export interface ProjectionStoreV2Shape {
   readonly getThreadShell: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2ThreadShell | null, ProjectionStoreV2Error>;
+  /** Project-scoped metadata only. Never hydrates content, fork sources or delivery state. */
+  readonly getThreadReadSummaries: (options: {
+    readonly projectId: ProjectId;
+    readonly threadId?: ThreadId;
+    readonly includeArchived: boolean;
+  }) => Effect.Effect<ReadonlyArray<ExternalReadThread>, ProjectionStoreV2Error>;
   readonly getThread: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2AppThread, ProjectionStoreV2Error>;
@@ -5444,6 +5464,46 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       apply,
       getShellSnapshot,
       getThreadShell,
+      getThreadReadSummaries: (options) =>
+        sql<{
+          readonly id: string;
+          readonly projectId: string;
+          readonly title: string;
+          readonly createdAt: string;
+          readonly updatedAt: string;
+          readonly archived: number;
+          readonly status: string | null;
+        }>`
+          SELECT t.thread_id AS id, t.project_id AS projectId,
+            json_extract(t.payload_json, '$.title') AS title,
+            t.created_at AS createdAt, t.updated_at AS updatedAt,
+            (json_extract(t.payload_json, '$.archivedAt') IS NOT NULL) AS archived,
+            (
+              SELECT r.status FROM orchestration_v2_projection_runs r
+              WHERE r.thread_id = t.thread_id
+                AND NOT (r.status = 'queued' AND json_extract(r.payload_json, '$.queueHeld') IS 1)
+              ORDER BY r.ordinal DESC, r.run_id DESC LIMIT 1
+            ) AS status
+          FROM orchestration_v2_projection_threads t
+          WHERE t.project_id = ${options.projectId} AND t.deleted_at IS NULL
+            ${options.threadId === undefined ? sql`` : sql`AND t.thread_id = ${options.threadId}`}
+            ${options.includeArchived ? sql`` : sql`AND json_extract(t.payload_json, '$.archivedAt') IS NULL`}
+          ORDER BY t.thread_id ASC
+        `.pipe(
+          Effect.flatMap((rows) =>
+            decodeThreadReadSummaries(
+              rows.map((row) => ({
+                ...row,
+                archived: row.archived === 1,
+                status: shellStatusFromStoredRunStatus(row.status),
+              })),
+            ),
+          ),
+          Effect.mapError(
+            (cause) =>
+              new ProjectionStoreMetadataReadError({ projectId: options.projectId, cause }),
+          ),
+        ),
       getThread,
       getSettlementCandidates,
       getThreadsWithPullRequests,
@@ -5546,6 +5606,26 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
             .pipe(Effect.map(threadShellFromProjection));
           return shell.deletedAt === null ? shell : null;
         }),
+      getThreadReadSummaries: (options) =>
+        Effect.map(Ref.get(replayState), (state) =>
+          [...state.projections.values()]
+            .filter(
+              ({ thread }) =>
+                thread.projectId === options.projectId &&
+                thread.deletedAt === null &&
+                (options.threadId === undefined || thread.id === options.threadId) &&
+                (options.includeArchived || thread.archivedAt === null),
+            )
+            .map(({ thread, runs }) => ({
+              id: thread.id,
+              projectId: thread.projectId,
+              title: thread.title,
+              status: shellStatusFromStoredRunStatus(latestUnheldRun(runs)?.status ?? null),
+              archived: thread.archivedAt !== null,
+              createdAt: DateTime.formatIso(thread.createdAt),
+              updatedAt: DateTime.formatIso(thread.updatedAt),
+            })),
+        ),
       getThread: (threadId) =>
         Effect.gen(function* () {
           const projection = (yield* Ref.get(replayState)).projections.get(threadId);
