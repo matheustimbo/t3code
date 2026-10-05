@@ -47,28 +47,38 @@ describe("highlightSourceFile", () => {
     ]);
   });
 
-  it("initializes source and snippet highlighting without a warmup", async () => {
-    vi.resetModules();
-    const highlighter = await import("./shikiReviewHighlighter");
-    const source = "const answer: number = 42;";
+  it.each(["source", "snippet"] as const)(
+    "initializes %s highlighting without a warmup",
+    async (kind) => {
+      vi.resetModules();
+      const highlighter = await import("./shikiReviewHighlighter");
+      const source = "const answer: number = 42;";
 
-    const highlighted = await highlighter.highlightSourceFile({
-      path: "example.ts",
-      contents: source,
-      theme: "dark",
-    });
+      const highlighted =
+        kind === "source"
+          ? await highlighter.highlightSourceFile({
+              path: "example.ts",
+              contents: source,
+              theme: "dark",
+            })
+          : await highlighter.highlightCodeSnippet({ code: source, language: "ts", theme: "dark" });
 
-    expect(
-      highlighted
-        .flat()
-        .map((token) => token.content)
-        .join(""),
-    ).toBe(source);
-    expect(highlighted.flat().some((token) => token.color !== null)).toBe(true);
-    expect(
-      await highlighter.highlightCodeSnippet({ code: source, language: "ts", theme: "dark" }),
-    ).toEqual(highlighted);
-  });
+      expect(
+        highlighted
+          .flat()
+          .map((token) => token.content)
+          .join(""),
+      ).toBe(source);
+      expect(
+        new Set(
+          highlighted
+            .flat()
+            .map((token) => token.color)
+            .filter(Boolean),
+        ).size,
+      ).toBeGreaterThan(1);
+    },
+  );
 });
 
 describe("highlightReviewSelectedLines", () => {
