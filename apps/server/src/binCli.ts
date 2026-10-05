@@ -17,7 +17,7 @@ import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
 import { sharedServerCommandFlags } from "./cli/config.ts";
 import { threadCommand } from "./cli/thread.ts";
 import { projectCommand } from "./cli/project.ts";
-import { runServerCommand, serveCommand, startCommand } from "./cli/server.ts";
+import { runDefaultServerCommand, serveCommand, startCommand } from "./cli/server.ts";
 import { updateCommand } from "./cli/update.ts";
 import { uninstallCommand } from "./cli/uninstall.ts";
 import { serviceLauncherCommand } from "./cli/serviceLauncher.ts";
@@ -58,8 +58,14 @@ const connectUnavailableCommand = Command.make("connect", {
 export const makeCli = ({ cloudEnabled = hasCloudPublicConfig } = {}) =>
   Command.make("t3", { ...sharedServerCommandFlags }).pipe(
     Command.withDescription("Run the T3 Code server."),
-    Command.withHandler((flags) => runServerCommand(flags)),
+    Command.withHandler(runDefaultServerCommand),
     Command.withSubcommands([
+      Command.make("help").pipe(
+        Command.withDescription("Show command help."),
+        Command.withHandler(() =>
+          Effect.fail(new CliError.ShowHelp({ commandPath: ["t3"], errors: [] })),
+        ),
+      ),
       acpMcpBridgeCommand,
       acpMcpCallCommand,
       startCommand,

@@ -15,6 +15,7 @@ import {
   dismissVersionMismatch,
   isServerUpdateFailureDismissed,
   isVersionMismatchDismissed,
+  manualServerUpdateCommand,
   resolveServerConfigVersionMismatch,
   resolveServerSelfUpdateCapability,
   resolveVersionMismatch,
@@ -26,6 +27,25 @@ const MISMATCH_HINT =
   "Version mismatch. Try syncing the client and server to the same T3 Code version.";
 
 describe("versionSkew", () => {
+  it("keeps npm installations on the fork release source", () => {
+    expect(manualServerUpdateCommand("0.0.45", { kind: "npm-global", prefix: "/opt/node" })).toBe(
+      "curl -fsSL https://raw.githubusercontent.com/matheustimbo/t3code/fork-main/scripts/install.sh | T3CODE_VERSION=0.0.45 sh",
+    );
+    expect(
+      manualServerUpdateCommand("0.0.45", { kind: "npm-global", prefix: "/opt/maria's node" }),
+    ).toBe(
+      "curl -fsSL https://raw.githubusercontent.com/matheustimbo/t3code/fork-main/scripts/install.sh | T3CODE_VERSION=0.0.45 sh",
+    );
+  });
+
+  it("uses the fork installer for runners and unknown installations", () => {
+    const expected =
+      "curl -fsSL https://raw.githubusercontent.com/matheustimbo/t3code/fork-main/scripts/install.sh | T3CODE_VERSION=0.0.45 sh";
+    expect(manualServerUpdateCommand("0.0.45")).toBe(expected);
+    expect(manualServerUpdateCommand("0.0.45", { kind: "npx" })).toBe(expected);
+    expect(manualServerUpdateCommand("0.0.45", { kind: "pnpm-dlx" })).toBe(expected);
+    expect(manualServerUpdateCommand("0.0.45", { kind: "bunx" })).toBe(expected);
+  });
   beforeEach(() => {
     branding.APP_VERSION = "0.0.34";
   });

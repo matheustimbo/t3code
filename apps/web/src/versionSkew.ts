@@ -1,4 +1,9 @@
-import type { EnvironmentId, ServerConfig, ServerSelfUpdateCapability } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ServerConfig,
+  ServerInstallation,
+  ServerSelfUpdateCapability,
+} from "@t3tools/contracts";
 import type { ServerUpdateState } from "@t3tools/client-runtime/state/server";
 import { forkServerCommand } from "@t3tools/shared/distribution";
 import { compareSemverVersions, parseSemver } from "@t3tools/shared/semver";
@@ -116,7 +121,10 @@ export function supportsServerUpdateThreadContinuation(
 }
 
 /** The command to hand users whose server cannot update itself. */
-export function manualServerUpdateCommand(targetVersion: string): string {
+export function manualServerUpdateCommand(
+  targetVersion: string,
+  _installation?: ServerInstallation,
+): string {
   return forkServerCommand(targetVersion);
 }
 

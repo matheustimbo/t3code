@@ -3,3 +3,4 @@
 # Batch files need CRLF for cmd.exe to parse them reliably.
 *.cmd text eol=crlf
 *.bat text eol=crlf
+patches/*.patch whitespace=-blank-at-eol
