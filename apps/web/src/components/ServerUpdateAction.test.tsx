@@ -77,27 +77,16 @@ describe("ServerUpdateAction", () => {
   });
 
   it.each([
-    [
-      { kind: "npm-global", prefix: "/opt/node" },
-      "npm install --global --prefix '/opt/node' t3@0.0.45",
-      "Update command copied",
-      "then restart t3",
-    ],
-    [
-      { kind: "npx" },
-      "npx t3@0.0.45",
-      "Relaunch command copied",
-      "This does not update an installed t3 command.",
-    ],
-    [
-      undefined,
-      "npx t3@0.0.45",
-      "Relaunch command copied",
-      "This does not update an installed t3 command.",
-    ],
-  ] satisfies ReadonlyArray<readonly [ServerInstallation | undefined, string, string, string]>)(
+    { kind: "npm-global", prefix: "/opt/node" },
+    { kind: "npx" },
+    { kind: "pnpm-dlx" },
+    { kind: "bunx" },
+    undefined,
+  ] satisfies ReadonlyArray<ServerInstallation | undefined>)(
     "copies an honest manual command for %j without invoking remote update",
-    (installation, command, title, guidance) => {
+    (installation) => {
+      const command =
+        "curl -fsSL https://raw.githubusercontent.com/matheustimbo/t3code/fork-main/scripts/install.sh | T3CODE_VERSION=0.0.45 sh";
       const action = ServerUpdateAction({
         environmentId: "env-test" as EnvironmentId,
         serverLabel: "Test server",
@@ -107,12 +96,11 @@ describe("ServerUpdateAction", () => {
       }) as ActionElement;
       action.props.onClick?.();
       expect(testState.clipboard).toHaveBeenCalledWith(command);
-      expect(testState.toast).toHaveBeenCalledWith(
-        expect.objectContaining({
-          title,
-          description: expect.stringContaining(guidance),
-        }),
-      );
+      expect(testState.toast).toHaveBeenCalledWith({
+        type: "success",
+        title: "Update command copied",
+        description: `Run \`${command}\` on Test server, then restart t3 with your usual options.`,
+      });
       expect(testState.updateServer).not.toHaveBeenCalled();
     },
   );
