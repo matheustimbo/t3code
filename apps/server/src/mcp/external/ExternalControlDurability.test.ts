@@ -8,11 +8,11 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as TestClock from "effect/testing/TestClock";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import { CommandCommitAuthorization } from "../../orchestration-v2/CommandCommitAuthorization.ts";
 import * as GrantStore from "../../persistence/ExternalReadGrantStore.ts";
 import * as Store from "../../persistence/ExternalControlStore.ts";
-import { makeSqlitePersistenceLive } from "../../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import * as Access from "./ExternalReadAccess.ts";
 import * as Control from "./ExternalControlService.ts";
 import { allowed, environmentLayer, seed } from "./testSupport.ts";
@@ -129,7 +129,7 @@ it.effect(
           directory: "/tmp",
           prefix: "external-control-db-",
         });
-        const database = makeSqlitePersistenceLive(path.join(directory, "fixture.sqlite"));
+        const database = SqlitePersistence.layerFromPath(path.join(directory, "fixture.sqlite"));
         const fixture = controlLayer(controlGrant, database).pipe(Layer.fresh);
         const first = yield* Effect.gen(function* () {
           yield* seed;

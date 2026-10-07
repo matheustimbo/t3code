@@ -1,7 +1,8 @@
-import type { EnvironmentId, ServerConfig } from "@t3tools/contracts";
+import { AuthSettingsWriteScope, type EnvironmentId, type ServerConfig } from "@t3tools/contracts";
 import { useState } from "react";
 
 import { useUpdateEnvironmentSettings } from "../../hooks/useSettings";
+import { useEnvironmentScope } from "../../state/session";
 import { Button } from "../ui/button";
 import {
   Dialog,
@@ -13,7 +14,6 @@ import {
   DialogTitle,
 } from "../ui/dialog";
 import { Input } from "../ui/input";
-import { useEnvironmentOperateAccess } from "./EnvironmentIconPicker";
 
 /**
  * Why the name is fixed, in the order the user can do something about it.
@@ -51,7 +51,9 @@ export function EnvironmentRenameDialog({
   readonly onClose: () => void;
 }) {
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
-  const operateAccess = useEnvironmentOperateAccess(environmentId);
+  const operateAccess = useEnvironmentScope(environmentId, AuthSettingsWriteScope)
+    ? "granted"
+    : "denied";
   const lock = resolveEnvironmentRenameLock({ serverConfig, operateAccess });
   const [draft, setDraft] = useState(
     serverConfig?.settings.environmentLabel || serverConfig?.environment.label || "",

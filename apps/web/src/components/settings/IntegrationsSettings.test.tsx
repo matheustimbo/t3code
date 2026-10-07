@@ -17,6 +17,16 @@ const { listBrowserImportSources } = vi.hoisted(() => ({
   listBrowserImportSources: vi.fn().mockResolvedValue([]),
 }));
 
+vi.mock("../ui/tooltip", () => ({
+  Tooltip: ({ children }: { children: ReactNode }) => children,
+  TooltipTrigger: ({ render, children }: { render: ReactNode; children: ReactNode }) => (
+    <>
+      {render}
+      {children}
+    </>
+  ),
+  TooltipPopup: () => null,
+}));
 vi.mock("../preview/previewBridge", () => ({
   previewBridge: { listBrowserImportSources },
 }));
@@ -24,7 +34,8 @@ vi.mock("../../env", () => ({ isElectron: true }));
 vi.mock("../../state/environments", () => ({
   useEnvironments: () => ({ environments: [], isReady: true }),
   usePrimaryEnvironment: () => null,
-  // TicketProviderSettings renders inside this panel and reads the primary id.
+  // Settings rows resolve the primary grant before rendering server controls, and
+  // TicketProviderSettings reads the primary id.
   usePrimaryEnvironmentId: () => null,
 }));
 vi.mock("../../hooks/useSettings", async (importOriginal) => ({

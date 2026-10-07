@@ -3,7 +3,7 @@ import * as Schema from "effect/Schema";
 import { IsoDateTime, ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { RepositoryIdentity, ThreadEnvMode } from "./environment.ts";
 import { ModelSelection } from "./modelSelection.ts";
-import { ProjectIconOverride, ProjectScript } from "./project.ts";
+import { ProjectScript, ReceivedProjectIcon } from "./project.ts";
 import { TicketProviderBindings, TicketTitlePolicy } from "./ticketProvider.ts";
 
 /** Project summary shared by the V2 shell and application project APIs. */
@@ -21,7 +21,7 @@ export const OrchestrationProjectShell = Schema.Struct({
   autoPull: Schema.optional(Schema.Boolean),
   // Optional on the wire so cached snapshots from older servers still decode.
   faviconPath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
-  projectIcon: Schema.optional(Schema.NullOr(ProjectIconOverride)),
+  projectIcon: Schema.optional(Schema.NullOr(ReceivedProjectIcon)),
   ticketTitlePolicy: Schema.optional(Schema.NullOr(TicketTitlePolicy)),
   ticketProviderBindings: Schema.optional(TicketProviderBindings),
   scripts: Schema.Array(ProjectScript),

@@ -24,11 +24,11 @@ import * as Stream from "effect/Stream";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as McpSessionRegistryTestkit from "../mcp/McpSessionRegistry.testkit.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import type { ProviderInstance } from "../provider/ProviderDriver.ts";
-import * as ProviderInstanceRegistry from "../provider/Services/ProviderInstanceRegistry.ts";
+import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -38,21 +38,17 @@ import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import { continueRestartedRun } from "./RestartContinuation.ts";
-import {
-  OrchestrationV2EventSinkLayerLive,
-  OrchestrationV2LayerLive,
-  ProjectServiceLayerLive,
-} from "./runtimeLayer.ts";
-import { worktreeRepairDependenciesTestLayer } from "./ProviderTurnStartService.testkit.ts";
+import * as RuntimeLayer from "./runtimeLayer.ts";
+import * as ProviderTurnStartServiceTestkit from "./ProviderTurnStartService.testkit.ts";
 
-const PlatformTestLayer = Layer.merge(
+const layerPlatformTest = Layer.merge(
   NodeServices.layer,
   Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
     resolveLink: () => Effect.die("unused title link"),
   }),
 );
 
-const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
+const layerServerConfig = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-orchestration-v2-delegated-completion-",
 });
 
@@ -61,14 +57,14 @@ const modelSelection = {
   model: "gpt-5.4",
 } satisfies ModelSelection;
 
-const VcsDriverRegistryTestLayer = VcsDriverRegistry.layer.pipe(
+const layerVcsDriverRegistryTest = VcsDriverRegistry.layer.pipe(
   Layer.provide(VcsProcess.layer),
-  Layer.provide(ServerConfigLayer),
-  Layer.provide(PlatformTestLayer),
+  Layer.provide(layerServerConfig),
+  Layer.provide(layerPlatformTest),
 );
 
-const CheckpointStoreTestLayer = CheckpointStore.layer.pipe(
-  Layer.provide(VcsDriverRegistryTestLayer),
+const layerCheckpointStoreTest = CheckpointStore.layer.pipe(
+  Layer.provide(layerVcsDriverRegistryTest),
 );
 
 const driver = ProviderDriverKind.make("codex");
@@ -94,7 +90,7 @@ const providerInstance = {
   textGeneration: {} as ProviderInstance["textGeneration"],
 } satisfies ProviderInstance;
 
-const TestProviderInstanceRegistry = Layer.succeed(
+const layerTestProviderInstanceRegistry = Layer.succeed(
   ProviderInstanceRegistry.ProviderInstanceRegistry,
   {
     getInstance: (instanceId) =>
@@ -106,14 +102,14 @@ const TestProviderInstanceRegistry = Layer.succeed(
   },
 );
 
-const TestLayer = Layer.mergeAll(OrchestrationV2LayerLive, OrchestrationV2EventSinkLayerLive).pipe(
-  Layer.provideMerge(ProjectServiceLayerLive),
+const layerTest = Layer.mergeAll(RuntimeLayer.layer, RuntimeLayer.layerEventSink).pipe(
+  Layer.provideMerge(RuntimeLayer.layerProjectService),
   Layer.provide(
     Layer.mock(WorkspacePaths.WorkspacePaths)({
       normalizeWorkspaceRoot: (workspaceRoot) => Effect.succeed(workspaceRoot),
     }),
   ),
-  Layer.provide(worktreeRepairDependenciesTestLayer),
+  Layer.provide(ProviderTurnStartServiceTestkit.layer),
   Layer.provide(
     Layer.succeed(ProjectEnrichmentService.ProjectEnrichmentService, {
       peek: () =>
@@ -134,17 +130,17 @@ const TestLayer = Layer.mergeAll(OrchestrationV2LayerLive, OrchestrationV2EventS
     }),
   ),
   Layer.provide(McpSessionRegistryTestkit.layer),
-  Layer.provide(SqlitePersistenceMemory),
-  Layer.provide(CheckpointStoreTestLayer),
-  Layer.provide(ServerConfigLayer),
+  Layer.provide(SqlitePersistence.layerMemory),
+  Layer.provide(layerCheckpointStoreTest),
+  Layer.provide(layerServerConfig),
   Layer.provide(ServerSettings.layerTest()),
   Layer.provide(
     Layer.mock(TicketProviderRegistry.TicketProviderRegistry)({
       resolve: () => Effect.die("unexpected ticket lookup"),
     }),
   ),
-  Layer.provide(TestProviderInstanceRegistry),
-  Layer.provide(PlatformTestLayer),
+  Layer.provide(layerTestProviderInstanceRegistry),
+  Layer.provide(layerPlatformTest),
 );
 
 const seedParentWithTerminalTask = (input: {
@@ -298,7 +294,7 @@ const seedParentWithTerminalTask = (input: {
     });
   });
 
-it.layer(TestLayer)("delegated completion delivery repairs", (it) => {
+it.layer(layerTest)("delegated completion delivery repairs", (it) => {
   it.effect("acceptance batches pending siblings without acknowledging their results", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -911,7 +907,7 @@ const seedRestartCancelledChild = (input: {
     return { taskId, childThreadId, childRunId };
   });
 
-it.layer(TestLayer)("delegated tasks across a server restart", (it) => {
+it.layer(layerTest)("delegated tasks across a server restart", (it) => {
   it.effect("holds a restart-cancelled child for its continuation's result", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;

@@ -4,7 +4,7 @@ import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { ExternalMcpDescriptor, ExternalMcpTool } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { HttpRouter, HttpServerResponse } from "effect/unstable/http";
+import { HttpRouter, HttpServerResponse } from "effect/http";
 import packageJson from "../../../package.json" with { type: "json" };
 import * as ServerConfig from "../../config.ts";
 import * as Environment from "../../environment/ServerEnvironment.ts";
@@ -34,9 +34,10 @@ const readiness = HttpRouter.middleware(
     Effect.flatMap(Startup.ServerRuntimeStartup, (startup) =>
       startup.awaitCommandReady.pipe(
         Effect.andThen(httpEffect),
-        Effect.catchTag("ServerRuntimeStartupError", () =>
-          Effect.succeed(HttpServerResponse.empty({ status: 503 })),
-        ),
+        Effect.catchTags({
+          ServerRuntimeStartupError: () =>
+            Effect.succeed(HttpServerResponse.empty({ status: 503 })),
+        }),
       ),
     ),
   { global: true },

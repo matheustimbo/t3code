@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- fixtures hash tokens synchronously, as grants store them.
 import * as NodeCrypto from "node:crypto";
 import * as NodePlatformCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -9,10 +10,10 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as TestClock from "effect/testing/TestClock";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as GrantStore from "../../persistence/ExternalReadGrantStore.ts";
-import { makeSqlitePersistenceLive } from "../../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import Migration61 from "../../persistence/Migrations/061_ExternalReadGrants.ts";
 import * as Access from "./ExternalReadAccess.ts";
 import { accessLayer, allowed, environmentLayer, grant, identity, token } from "./testSupport.ts";
@@ -205,7 +206,7 @@ it.effect("persists revoke/revokeAll across closed and reopened fixture database
       });
       const disk = registryLayer([grant, nextGrant]).pipe(
         Layer.provideMerge(GrantStore.layer),
-        Layer.provideMerge(makeSqlitePersistenceLive(path.join(directory, "fixture.sqlite"))),
+        Layer.provideMerge(SqlitePersistence.layerFromPath(path.join(directory, "fixture.sqlite"))),
         Layer.fresh,
       );
       yield* Effect.gen(function* () {

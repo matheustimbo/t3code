@@ -3,12 +3,12 @@ import { ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ProjectStore from "../../orchestration-v2/ProjectStore.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import * as Access from "./ExternalReadAccess.ts";
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import * as Reads from "./ExternalReadService.ts";
 import {
   accessLayer,
@@ -25,7 +25,7 @@ import {
 const memoryReadsLayer = Reads.layer.pipe(
   Layer.provideMerge(
     Layer.mergeAll(ProjectStore.layer, ProjectionStore.layerMemory).pipe(
-      Layer.provideMerge(SqlitePersistenceMemory),
+      Layer.provideMerge(SqlitePersistence.layerMemory),
     ),
   ),
   Layer.provideMerge(accessLayer()),

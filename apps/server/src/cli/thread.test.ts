@@ -21,8 +21,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as TestConsole from "effect/testing/TestConsole";
-import { Command } from "effect/unstable/cli";
-import { FetchHttpClient } from "effect/unstable/http";
+import { Command } from "effect/cli";
+import { FetchHttpClient } from "effect/http";
 
 import { cli } from "../binCli.ts";
 import { readCredential, validateServerOrigin } from "./remoteClient.ts";

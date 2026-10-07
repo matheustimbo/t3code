@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- fixtures hash tokens synchronously, as grants store them.
 import { expect, it } from "@effect/vitest";
 import * as NodeCrypto from "node:crypto";
 import * as NodePlatformCrypto from "@effect/platform-node/NodeCrypto";
@@ -11,7 +12,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Access from "./ExternalReadAccess.ts";
 import * as Control from "./ExternalControlService.ts";
 import * as GrantStore from "../../persistence/ExternalReadGrantStore.ts";

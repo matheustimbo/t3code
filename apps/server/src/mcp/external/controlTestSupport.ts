@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- fixtures hash tokens synchronously, as grants store them.
 import * as NodeCrypto from "node:crypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
@@ -8,12 +9,9 @@ import * as ThreadManagement from "../../orchestration-v2/ThreadManagementServic
 import * as ProviderAdapterRegistry from "../../orchestration-v2/ProviderAdapterRegistry.ts";
 import type { ProviderAdapterV2Shape } from "../../orchestration-v2/ProviderAdapter.ts";
 import { CodexProviderCapabilitiesV2 } from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "../../orchestration-v2/testkit/ProviderReplayHarness.ts";
+import * as ProviderReplayHarness from "../../orchestration-v2/testkit/ProviderReplayHarness.ts";
 import * as Store from "../../persistence/ExternalControlStore.ts";
-import {
-  makeSqlitePersistenceLive,
-  SqlitePersistenceMemory,
-} from "../../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import * as ProjectStore from "../../orchestration-v2/ProjectStore.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import * as Access from "./ExternalReadAccess.ts";
@@ -54,16 +52,16 @@ const adapter = {
   openSession: () => Effect.die("External controller fixtures never start providers"),
 } as ProviderAdapterV2Shape;
 export const nativeLayerFor = (
-  database: ReturnType<typeof makeSqlitePersistenceLive> = SqlitePersistenceMemory,
+  database: ReturnType<typeof SqlitePersistence.layerFromPath> = SqlitePersistence.layerMemory,
 ) =>
-  makeOrchestratorV2ReplayLayerWithRegistry(
+  ProviderReplayHarness.layerWithRegistry(
     { name: "external-control-fixture" },
-    ProviderAdapterRegistry.makeLayer([adapter]),
+    ProviderAdapterRegistry.layerFromAdapters([adapter]),
     { runEffectWorker: false, databaseLayer: database.pipe(Layer.provide(NodeServices.layer)) },
   );
 export const controlLayer = (
   policy = controlGrant,
-  database: ReturnType<typeof makeSqlitePersistenceLive> = SqlitePersistenceMemory,
+  database: ReturnType<typeof SqlitePersistence.layerFromPath> = SqlitePersistence.layerMemory,
 ) => {
   const native = nativeLayerFor(database);
   const stores = Layer.mergeAll(ProjectStore.layer, ProjectionStore.layer).pipe(

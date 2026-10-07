@@ -22,23 +22,23 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as TestConsole from "effect/testing/TestConsole";
-import { Command } from "effect/unstable/cli";
-import { McpProtocol, McpServer, Tool, Toolkit } from "effect/unstable/ai";
+import { Command } from "effect/cli";
+import { McpProtocol, McpServer, Tool, Toolkit } from "effect/ai";
 import {
   FetchHttpClient,
   HttpClient,
   HttpRouter,
   HttpServer,
   HttpServerResponse,
-} from "effect/unstable/http";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+} from "effect/http";
+import * as SqlClient from "effect/sql/SqlClient";
 import { cli } from "../../binCli.ts";
 import * as ServerConfig from "../../config.ts";
 import * as Startup from "../../serverRuntimeStartup.ts";
 import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectStore from "../../orchestration-v2/ProjectStore.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
-import { makeSqlitePersistenceLive } from "../../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import * as Grants from "../../persistence/ExternalReadGrantStore.ts";
 import * as Configuration from "./ExternalMcpConfig.ts";
 import * as Admin from "./ExternalMcpAdmin.ts";
@@ -53,6 +53,16 @@ const decode = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const mutation = Schema.decodeUnknownEffect(
   Schema.Struct({ structuredContent: ExternalControlMutationResult }),
 );
+// Declared tool failures arrive as error results whose text is the encoded failure.
+const failureCode = (result: unknown) =>
+  Schema.decodeUnknownEffect(
+    Schema.Struct({
+      isError: Schema.Literal(true),
+      content: Schema.Tuple([
+        Schema.Struct({ text: Schema.fromJsonString(Schema.Struct({ code: Schema.String })) }),
+      ]),
+    }),
+  )(result).pipe(Effect.map(({ content: [{ text }] }) => text.code));
 const runCli = (args: ReadonlyArray<string>) =>
   Command.runWith(cli, { version: "fixture", renderErrors: false })(["external-mcp", ...args]).pipe(
     Effect.provide(Layer.mergeAll(NodeServices.layer, NetService.layer, TestConsole.layer)),
@@ -84,7 +94,7 @@ const makeHome = Effect.gen(function* () {
   const configContext = yield* Layer.build(ServerConfig.layerTest(process.cwd(), baseDir));
   const config = Context.get(configContext, ServerConfig.ServerConfig);
   yield* fs.writeFileString(config.environmentIdPath, `${grant.environmentId}\n`);
-  return { baseDir, config, database: makeSqlitePersistenceLive(config.dbPath) };
+  return { baseDir, config, database: SqlitePersistence.layerFromPath(config.dbPath) };
 });
 type Home = Effect.Success<typeof makeHome>;
 const policy: Admin.Policy = {
@@ -405,12 +415,12 @@ it.effect(
                 ...send,
                 arguments: { ...send.arguments, requestKey: "new-send" },
               });
-              expect(denied).toMatchObject({ structuredContent: { code: "access_denied" } });
+              expect(yield* failureCode(denied)).toBe("access_denied");
               const conflicting = yield* session.call({
                 ...create,
                 arguments: { ...create.arguments, title: "Changed input" },
               });
-              expect(conflicting).toMatchObject({ structuredContent: { code: "conflict" } });
+              expect(yield* failureCode(conflicting)).toBe("conflict");
               const readOnly = yield* client.open({ ...policy, tools: ["external_project_list"] });
               expect(
                 yield* readOnly
@@ -418,9 +428,7 @@ it.effect(
                   .pipe(Effect.match({ onFailure: (error) => error, onSuccess: () => undefined })),
               ).toMatchObject({ code: "operation_denied" });
               const foreign = yield* client.open({ ...policy, projectId: blocked });
-              expect(yield* foreign.call(create)).toMatchObject({
-                structuredContent: { code: "access_denied" },
-              });
+              expect(yield* failureCode(yield* foreign.call(create))).toBe("access_denied");
               const other = yield* client.open({ ...policy, principalId: "other-principal" });
               const separate = yield* mutation(yield* other.call(create));
               expect(separate.structuredContent.threadId).not.toBe(threadId);

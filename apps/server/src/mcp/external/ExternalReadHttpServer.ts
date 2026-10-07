@@ -1,7 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { McpProtocol, McpServer } from "effect/unstable/ai";
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { McpProtocol, McpServer } from "effect/ai";
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 
 import packageJson from "../../../package.json" with { type: "json" };
 import * as ExternalReadAccess from "./ExternalReadAccess.ts";

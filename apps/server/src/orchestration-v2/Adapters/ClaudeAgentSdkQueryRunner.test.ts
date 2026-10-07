@@ -12,6 +12,7 @@ import {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as DateTime from "effect/DateTime";
@@ -24,7 +25,7 @@ import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
-import * as ProviderEventLoggers from "../../provider/Layers/ProviderEventLoggers.ts";
+import * as ProviderEventLoggers from "../../provider/ProviderEventLoggers.ts";
 import { readThreadProcessClaims } from "../../resourceTelemetry/ThreadProcessRegistry.ts";
 import * as ClaudeAdapter from "./ClaudeAdapterV2.ts";
 import * as IdAllocator from "../IdAllocator.ts";
@@ -35,7 +36,7 @@ vi.mock("@anthropic-ai/claude-agent-sdk", async (importOriginal) => ({
   query: sdk.query,
 }));
 
-const runnerLayer = ClaudeAdapter.claudeAgentSdkQueryRunnerLiveLayer.pipe(
+const runnerLayer = ClaudeAdapter.layerQueryRunner.pipe(
   Layer.provide(NodeServices.layer),
   Layer.provide(
     Layer.succeed(
@@ -118,6 +119,7 @@ describe("Claude query process claims", () => {
         fileSystem: fs,
         path: yield* Path.Path,
         idAllocator: yield* IdAllocator.IdAllocatorV2,
+        crypto: yield* Crypto.Crypto,
         queryRunner: runner,
       });
       const runtime = yield* adapter
@@ -197,7 +199,7 @@ describe("Claude query process claims", () => {
       const fake = fakeQuery();
       sdk.query.mockReturnValueOnce(fake.runtime);
       const runner = yield* ClaudeAdapter.ClaudeAgentSdkQueryRunner.pipe(
-        Effect.provide(ClaudeAdapter.claudeAgentSdkQueryRunnerLiveLayer),
+        Effect.provide(ClaudeAdapter.layerQueryRunner),
         Effect.provideService(ProviderEventLoggers.ProviderEventLoggers, {
           canonical: undefined,
           native: {

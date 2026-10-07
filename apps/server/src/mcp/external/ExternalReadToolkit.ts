@@ -8,7 +8,7 @@ import {
   ExternalReadThreadsResult,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import { Tool, Toolkit } from "effect/unstable/ai";
+import { Tool, Toolkit } from "effect/ai";
 
 import * as ExternalReadAccess from "./ExternalReadAccess.ts";
 import * as ExternalReadService from "./ExternalReadService.ts";

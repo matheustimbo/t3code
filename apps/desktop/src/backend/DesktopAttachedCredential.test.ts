@@ -4,7 +4,7 @@ import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 
 import * as DesktopAttachedCredential from "./DesktopAttachedCredential.ts";
 
@@ -89,8 +89,16 @@ describe("issueAttachedBearerToken", () => {
       assert.deepEqual(scopes, [
         "orchestration:read",
         "orchestration:operate",
+        "settings:write",
+        "providers:manage",
+        "environment:maintain",
+        "preview:operate",
+        "diagnostics:read",
+        "terminal:read",
         "terminal:operate",
-        "review:write",
+        "source-control:write",
+        "filesystem:read",
+        "filesystem:write",
         "relay:read",
         "access:read",
         "access:write",

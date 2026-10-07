@@ -1,11 +1,12 @@
+// @effect-diagnostics nodeBuiltinImport:off -- fixtures hash tokens synchronously, as grants store them.
 import * as NodeCrypto from "node:crypto";
 import * as NodePlatformCrypto from "@effect/platform-node/NodeCrypto";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import { McpProtocol, McpServer, Tool, Toolkit } from "effect/unstable/ai";
-import { HttpRouter, HttpServerResponse } from "effect/unstable/http";
+import { McpProtocol, McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
+import { HttpRouter, HttpServerResponse } from "effect/http";
 
 import * as Access from "./ExternalReadAccess.ts";
 import * as GrantStore from "../../persistence/ExternalReadGrantStore.ts";
@@ -62,12 +63,14 @@ const responseSchema = Schema.fromJsonString(
         ),
         isError: Schema.optional(Schema.Boolean),
         structuredContent: Schema.optional(Schema.Unknown),
+        content: Schema.optional(Schema.Array(Schema.Struct({ text: Schema.String }))),
       }),
     ),
     error: Schema.optional(Schema.Struct({ code: Schema.Number })),
   }),
 );
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 const request = (
   handler: Handler,
   method: string,
@@ -229,10 +232,7 @@ it.effect("authenticates every request and exposes exactly three read tools", ()
           session,
         ),
       );
-      expect(invalid.result?.structuredContent).toMatchObject({
-        _tag: "AiError",
-        reason: { _tag: "ToolParameterValidationError" },
-      });
+      expect(invalid.error?.code).toBe(McpSchema.INVALID_PARAMS_ERROR_CODE);
       for (const name of [
         "fixture_native_mutation",
         "delegate_task",
@@ -277,9 +277,10 @@ it.effect("uses the current request principal even when an MCP session ID is reu
           session,
         ),
       );
-      expect(denied.result).toMatchObject({
-        isError: false,
-        structuredContent: { code: "access_denied" },
+      expect(denied.result?.isError).toBe(true);
+      // Declared failures arrive as error results whose text is the encoded failure.
+      expect(yield* decodeJson(denied.result?.content?.[0]?.text ?? "")).toMatchObject({
+        code: "access_denied",
       });
       const projects = yield* payload(
         yield* request(

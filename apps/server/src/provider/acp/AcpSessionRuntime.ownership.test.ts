@@ -14,7 +14,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 
 import { readThreadProcessClaims } from "../../resourceTelemetry/ThreadProcessRegistry.ts";
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";

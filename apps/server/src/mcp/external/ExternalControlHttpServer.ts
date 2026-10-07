@@ -1,8 +1,8 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { McpProtocol, McpServer, Toolkit } from "effect/unstable/ai";
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { McpProtocol, McpServer, Toolkit } from "effect/ai";
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import packageJson from "../../../package.json" with { type: "json" };
 import * as Access from "./ExternalReadAccess.ts";
 import * as Control from "./ExternalControlService.ts";

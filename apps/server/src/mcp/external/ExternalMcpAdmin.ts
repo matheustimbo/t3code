@@ -13,7 +13,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as ProjectStore from "../../orchestration-v2/ProjectStore.ts";
 import * as GrantStore from "../../persistence/ExternalReadGrantStore.ts";
 import * as Access from "./ExternalReadAccess.ts";

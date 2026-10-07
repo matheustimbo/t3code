@@ -6,7 +6,7 @@ import { connectionCatalogDisplayUrl } from "@t3tools/client-runtime/connection"
 import type { EnvironmentId, ServerConfig } from "@t3tools/contracts";
 import { environmentDisplayLabel } from "@t3tools/shared/environmentLabel";
 import * as Option from "effect/Option";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 
 import type { SavedRemoteConnection } from "../lib/connection";
 import type { EnvironmentRuntimeState } from "./remote-runtime-types";

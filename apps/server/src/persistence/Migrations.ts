@@ -8,9 +8,9 @@
  * schema is always up to date before the application starts.
  */
 
-import * as Migrator from "effect/unstable/sql/Migrator";
+import * as Migrator from "effect/sql/Migrator";
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 // Import all migrations statically
 import Migration0001 from "./Migrations/001_OrchestrationEvents.ts";
@@ -59,7 +59,8 @@ import Migration0043 from "./Migrations/043_ProjectionThreadsUnsettledAt.ts";
 // 44 and 45 are the fork's and have already run on released databases, so
 // upstream migrations 44 through 50 shift by two. The fork's queued-message
 // migrations already occupy 53 and 54, so upstream's later migrations are
-// appended after the fork's last shipped id (upstream 51-56 are fork 55-60).
+// appended after the fork's last shipped id (upstream 51-56 are fork 55-60,
+// upstream 57-58 are fork 63-64).
 import Migration0044 from "./Migrations/044_ProjectionProjectTicketTitles.ts";
 import Migration0045 from "./Migrations/045_ProjectionThreadTitleRevision.ts";
 import Migration0046 from "./Migrations/046_ClearAutomaticProjectModelDefaults.ts";
@@ -79,6 +80,8 @@ import Migration0059 from "./Migrations/059_OrchestrationV2.ts";
 import Migration0060 from "./Migrations/060_RemoveRedundantProjectionIndexes.ts";
 import Migration0061 from "./Migrations/061_ExternalReadGrants.ts";
 import Migration0062 from "./Migrations/062_ExternalControlRequests.ts";
+import Migration0063 from "./Migrations/063_ScheduledTaskWebhooks.ts";
+import Migration0064 from "./Migrations/064_WebhookRelayDeliveries.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -153,6 +156,8 @@ export const migrationEntries = [
   [60, "RemoveRedundantProjectionIndexes", Migration0060],
   [61, "ExternalReadGrants", Migration0061],
   [62, "ExternalControlRequests", Migration0062],
+  [63, "ScheduledTaskWebhooks", Migration0063],
+  [64, "WebhookRelayDeliveries", Migration0064],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

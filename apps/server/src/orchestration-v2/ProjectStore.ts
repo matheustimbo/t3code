@@ -3,7 +3,7 @@ import {
   IsoDateTime,
   ModelSelection,
   type OrchestrationProjectShell,
-  ProjectIconOverride,
+  StoredProjectIcon,
   ProjectId,
   ProjectScript,
   ThreadEnvMode,
@@ -15,8 +15,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import * as SqlSchema from "effect/unstable/sql/SqlSchema";
+import * as SqlClient from "effect/sql/SqlClient";
+import * as SqlSchema from "effect/sql/SqlSchema";
 
 export class ProjectStoreV2Error extends Schema.TaggedError<ProjectStoreV2Error>()(
   "ProjectStoreV2Error",
@@ -39,7 +39,7 @@ export const ProjectRow = Schema.Struct({
   defaultThreadEnvMode: Schema.NullOr(ThreadEnvMode),
   autoPull: Schema.Boolean,
   faviconPath: Schema.NullOr(Schema.String),
-  projectIcon: Schema.NullOr(ProjectIconOverride),
+  projectIcon: Schema.NullOr(StoredProjectIcon),
   ticketTitlePolicy: Schema.optional(Schema.NullOr(TicketTitlePolicy)),
   ticketProviderBindings: Schema.optional(TicketProviderBindings),
   scripts: Schema.Array(ProjectScript),
@@ -53,7 +53,7 @@ const ProjectDbRow = Schema.Struct({
   ...ProjectRow.fields,
   defaultModelSelection: Schema.NullOr(Schema.fromJsonString(ModelSelection)),
   autoPull: Schema.BooleanFromBit,
-  projectIcon: Schema.NullOr(Schema.fromJsonString(ProjectIconOverride)),
+  projectIcon: Schema.NullOr(Schema.fromJsonString(StoredProjectIcon)),
   ticketTitlePolicy: Schema.NullOr(Schema.fromJsonString(TicketTitlePolicy)),
   ticketProviderBindings: Schema.fromJsonString(TicketProviderBindings),
   scripts: Schema.fromJsonString(Schema.Array(ProjectScript)),

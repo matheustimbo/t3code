@@ -8,7 +8,7 @@ import {
   ExternalControlSendInput,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import { Tool, Toolkit } from "effect/unstable/ai";
+import { Tool, Toolkit } from "effect/ai";
 import * as Access from "./ExternalReadAccess.ts";
 import * as Control from "./ExternalControlService.ts";
 

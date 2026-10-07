@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- fixtures hash tokens synchronously, as grants store them.
 import * as NodeCrypto from "node:crypto";
 import * as NodePlatformCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -18,10 +19,7 @@ import * as Layer from "effect/Layer";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as ProjectStore from "../../orchestration-v2/ProjectStore.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
-import {
-  makeSqlitePersistenceLive,
-  SqlitePersistenceMemory,
-} from "../../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import * as Access from "./ExternalReadAccess.ts";
 import * as GrantStore from "../../persistence/ExternalReadGrantStore.ts";
 import * as Reads from "./ExternalReadService.ts";
@@ -56,7 +54,7 @@ export const registerFixtures = Effect.gen(function* () {
 export const accessLayer = (
   grants: ReadonlyArray<Access.ExternalReadGrant> = [grant],
   enabled = true,
-  database: ReturnType<typeof makeSqlitePersistenceLive> = SqlitePersistenceMemory,
+  database: ReturnType<typeof SqlitePersistence.layerFromPath> = SqlitePersistence.layerMemory,
 ) =>
   Layer.effectDiscard(registerFixtures).pipe(
     Layer.provideMerge(Access.layer),
@@ -68,7 +66,7 @@ export const accessLayer = (
     Layer.provide(NodeServices.layer),
   );
 export const storesLayer = Layer.mergeAll(ProjectStore.layer, ProjectionStore.layer).pipe(
-  Layer.provideMerge(SqlitePersistenceMemory),
+  Layer.provideMerge(SqlitePersistence.layerMemory),
 );
 export const readsLayer = Reads.layer.pipe(
   Layer.provideMerge(storesLayer),

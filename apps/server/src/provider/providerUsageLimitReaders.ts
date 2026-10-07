@@ -4,13 +4,10 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 
-import {
-  parseGrokUsageWindows,
-  prefixUsageWindowsWithAccount,
-} from "./Layers/polledUsageLimits.ts";
+import { parseGrokUsageWindows, prefixUsageWindowsWithAccount } from "./polledUsageLimits.ts";
 import { ProviderUsageLimitsReadError } from "./providerUsageLimitPolling.ts";
 import { makeUsageLimits } from "./providerUsageLimits.ts";
 

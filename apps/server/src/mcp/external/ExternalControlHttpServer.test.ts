@@ -1,10 +1,11 @@
+import * as NodePlatformCrypto from "@effect/platform-node/NodeCrypto";
 import { expect, it } from "@effect/vitest";
 import { ExternalControlMutationResult } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import { McpProtocol, McpServer, Tool, Toolkit } from "effect/unstable/ai";
-import { HttpRouter, HttpServerResponse } from "effect/unstable/http";
+import { McpProtocol, McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
+import { HttpRouter, HttpServerResponse } from "effect/http";
 import * as Access from "./ExternalReadAccess.ts";
 import * as Http from "./ExternalControlHttpServer.ts";
 import * as ReadHttp from "./ExternalReadHttpServer.ts";
@@ -29,12 +30,14 @@ const responseSchema = Schema.fromJsonString(
         ),
         structuredContent: Schema.optional(Schema.Unknown),
         isError: Schema.optional(Schema.Boolean),
+        content: Schema.optional(Schema.Array(Schema.Struct({ text: Schema.String }))),
       }),
     ),
     error: Schema.optional(Schema.Struct({ code: Schema.Number })),
   }),
 );
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 const request = (
   handler: Handler,
   method: string,
@@ -115,13 +118,18 @@ const app = Layer.mergeAll(
   Layer.provideMerge(Access.layer),
   Layer.provideMerge(fixture),
   Layer.provide(Layer.succeed(Http.ExternalControlSettings, { enabled: true })),
+  Layer.provide(NodePlatformCrypto.layer),
 );
 const withApp = <A, E>(test: (handler: Handler) => Effect.Effect<A, E>, enabled = true) =>
   Effect.scoped(
     Effect.gen(function* () {
       const application = enabled
         ? app
-        : Http.layer.pipe(Layer.provideMerge(Access.layer), Layer.provide(fixture));
+        : Http.layer.pipe(
+            Layer.provideMerge(Access.layer),
+            Layer.provide(fixture),
+            Layer.provide(NodePlatformCrypto.layer),
+          );
       const { handler } = yield* Effect.acquireRelease(
         Effect.sync(() => HttpRouter.toWebHandler(application, { disableLogger: true })),
         ({ dispose }) => Effect.promise(dispose),
@@ -221,7 +229,12 @@ it.effect(
               session,
             );
             expect(response.status).toBe(200);
-            return (yield* payload(response)).result?.structuredContent;
+            const { result, error } = yield* payload(response);
+            if (error !== undefined) return { error };
+            // Declared failures arrive as error results whose text is the encoded failure.
+            return result?.isError === true
+              ? yield* decodeJson(result.content?.[0]?.text ?? "")
+              : result?.structuredContent;
           });
         const create = {
           projectId: allowed,
@@ -256,14 +269,14 @@ it.effect(
             requestKey: "http-invalid",
             attachments: [{ id: "foreign" }],
           }),
-        ).toMatchObject({ _tag: "AiError", reason: { _tag: "ToolParameterValidationError" } });
+        ).toEqual({ error: { code: McpSchema.INVALID_PARAMS_ERROR_CODE } });
         expect(
           yield* call("external_thread_create", {
             ...create,
             requestKey: "http-invalid-create",
             parentThreadId: "foreign",
           }),
-        ).toMatchObject({ _tag: "AiError", reason: { _tag: "ToolParameterValidationError" } });
+        ).toEqual({ error: { code: McpSchema.INVALID_PARAMS_ERROR_CODE } });
         expect(
           yield* call("external_thread_messages", {
             projectId: blocked,

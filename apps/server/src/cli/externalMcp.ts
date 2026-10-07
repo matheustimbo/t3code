@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { Command, Flag } from "effect/unstable/cli";
+import { Command, Flag } from "effect/cli";
 import * as Admin from "../mcp/external/ExternalMcpAdmin.ts";
 import * as Client from "../mcp/external/ExternalMcpClient.ts";
 import * as Configuration from "../mcp/external/ExternalMcpConfig.ts";

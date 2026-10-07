@@ -51,7 +51,7 @@ import * as SchemaTransformation from "effect/SchemaTransformation";
 import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import { writeFileStringAtomically } from "./atomicWrite.ts";
 import { resolveSymlinkTarget } from "@t3tools/shared/symlink";
 import * as ServerConfig from "./config.ts";
@@ -169,6 +169,11 @@ const BITBUCKET_SECRET_NAMES = {
 } as const;
 const BITBUCKET_SECRET_FIELDS = ["accessToken", "apiToken"] as const;
 
+/** Hosts are case-insensitive; a patch can arrive before decoding lowercased its keys. */
+function gitHubTokenSecretName(host: string): string {
+  return `github-token-${Buffer.from(host.trim().toLowerCase(), "utf8").toString("base64url")}`;
+}
+
 const redactSecret = (value: string) => (value.length > 0 ? SECRET_REDACTED : "");
 
 function redactProviderEnvironmentVariable(
@@ -223,7 +228,20 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
     accessToken: redactSecret(settings.bitbucket.accessToken),
     apiToken: redactSecret(settings.bitbucket.apiToken),
   };
-  return { ...settings, providerInstances, ticketProviderInstances, usageLimitSources, bitbucket };
+  const github = {
+    ...settings.github,
+    tokens: Object.fromEntries(
+      Object.entries(settings.github.tokens).map(([host, token]) => [host, redactSecret(token)]),
+    ),
+  };
+  return {
+    ...settings,
+    providerInstances,
+    ticketProviderInstances,
+    usageLimitSources,
+    bitbucket,
+    github,
+  };
 }
 
 export interface ServerSettingsUpdateOptions {
@@ -753,7 +771,24 @@ const make = Effect.gen(function* () {
         bitbucket[field] = SECRET_REDACTED;
         moved = true;
       }
-      return moved ? { ...settings, bitbucket } : settings;
+      const tokens = { ...settings.github.tokens };
+      for (const [host, value] of Object.entries(tokens)) {
+        if (value.length === 0 || value === SECRET_REDACTED) continue;
+        const stored = yield* secretStore
+          .set(gitHubTokenSecretName(host), textEncoder.encode(value))
+          .pipe(
+            Effect.as(true),
+            Effect.catch(() =>
+              Effect.logWarning("failed to move a GitHub token into the secret store", {
+                host,
+              }).pipe(Effect.as(false)),
+            ),
+          );
+        if (!stored) continue;
+        tokens[host] = SECRET_REDACTED;
+        moved = true;
+      }
+      return moved ? { ...settings, bitbucket, github: { ...settings.github, tokens } } : settings;
     });
 
   const loadSettingsFromDisk = Effect.gen(function* () {
@@ -848,10 +883,14 @@ const make = Effect.gen(function* () {
     return migrated;
   });
 
-  const settingsCache = yield* Cache.make<typeof cacheKey, ServerSettings, ServerSettingsError>({
-    capacity: 1,
-    lookup: () => loadSettingsFromDisk,
-  });
+  // A failed read is not kept: the next read retries instead of replaying the failure.
+  const settingsCache = yield* Cache.makeWith<typeof cacheKey, ServerSettings, ServerSettingsError>(
+    () => loadSettingsFromDisk,
+    {
+      capacity: 1,
+      timeToLive: (exit) => (Exit.isSuccess(exit) ? Duration.infinity : Duration.zero),
+    },
+  );
 
   const getSettingsFromCache = Cache.get(settingsCache, cacheKey);
 
@@ -939,6 +978,26 @@ const make = Effect.gen(function* () {
       return materialized;
     });
 
+  const materializeGitHubTokenSecrets = (github: ServerSettings["github"]) =>
+    Effect.gen(function* () {
+      const tokens: Record<string, string> = {};
+      for (const [host, value] of Object.entries(github.tokens)) {
+        if (value !== SECRET_REDACTED) {
+          tokens[host] = value;
+          continue;
+        }
+        const secret = yield* secretStore
+          .get(gitHubTokenSecretName(host))
+          .pipe(
+            Effect.mapError(
+              (cause) => new ServerSettingsError({ settingsPath, operation: "read-secret", cause }),
+            ),
+          );
+        tokens[host] = Option.isSome(secret) ? textDecoder.decode(secret.value) : "";
+      }
+      return { ...github, tokens };
+    });
+
   const materializeProviderEnvironmentSecrets = (
     settings: ServerSettings,
   ): Effect.Effect<ServerSettings, ServerSettingsError> =>
@@ -959,6 +1018,7 @@ const make = Effect.gen(function* () {
         settings.usageLimitSources,
       );
       const bitbucket = yield* materializeBitbucketSecrets(settings.bitbucket);
+      const github = yield* materializeGitHubTokenSecrets(settings.github);
       return {
         ...settings,
         providerInstances: providerInstances as unknown as ServerSettings["providerInstances"],
@@ -966,6 +1026,7 @@ const make = Effect.gen(function* () {
           ticketProviderInstances as unknown as ServerSettings["ticketProviderInstances"],
         usageLimitSources,
         bitbucket,
+        github,
       };
     });
 
@@ -1023,6 +1084,14 @@ const make = Effect.gen(function* () {
               }).pipe(Effect.as(settings.bitbucket)),
             ),
           );
+          const github = yield* materializeGitHubTokenSecrets(settings.github).pipe(
+            Effect.catch((error: ServerSettingsError) =>
+              Effect.logWarning("failed to materialize GitHub token secrets", {
+                operation: error.operation,
+                cause: error.cause,
+              }).pipe(Effect.as(settings.github)),
+            ),
+          );
           return {
             ...settings,
             providerInstances: providerInstances as ServerSettings["providerInstances"],
@@ -1030,6 +1099,7 @@ const make = Effect.gen(function* () {
               ticketProviderInstances as ServerSettings["ticketProviderInstances"],
             usageLimitSources,
             bitbucket,
+            github,
           };
         }),
       ),
@@ -1201,6 +1271,39 @@ const make = Effect.gen(function* () {
         bitbucket[field] = SECRET_REDACTED;
       }
 
+      const tokens: Record<string, string> = {};
+      for (const [rawHost, raw] of Object.entries(next.github.tokens)) {
+        const host = rawHost.trim().toLowerCase();
+        let value = raw;
+        if (value === SECRET_REDACTED) {
+          // The marker keeps what is saved; a hand-edited plaintext token moves into the store.
+          const inline = current.github.tokens[host];
+          if (inline === undefined || inline === SECRET_REDACTED || inline.length === 0) {
+            tokens[host] = SECRET_REDACTED;
+            continue;
+          }
+          value = inline;
+        }
+        const secretName = gitHubTokenSecretName(host);
+        if (value.length === 0) {
+          changes.push({ kind: "remove", secretName, operation: "remove-secret" });
+          continue;
+        }
+        changes.push({ kind: "write", secretName, value: textEncoder.encode(value) });
+        tokens[host] = SECRET_REDACTED;
+      }
+      const nextHosts = new Set(
+        Object.keys(next.github.tokens).map((host) => host.trim().toLowerCase()),
+      );
+      for (const host of Object.keys(current.github.tokens)) {
+        if (nextHosts.has(host.trim().toLowerCase())) continue;
+        changes.push({
+          kind: "remove",
+          secretName: gitHubTokenSecretName(host),
+          operation: "remove-stale-secret",
+        });
+      }
+
       return {
         settings: {
           ...next,
@@ -1209,6 +1312,7 @@ const make = Effect.gen(function* () {
             ticketProviderInstances as unknown as ServerSettings["ticketProviderInstances"],
           usageLimitSources: usageLimitSources as ServerSettings["usageLimitSources"],
           bitbucket,
+          github: { ...next.github, tokens },
         },
         changes,
       };

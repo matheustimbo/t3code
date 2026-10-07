@@ -17,9 +17,9 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Runtime from "effect/Runtime";
 import * as Schema from "effect/Schema";
-import { Flag } from "effect/unstable/cli";
-import { FetchHttpClient } from "effect/unstable/http";
-import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
+import { Flag } from "effect/cli";
+import { FetchHttpClient } from "effect/http";
+import * as HttpApiClient from "effect/http-api/HttpApiClient";
 
 export class RemoteCliError extends Schema.TaggedError<RemoteCliError>()("RemoteCliError", {
   code: Schema.String,

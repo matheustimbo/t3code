@@ -11,16 +11,16 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 
 const projectEventCodec = Schema.fromJsonString(ApplicationProjectEvent);
 const encodeProjectEvent = Schema.encodeEffect(projectEventCodec);
 const decodeProjectEvent = Schema.decodeEffect(projectEventCodec);
 
-it.layer(ProjectStore.layer.pipe(Layer.provideMerge(SqlitePersistenceMemory)))(
+it.layer(ProjectStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory)))(
   "ProjectStoreV2",
   (it) => {
     it.effect("replays ticket settings, preserves them on unrelated updates, and resets them", () =>
@@ -142,7 +142,6 @@ it.layer(ProjectStore.layer.pipe(Layer.provideMerge(SqlitePersistenceMemory)))(
           FROM projection_projects
           WHERE project_id = ${projectId}
         `;
-        // @effect-diagnostics-next-line preferSchemaOverJson:off
         assert.strictEqual(rows[0]?.defaultModelSelection, JSON.stringify(modelSelection));
         assert.deepStrictEqual(
           Option.getOrNull(yield* projects.get(projectId))?.defaultModelSelection,
