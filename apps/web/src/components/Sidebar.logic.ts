@@ -609,6 +609,22 @@ export function filterSidebarV2VisibleThreads<
   );
 }
 
+/** Narrows the project scope (null is every project) to one machine's projects. */
+export function scopeSidebarProjectKeysToEnvironment(input: {
+  readonly projectKeys: ReadonlySet<string> | null;
+  readonly environmentId: EnvironmentId | null;
+  readonly projects: ReadonlyArray<{ readonly environmentId: EnvironmentId; readonly id: string }>;
+}): ReadonlySet<string> | null {
+  const { projectKeys, environmentId } = input;
+  if (environmentId === null) return projectKeys;
+  const machineKeys = input.projects.flatMap((project) =>
+    project.environmentId === environmentId ? [`${project.environmentId}:${project.id}`] : [],
+  );
+  return new Set(
+    projectKeys === null ? machineKeys : machineKeys.filter((key) => projectKeys.has(key)),
+  );
+}
+
 export function buildBulkTitleRegenerationContextMenuItem(input: {
   supportedCount: number;
   actionableCount: number;

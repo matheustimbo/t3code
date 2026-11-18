@@ -36,6 +36,8 @@ import {
   groupSidebarThreadsByProject,
   resolveSidebarFolderDot,
   sidebarFolderExpansionKeys,
+  filterSidebarV2VisibleThreads,
+  scopeSidebarProjectKeysToEnvironment,
 } from "./Sidebar.logic";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
@@ -715,6 +717,79 @@ describe("getFallbackThreadIdAfterDelete", () => {
     });
 
     expect(fallbackThreadId).toBe(ThreadId.make("thread-visible"));
+  });
+});
+
+describe("scopeSidebarProjectKeysToEnvironment", () => {
+  const remoteEnvironmentId = EnvironmentId.make("environment-remote");
+  const sharedProjectId = ProjectId.make("shared-project");
+  const localOnlyProjectId = ProjectId.make("local-only-project");
+  const projects = [
+    makeProject({ environmentId: localEnvironmentId, id: sharedProjectId }),
+    makeProject({ environmentId: localEnvironmentId, id: localOnlyProjectId }),
+    makeProject({ environmentId: remoteEnvironmentId, id: sharedProjectId }),
+  ];
+  const threads = [
+    makeThread({
+      id: ThreadId.make("local-shared"),
+      environmentId: localEnvironmentId,
+      projectId: sharedProjectId,
+    }),
+    makeThread({
+      id: ThreadId.make("local-only"),
+      environmentId: localEnvironmentId,
+      projectId: localOnlyProjectId,
+    }),
+    makeThread({
+      id: ThreadId.make("remote-shared"),
+      environmentId: remoteEnvironmentId,
+      projectId: sharedProjectId,
+    }),
+  ];
+  const visibleIds = (scopedProjectKeys: ReadonlySet<string> | null) =>
+    filterSidebarV2VisibleThreads(threads, scopedProjectKeys, new Set()).map((thread) => thread.id);
+
+  it("lists every thread on the chosen machine and none from other machines", () => {
+    expect(
+      visibleIds(
+        scopeSidebarProjectKeysToEnvironment({
+          projectKeys: null,
+          environmentId: remoteEnvironmentId,
+          projects,
+        }),
+      ),
+    ).toEqual(["remote-shared"]);
+    expect(
+      visibleIds(
+        scopeSidebarProjectKeysToEnvironment({
+          projectKeys: null,
+          environmentId: localEnvironmentId,
+          projects,
+        }),
+      ),
+    ).toEqual(["local-shared", "local-only"]);
+    expect(
+      visibleIds(
+        scopeSidebarProjectKeysToEnvironment({ projectKeys: null, environmentId: null, projects }),
+      ),
+    ).toEqual(["local-shared", "local-only", "remote-shared"]);
+  });
+
+  it("keeps a project scope that spans machines to the chosen machine", () => {
+    const projectKeys = new Set([
+      `${localEnvironmentId}:${sharedProjectId}`,
+      `${remoteEnvironmentId}:${sharedProjectId}`,
+    ]);
+
+    expect(
+      visibleIds(
+        scopeSidebarProjectKeysToEnvironment({
+          projectKeys,
+          environmentId: localEnvironmentId,
+          projects,
+        }),
+      ),
+    ).toEqual(["local-shared"]);
   });
 });
 
