@@ -80,18 +80,44 @@ export function resolveSidebarRouteReveal<T extends RevealableThread>(input: {
   readonly routeKeyInPlace: boolean;
   readonly isSearching: boolean;
   readonly scopedProjectKeys: ReadonlySet<string> | null;
+  readonly scopedEnvironmentIds?: ReadonlySet<string> | null;
   readonly delegatedUnderParent: ReadonlySet<string>;
   readonly findThread: (key: string) => T | undefined;
-}): { readonly pendingKey: string | null; readonly widensScope: boolean } {
-  const { reveal, routeKey, isSearching, scopedProjectKeys, delegatedUnderParent, findThread } =
-    input;
+}): {
+  readonly pendingKey: string | null;
+  readonly widensScope: boolean;
+  readonly widensProjectScope: boolean;
+  readonly widensEnvironmentScope: boolean;
+} {
+  const {
+    reveal,
+    routeKey,
+    isSearching,
+    scopedProjectKeys,
+    scopedEnvironmentIds = null,
+    delegatedUnderParent,
+    findThread,
+  } = input;
   const pendingKey = pendingSidebarRouteReveal(reveal, routeKey, input.routeKeyInPlace);
   // Search results replace the thread list; the reveal waits for it to return.
   const thread = pendingKey === null || isSearching ? undefined : findThread(pendingKey);
-  const widensScope =
+  const canRevealUnscoped =
     thread !== undefined &&
+    filterSidebarV2VisibleThreads([thread], null, delegatedUnderParent, null).length === 1;
+  const widensProjectScope =
+    canRevealUnscoped &&
     scopedProjectKeys !== null &&
-    filterSidebarV2VisibleThreads([thread], scopedProjectKeys, delegatedUnderParent).length === 0 &&
-    filterSidebarV2VisibleThreads([thread], null, delegatedUnderParent).length === 1;
-  return { pendingKey, widensScope };
+    filterSidebarV2VisibleThreads([thread], scopedProjectKeys, delegatedUnderParent, null)
+      .length === 0;
+  const widensEnvironmentScope =
+    canRevealUnscoped &&
+    scopedEnvironmentIds !== null &&
+    filterSidebarV2VisibleThreads([thread], null, delegatedUnderParent, scopedEnvironmentIds)
+      .length === 0;
+  return {
+    pendingKey,
+    widensScope: widensProjectScope || widensEnvironmentScope,
+    widensProjectScope,
+    widensEnvironmentScope,
+  };
 }

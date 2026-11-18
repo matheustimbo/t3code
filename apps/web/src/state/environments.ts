@@ -109,6 +109,14 @@ export function useEnvironmentIdentities() {
   return useAtomValue(environmentSummaries.identitiesAtom);
 }
 
+export function useEnvironmentConnectionSummaries() {
+  return useAtomValue(environmentSummaries.environmentsAtom);
+}
+
+export function useEnvironmentCatalogReady(): boolean {
+  return useAtomValue(environmentCatalog.catalogValueAtom).isReady;
+}
+
 export function usePullRequestsSupported() {
   return useAtomValue(environmentSummaries.pullRequestsSupportedAtom);
 }

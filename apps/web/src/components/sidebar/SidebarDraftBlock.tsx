@@ -154,6 +154,7 @@ interface SidebarDraftRowData {
 export const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
   projectByKey: ReadonlyMap<string, EnvironmentProject>;
   projectDisplayNameByKey: ReadonlyMap<string, string>;
+  scopedEnvironmentIds?: ReadonlySet<string> | null;
   scopedProjectKeys: ReadonlySet<string> | null;
   routeDraftId: string | null;
   onNavigateToDraft: (draftId: DraftId) => void;
@@ -194,6 +195,12 @@ export const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
     const rows: SidebarDraftRowData[] = [];
     for (const [draftKey, session] of Object.entries(draftThreadsByThreadKey)) {
       if (session.promotedTo != null) {
+        continue;
+      }
+      if (
+        props.scopedEnvironmentIds != null &&
+        !props.scopedEnvironmentIds.has(session.environmentId)
+      ) {
         continue;
       }
       if (

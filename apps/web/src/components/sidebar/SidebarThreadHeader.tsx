@@ -15,6 +15,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 export interface SidebarThreadHeaderProps {
   hasProjects: boolean;
+  environmentScope?: ReactNode;
   projectScope: ReactNode;
   onNewProject: () => void;
   onNewThread: (event: ReactMouseEvent) => void;
@@ -34,6 +35,7 @@ export interface SidebarThreadHeaderProps {
 
 export function SidebarThreadHeader({
   hasProjects,
+  environmentScope,
   projectScope,
   onNewProject,
   onNewThread,
@@ -99,6 +101,7 @@ export function SidebarThreadHeader({
         ) : null}
       </div>
       <div className="flex shrink-0 items-center">
+        {environmentScope}
         {hasProjects ? (
           <>
             {projectScope}
@@ -138,12 +141,14 @@ export function SidebarThreadHeader({
 export function SidebarHeaderIconButton({
   label,
   tooltip = label,
+  isActive = false,
   className,
   children,
   ...rest
 }: {
   label: string;
   tooltip?: ReactNode;
+  isActive?: boolean | undefined;
   className?: string | undefined;
   children?: ReactNode;
 } & Omit<
@@ -157,6 +162,7 @@ export function SidebarHeaderIconButton({
           <SidebarMenuButton
             size="icon"
             type="button"
+            isActive={isActive}
             aria-label={label}
             {...rest}
             className={cn("relative size-7 shrink-0", className)}

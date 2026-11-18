@@ -36,6 +36,9 @@ import {
   groupSidebarThreadsByProject,
   resolveSidebarFolderDot,
   sidebarFolderExpansionKeys,
+  buildSidebarEnvironmentScopeOptions,
+  filterSidebarV2VisibleThreads,
+  resolveSidebarEnvironmentScopeIds,
 } from "./Sidebar.logic";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
@@ -1515,7 +1518,12 @@ describe("resolveSidebarRouteReveal", () => {
         delegatedUnderParent: new Set(),
         findThread,
       }),
-    ).toEqual({ pendingKey: hiddenKey, widensScope: true });
+    ).toEqual({
+      pendingKey: hiddenKey,
+      widensScope: true,
+      widensProjectScope: true,
+      widensEnvironmentScope: false,
+    });
   });
 
   it("never widens for a thread whose reveal already completed", () => {
@@ -1530,7 +1538,12 @@ describe("resolveSidebarRouteReveal", () => {
         delegatedUnderParent: new Set(),
         findThread,
       }),
-    ).toEqual({ pendingKey: null, widensScope: false });
+    ).toEqual({
+      pendingKey: null,
+      widensScope: false,
+      widensProjectScope: false,
+      widensEnvironmentScope: false,
+    });
   });
 
   it("widens again for a thread reopened before the thread between them listed its row", () => {
@@ -1548,7 +1561,12 @@ describe("resolveSidebarRouteReveal", () => {
         findThread,
       });
     resolve("environment-test:unlisted");
-    expect(resolve(hiddenKey)).toEqual({ pendingKey: hiddenKey, widensScope: true });
+    expect(resolve(hiddenKey)).toEqual({
+      pendingKey: hiddenKey,
+      widensScope: true,
+      widensProjectScope: true,
+      widensEnvironmentScope: false,
+    });
   });
 
   it("holds a pending reveal without widening while searching", () => {
@@ -1562,7 +1580,12 @@ describe("resolveSidebarRouteReveal", () => {
         delegatedUnderParent: new Set(),
         findThread,
       }),
-    ).toEqual({ pendingKey: hiddenKey, widensScope: false });
+    ).toEqual({
+      pendingKey: hiddenKey,
+      widensScope: false,
+      widensProjectScope: false,
+      widensEnvironmentScope: false,
+    });
   });
 });
 
@@ -1680,5 +1703,204 @@ describe("shouldCreateNewThreadInCurrentProject", () => {
     expect(shouldCreateNewThreadInCurrentProject(false, 1, 3)).toBe(true);
     expect(shouldCreateNewThreadInCurrentProject(false, 0, 0)).toBe(true);
     expect(shouldCreateNewThreadInCurrentProject(true, 2, 2)).toBe(true);
+  });
+});
+
+describe("sidebar environment scope", () => {
+  it("filters visible threads by environment alongside project and lineage rules", () => {
+    const envLocal = EnvironmentId.make("env-local");
+    const envRemote = EnvironmentId.make("env-remote");
+    const envOther = EnvironmentId.make("env-other");
+    const threads = [
+      {
+        id: ThreadId.make("t-local-a"),
+        environmentId: envLocal,
+        projectId: "proj-a",
+        archivedAt: null,
+        lineage: {
+          parentThreadId: null,
+          relationshipToParent: null,
+          rootThreadId: ThreadId.make("t-local-a"),
+        },
+      },
+      {
+        id: ThreadId.make("t-remote-a"),
+        environmentId: envRemote,
+        projectId: "proj-a",
+        archivedAt: null,
+        lineage: {
+          parentThreadId: null,
+          relationshipToParent: null,
+          rootThreadId: ThreadId.make("t-remote-a"),
+        },
+      },
+      {
+        id: ThreadId.make("t-remote-b"),
+        environmentId: envRemote,
+        projectId: "proj-b",
+        archivedAt: null,
+        lineage: {
+          parentThreadId: null,
+          relationshipToParent: null,
+          rootThreadId: ThreadId.make("t-remote-b"),
+        },
+      },
+      {
+        id: ThreadId.make("t-other-a"),
+        environmentId: envOther,
+        projectId: "proj-a",
+        archivedAt: null,
+        lineage: {
+          parentThreadId: null,
+          relationshipToParent: null,
+          rootThreadId: ThreadId.make("t-other-a"),
+        },
+      },
+      {
+        id: ThreadId.make("t-remote-subagent"),
+        environmentId: envRemote,
+        projectId: "proj-a",
+        archivedAt: null,
+        lineage: {
+          parentThreadId: ThreadId.make("t-remote-a"),
+          relationshipToParent: "subagent" as const,
+          rootThreadId: ThreadId.make("t-remote-a"),
+        },
+      },
+    ];
+
+    expect(
+      filterSidebarV2VisibleThreads(threads, null, new Set(), new Set([envRemote])).map(
+        (thread) => thread.id,
+      ),
+    ).toEqual(["t-remote-a", "t-remote-b"]);
+
+    expect(
+      filterSidebarV2VisibleThreads(
+        threads,
+        new Set([`${envLocal}:proj-a`, `${envRemote}:proj-a`, `${envOther}:proj-a`]),
+        new Set(),
+        new Set([envLocal, envRemote]),
+      ).map((thread) => thread.id),
+    ).toEqual(["t-local-a", "t-remote-a"]);
+  });
+
+  it("orders primary environment first, omits disabled environments, and disambiguates duplicate labels", () => {
+    const options = buildSidebarEnvironmentScopeOptions({
+      primaryEnvironmentId: "env-local",
+      environments: [
+        {
+          environmentId: "env-disabled",
+          environmentLabel: "VPS",
+          displayUrl: "https://disabled.example",
+          connectionState: "disconnected",
+          isEnabled: false,
+        },
+        {
+          environmentId: "env-zeta",
+          environmentLabel: "Zeta",
+          displayUrl: "https://zeta.example",
+          connectionState: "disconnected",
+        },
+        {
+          environmentId: "env-vps-2",
+          environmentLabel: "VPS",
+          displayUrl: "https://vps-2.example",
+          connectionState: "connected",
+        },
+        {
+          environmentId: "env-local",
+          environmentLabel: "MacBook Pro",
+          displayUrl: "http://127.0.0.1:3773",
+          connectionState: "connected",
+        },
+        {
+          environmentId: "env-vps-1",
+          environmentLabel: "VPS",
+          displayUrl: "",
+          connectionState: "connected",
+        },
+      ],
+    });
+
+    expect(options).toEqual([
+      {
+        environmentId: "env-local",
+        label: "MacBook Pro",
+        displayUrl: "http://127.0.0.1:3773",
+        connectionState: "connected",
+      },
+      {
+        environmentId: "env-vps-1",
+        label: "VPS · env-vps-1",
+        displayUrl: "",
+        connectionState: "connected",
+      },
+      {
+        environmentId: "env-vps-2",
+        label: "VPS · https://vps-2.example",
+        displayUrl: "https://vps-2.example",
+        connectionState: "connected",
+      },
+      {
+        environmentId: "env-zeta",
+        label: "Zeta",
+        displayUrl: "https://zeta.example",
+        connectionState: "disconnected",
+      },
+    ]);
+  });
+
+  it("keeps unknown environment scope ids until the catalog is ready", () => {
+    const options = [{ environmentId: "env-local" }];
+    expect(
+      resolveSidebarEnvironmentScopeIds({
+        options,
+        ids: ["env-remote", "env-local", "env-remote"],
+        canClearMissingScope: false,
+      }),
+    ).toEqual(["env-remote", "env-local"]);
+    expect(
+      resolveSidebarEnvironmentScopeIds({
+        options,
+        ids: ["env-remote", "env-local"],
+        canClearMissingScope: true,
+      }),
+    ).toEqual(["env-local"]);
+  });
+
+  it("widens only the scope axis hiding a newly revealed route thread", () => {
+    const envLocal = EnvironmentId.make("env-local");
+    const envRemote = EnvironmentId.make("env-remote");
+    const target = {
+      id: ThreadId.make("t-local-a"),
+      environmentId: envLocal,
+      projectId: "proj-a",
+      archivedAt: null,
+      lineage: {
+        parentThreadId: null,
+        relationshipToParent: null,
+        rootThreadId: ThreadId.make("t-local-a"),
+      },
+    };
+    const key = scopedThreadKey(scopeThreadRef(envLocal, target.id));
+
+    const result = resolveSidebarRouteReveal({
+      reveal: { observedKey: null, pendingKey: null },
+      routeKey: key,
+      routeKeyInPlace: false,
+      isSearching: false,
+      scopedProjectKeys: new Set([`${envLocal}:proj-a`, `${envRemote}:proj-a`]),
+      scopedEnvironmentIds: new Set([envRemote]),
+      delegatedUnderParent: new Set(),
+      findThread: (candidate) => (candidate === key ? target : undefined),
+    });
+
+    expect(result).toEqual({
+      pendingKey: key,
+      widensScope: true,
+      widensProjectScope: false,
+      widensEnvironmentScope: true,
+    });
   });
 });

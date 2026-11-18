@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildThreadActionMenuItems, type ThreadActionMenuState } from "./threadActionMenu.logic";
+import {
+  buildThreadActionMenuItems,
+  threadActionRequiresOperate,
+  type ThreadActionMenuState,
+} from "./threadActionMenu.logic";
 
 const baseState: ThreadActionMenuState = {
   canOperate: true,
   branch: null,
   projectFilter: null,
+  environmentFilter: null,
   isPinned: false,
   isSettled: false,
   autoSettleEnabled: true,
@@ -73,5 +78,40 @@ describe("buildThreadActionMenuItems", () => {
     });
     expect(items.find((item) => item.id === "archive")?.disabled).toBe(true);
     expect(items.find((item) => item.id === "turn-into-project")?.disabled).toBe(true);
+  });
+
+  it("offers environment filtering right after project filtering and keeps list filters enabled without operate access", () => {
+    expect(buildThreadActionMenuItems(baseState).map((item) => item.id)).not.toContain(
+      "filter-by-environment",
+    );
+
+    const unscoped = buildThreadActionMenuItems({
+      ...baseState,
+      canOperate: false,
+      projectFilter: { label: "Beta Project", isActive: false },
+      environmentFilter: { label: "Remote VPS", isActive: false },
+    });
+    const projectIndex = unscoped.findIndex((candidate) => candidate.id === "filter-by-project");
+    expect(unscoped[projectIndex]).toMatchObject({
+      id: "filter-by-project",
+    });
+    expect(unscoped[projectIndex]?.disabled).toBeFalsy();
+    expect(unscoped[projectIndex + 1]).toMatchObject({
+      id: "filter-by-environment",
+      label: "Filter by Remote VPS",
+      icon: "server",
+    });
+    expect(unscoped[projectIndex + 1]?.disabled).toBeFalsy();
+    expect(threadActionRequiresOperate("filter-by-project")).toBe(false);
+    expect(threadActionRequiresOperate("filter-by-environment")).toBe(false);
+
+    const scoped = buildThreadActionMenuItems({
+      ...baseState,
+      environmentFilter: { label: "Remote VPS", isActive: true },
+    });
+    expect(scoped.find((candidate) => candidate.id === "filter-by-environment")).toMatchObject({
+      label: "Show all environments",
+      icon: "server",
+    });
   });
 });

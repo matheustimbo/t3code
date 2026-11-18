@@ -595,6 +595,7 @@ export function filterSidebarV2VisibleThreads<
   threads: readonly T[],
   scopedProjectKeys: ReadonlySet<string> | null,
   delegatedUnderParent: ReadonlySet<string>,
+  scopedEnvironmentIds: ReadonlySet<string> | null = null,
 ): T[] {
   return threads.filter(
     (thread) =>
@@ -604,6 +605,7 @@ export function filterSidebarV2VisibleThreads<
         thread.lineage,
         delegatedUnderParent,
       ) &&
+      (scopedEnvironmentIds === null || scopedEnvironmentIds.has(thread.environmentId)) &&
       (scopedProjectKeys === null ||
         scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
   );
@@ -1176,6 +1178,68 @@ export function reduceSidebarProjectScopeMenuState(
     case "project-settings-opened":
       return { open: false, query: "" };
   }
+}
+
+export interface SidebarEnvironmentScopeOption<TEnvironmentId extends string = string> {
+  readonly environmentId: TEnvironmentId;
+  readonly label: string;
+  readonly displayUrl: string;
+  readonly connectionState: string;
+}
+
+export function buildSidebarEnvironmentScopeOptions<TEnvironmentId extends string = string>(input: {
+  readonly environments: ReadonlyArray<{
+    readonly environmentId: TEnvironmentId;
+    readonly environmentLabel: string;
+    readonly displayUrl: string;
+    readonly connectionState: string;
+    readonly isEnabled?: boolean;
+  }>;
+  readonly primaryEnvironmentId: TEnvironmentId | null;
+}): readonly SidebarEnvironmentScopeOption<TEnvironmentId>[] {
+  const enabledEnvironments = input.environments.filter(
+    (environment) => environment.isEnabled !== false,
+  );
+  const labelCounts = new Map<string, number>();
+  for (const environment of enabledEnvironments) {
+    const baseLabel = environment.environmentLabel.trim() || environment.environmentId;
+    labelCounts.set(baseLabel, (labelCounts.get(baseLabel) ?? 0) + 1);
+  }
+
+  return [...enabledEnvironments]
+    .sort((left, right) => {
+      if (left.environmentId === input.primaryEnvironmentId) return -1;
+      if (right.environmentId === input.primaryEnvironmentId) return 1;
+      const leftLabel = left.environmentLabel.trim() || left.environmentId;
+      const rightLabel = right.environmentLabel.trim() || right.environmentId;
+      return (
+        leftLabel.localeCompare(rightLabel) || left.environmentId.localeCompare(right.environmentId)
+      );
+    })
+    .map((environment) => {
+      const baseLabel = environment.environmentLabel.trim() || environment.environmentId;
+      const hasDuplicateLabel = (labelCounts.get(baseLabel) ?? 0) > 1;
+      const disambiguator = environment.displayUrl.trim() || environment.environmentId;
+      return {
+        environmentId: environment.environmentId,
+        label: hasDuplicateLabel ? `${baseLabel} · ${disambiguator}` : baseLabel,
+        displayUrl: environment.displayUrl,
+        connectionState: environment.connectionState,
+      };
+    });
+}
+
+export function resolveSidebarEnvironmentScopeIds(input: {
+  readonly options: ReadonlyArray<{ readonly environmentId: string }>;
+  readonly ids: ReadonlyArray<string>;
+  readonly canClearMissingScope?: boolean;
+}): string[] {
+  const knownIds = new Set(input.options.map((option) => option.environmentId));
+  return [
+    ...new Set(
+      input.ids.filter((id) => id.length > 0 && (knownIds.has(id) || !input.canClearMissingScope)),
+    ),
+  ];
 }
 
 export function resolveWorkingStartedAt(
